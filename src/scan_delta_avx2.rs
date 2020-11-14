@@ -12,13 +12,13 @@ const A: usize = 8usize;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
-pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(database: &[u8], query: &QueryAvx2, matrix: &M) -> i32 {
+pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(reference: &[u8], query: &QueryAvx2, matrix: &M) -> i32 {
     let num_vec = query.len() / L;
     let query_ptr = query.ptr();
 
     // R[i][j] = max(R[i - 1][j] + gap_extend, D[i - 1][j] + gap_open)
     // C[i][j] = max(C[i][j - 1] + gap_extend, D[i][j - 1] + gap_open)
-    // D[i][j] = max(D[i - 1][j - 1] + matrix[query[i]][database[j]], R[i][j], C[i][j])
+    // D[i][j] = max(D[i - 1][j - 1] + matrix[query[i]][reference[j]], R[i][j], C[i][j])
     //
     // indexing (we want to calculate D11):
     //      x0   x1
@@ -39,10 +39,10 @@ pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(database: &[u8], query: &Quer
     let gap_open = _mm256_set1_epi8(matrix.gap_open());
     let gap_extend = _mm256_set1_epi8(matrix.gap_extend());
 
-    for j in 0..database.len() {
-        let scores = matrix.get(database[j]);
+    for j in 0..reference.len() {
+        let scores = matrix.get(reference[j]);
 
-        let mut delta_D00 = _mm256_sl_epi8(delta_Dx0.offset(num_vec - 1));
+        let mut delta_D00 = _mm256_sl_epi8(delta_Dx0.offset(num_vec - 1)); // TODO: insert
         let mut delta_D10 = delta_Dx0.offset(num_vec);
         let mut delta_D01 = _mm256_set1_epi8(-128);
         let mut delta_R01 = _mm256_set1_epi8(-128);
@@ -65,6 +65,25 @@ pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(database: &[u8], query: &Quer
             delta_D10 = _mm256_load_si256(delta_Dx0.offset(i));
             delta_D01 = delta_D11;
             delta_R01 = delta_R11;
+        }
+
+        let mut delta_curr = _mm256_sl_epi8(delta_R01);
+        // TODO: insert
+        delta_curr = _mm256_max_epi8(delta_curr, _mm256_add_epi8(delta_D01, gap_open));
+        let mut delta_prev = delta_curr;
+
+        for _ in 0..(L - 2) {
+            delta_curr = _mm256_sl_epi8(delta_curr);
+            // TODO: insert
+            delta_curr = _mm256_add_epi8(num_vec_gap);
+            delta_curr = _mm256_max_epi8(delta_curr, delta_prev);
+        }
+
+        for i in 0..num_vec {
+            let mut delta_D11 = _mm256_load_si256(delta_Dx1_ptr.offset(i));
+            let delta_R11 = _mm256_max_epi8(_mm256_adds_epi8(delta_prev, gap_extend), _mm256_adds_epi8(delta_D01, gap_open));
+            delta_D11 = _mm256_max_epi8(delta_D11, delta_R11);
+            _mm256_store_si256(delta_Dx1_ptr.offset(i), delta_D11);
         }
 
         mem::swap(delta_Dx0_ptr, delta_Dx1_ptr);
