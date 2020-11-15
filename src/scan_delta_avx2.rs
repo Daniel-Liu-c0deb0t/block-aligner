@@ -31,6 +31,7 @@ pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(reference: &[u8], query: &Que
     let delta_Dx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
     let delta_Cx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
     let delta_Cx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
+    let delta_Rx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
 
     let num_abs = ((query.len() / L) / A) * L;
     //let abs_D_prev_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(num_abs * 2, L)) as *mut __m256i;
@@ -51,6 +52,7 @@ pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(reference: &[u8], query: &Que
             let mut delta_D11 = _mm256_adds_epi8(delta_D00,
                                                  _mm256_lookup_epi8(scores, _mm256_load_si256(query_ptr.offset(i))));
 
+            // TODO: mismatch with how R11 is calculated
             let delta_R11 = _mm256_max_epi8(_mm256_adds_epi8(delta_R01, gap_extend), _mm256_adds_epi8(delta_D01, gap_open));
 
             let delta_C10 = _mm256_load_si256(delta_Cx0_ptr.offset(i));
@@ -60,6 +62,7 @@ pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(reference: &[u8], query: &Que
 
             _mm256_store_si256(delta_Dx1_ptr.offset(i), delta_D11);
             _mm256_store_si256(delta_Cx1_ptr.offset(i), delta_C11);
+            _mm256_store_si256(delta_Rx1_ptr.offset(i), delta_R11);
 
             delta_D00 = delta_D10;
             delta_D10 = _mm256_load_si256(delta_Dx0.offset(i));
@@ -67,27 +70,32 @@ pub unsafe fn scan_delta_score_avx2<M: MatrixAvx2>(reference: &[u8], query: &Que
             delta_R01 = delta_R11;
         }
 
-        let mut delta_curr = _mm256_sl_epi8(delta_R01);
+        delta_R01 = _mm256_sl_epi8(delta_R01);
         // TODO: insert
-        delta_curr = _mm256_max_epi8(delta_curr, _mm256_add_epi8(delta_D01, gap_open));
-        let mut delta_prev = delta_curr;
 
-        for _ in 0..(L - 2) {
-            delta_curr = _mm256_sl_epi8(delta_curr);
+        for _ in 1..(L - 1) {
+            let delta_R01_prev = delta_R01;
+            delta_R01 = _mm256_sl_epi8(delta_R01);
             // TODO: insert
-            delta_curr = _mm256_add_epi8(num_vec_gap);
-            delta_curr = _mm256_max_epi8(delta_curr, delta_prev);
+            delta_R01 = _mm256_adds_epi8(num_vec_gap);
+            delta_R01 = _mm256_max_epi8(delta_R01, delta_R01_prev);
         }
 
         for i in 0..num_vec {
+            let mut delta_R11 = _mm256_load_si256(delta_Rx1_ptr.offset(i));
+            delta_R11 = _mm256_max_epi8(delta_R11, _mm256_adds_epi8(delta_R01, gap_extend));
+
             let mut delta_D11 = _mm256_load_si256(delta_Dx1_ptr.offset(i));
-            let delta_R11 = _mm256_max_epi8(_mm256_adds_epi8(delta_prev, gap_extend), _mm256_adds_epi8(delta_D01, gap_open));
             delta_D11 = _mm256_max_epi8(delta_D11, delta_R11);
+
             _mm256_store_si256(delta_Dx1_ptr.offset(i), delta_D11);
+            _mm256_store_si256(delta_Rx1_ptr.offset(i), delta_R11);
+
+            delta_R01 = delta_R11;
         }
 
-        mem::swap(delta_Dx0_ptr, delta_Dx1_ptr);
-        mem::swap(delta_Cx0_ptr, delta_Cx1_ptr);
+        mem::swap(&mut delta_Dx0_ptr, &mut delta_Dx1_ptr);
+        mem::swap(&mut delta_Cx0_ptr, &mut delta_Cx1_ptr);
     }
 }
 
