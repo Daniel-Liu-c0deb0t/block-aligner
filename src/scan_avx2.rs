@@ -52,6 +52,7 @@ pub unsafe fn scan_score_avx2<M: MatrixAvx2>(reference: &[u8], query: &QueryAvx2
     let gap_open = _mm256_set1_epi8(matrix.gap_open());
     let gap_extend = _mm256_set1_epi8(matrix.gap_extend());
     let num_vec_gap = _mm256_set1_epi8(query.len() / L * gap_extend);
+    let num_vec_gap2 = _mm256_set1_epi8(query.len() / L * gap_extend * 2);
 
     for j in 0..reference.len() {
         let scores = matrix.get(reference[j]);
@@ -85,13 +86,22 @@ pub unsafe fn scan_score_avx2<M: MatrixAvx2>(reference: &[u8], query: &QueryAvx2
         delta_R_max = _mm256_sl_epi8(delta_R_max);
         delta_R_max = _mm256_insert_epi8(delta_R_max, i8::MIN, 0);
 
-        for _ in 1..(L - 1) {
-            let delta_R_max_prev = delta_R_max;
-            delta_R_max = _mm256_sl_epi8(delta_R_max);
-            delta_R_max = _mm256_insert_epi8(delta_R_max, i8::MIN, 0);
-            delta_R_max = _mm256_adds_epi8(num_vec_gap);
-            delta_R_max = _mm256_max_epi8(delta_R_max, delta_R_max_prev);
+        // TODO: optimize prefix scan
+
+        let even1 = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(num_vec_gap, _mm256_sl_epi16(delta_R_max)));
+        let even2 = _mm256_max_epi16(even1, _mm256_adds_epi16(num_vec_gap2, _mm256_sl_epi32(even1)));
+
+        for _ in 0..(L / 4 - 2) {
+            let prev = even2;
+            even2 = _mm256_sl_epi64(even2);
+            even2 = _mm256_insert_epi16(even2, i16::MIN, 0);
+            even2 = _mm256_adds_epi16(num_vec_gap4);
+            even2 = _mm256_max_epi16(even2, prev);
         }
+
+        let odd1_hi = _mm256_max_epi16(_mm256_adds_epi16(_mm256_insert_epi32(_mm256_sl_epi32(even2), 0x8080u32 as i32, 0), num_vec_gap2), even1);
+        let odd1_lo = _mm256_max_epi16(_mm256_adds_epi16(_mm256_insert_epi16(_mm256_sl_epi16(even2), i16::MIN, 0), num_vec_gap), even1);
+        let odd1 = _mm256_blend_epi16(odd1_lo, odd1_hi, 0b0100010001000100);
 
         let mut delta_R01 = _mm256_subs_epi8(_mm256_adds_epi8(delta_R_max, gap_extend), gap_open);
         let mut delta_D01 = _mm256_set1_epi8(i8::MIN);
