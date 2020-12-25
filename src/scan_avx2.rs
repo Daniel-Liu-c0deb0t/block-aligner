@@ -54,14 +54,21 @@ unsafe fn _mm256_sl_epi64(v: __m256i) -> __m256i {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, matrix: &M) -> i32 {
-    let num_vec = query.len() / L;
-    let query_ptr = query.ptr();
+    let num_vec = (query.len() + L - 1) / L;
+    let ceil_len = num_vec * L;
+    let ceil_len_bytes = ceil_len * 2;
+
+    // These pointers are ring buffers!
+    let query_buf_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m128i;
+    let query_idx = 0i32; // TODO
 
     // TODO: only one array for curr?
-    let delta_Dx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
-    let delta_Dx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
-    let delta_Cx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
-    let delta_Cx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(query.len(), L)) as *mut __m256i;
+    let delta_Dx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
+    let delta_Dx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
+    let delta_Cx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
+    let delta_Cx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
+
+    let mut ring_buf_idx = 0;
 
     let gap_open = _mm256_set1_epi16(matrix.gap_open());
     let gap_extend = _mm256_set1_epi16(matrix.gap_extend());
@@ -157,6 +164,24 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, ma
 
         mem::swap(&mut delta_Dx0_ptr, &mut delta_Dx1_ptr);
         mem::swap(&mut delta_Cx0_ptr, &mut delta_Cx1_ptr);
+
+        // Update ring buffers
+        {
+            let query_buf_curr = query_buf_ptr + ring_buf_idx;
+            let query_insert = if query_idx < 0 || query_idx >= query.len() as i32 {
+                0
+            } else {
+                *query.get_unchecked(query_idx as usize)
+            };
+            _mm_store_si128(query_buf_curr, _mm_insert_epi8(_mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
+
+            let delta_Dx0_curr = delta_Dx0_ptr + ring_buf_idx;
+            _mm_store_si128(query_buf_curr, _mm_insert_epi8(_mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
+            let delta_Cx0_curr = delta_Cx0_ptr + ring_buf_idx;
+            _mm_store_si128(query_buf_curr, _mm_insert_epi8(_mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
+
+            ring_buf_idx = (ring_buf_idx + 1) % num_vec;
+        }
     }
 }
 
