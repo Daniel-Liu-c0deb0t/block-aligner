@@ -28,6 +28,13 @@ unsafe fn _mm256_sl_epi16(v: __m256i) -> __m256i {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
+unsafe fn _mm256_sr_epi16(v: __m256i) -> __m256i {
+    _mm256_alignr_epi8(_mm256_permute2x128_si256(v, v, 0x31), v, 2)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[inline]
 unsafe fn _mm256_sl_epi32(v: __m256i) -> __m256i {
     _mm256_alignr_epi8(v, _mm256_permute2x128_si256(v, v, 0x03), 12)
 }
@@ -77,10 +84,34 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, ma
     let num_vec_gap4 = _mm256_set1_epi16(query.len() / L * gap_extend * 4);
 
     for j in 0..reference.len() {
+        // Update ring buffers
+        if j > 0 {
+            let query_buf_curr = query_buf_ptr + ring_buf_idx;
+            let query_insert = if query_idx < 0 || query_idx >= query.len() as i32 {
+                0
+            } else {
+                *query.get_unchecked(query_idx as usize)
+            };
+            _mm_store_si128(query_buf_curr, _mm_insert_epi8(
+                    _mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
+
+            let delta_Dx0_curr = delta_Dx0_ptr + ring_buf_idx;
+            _mm256_store_si256(delta_Dx0_curr, _mm256_insert_epi16(
+                    _mm256_sr_epi16(_mm256_load_si256(delta_Dx0_curr), 1), i16::MIN, 15));
+
+            let delta_Cx0_curr = delta_Cx0_ptr + ring_buf_idx;
+            _mm256_store_si256(delta_Cx0_curr, _mm256_insert_epi16(
+                    _mm256_sr_epi16(_mm256_load_si256(delta_Cx0_curr), 1), i16::MIN, 15));
+
+            ring_buf_idx = (ring_buf_idx + 1) % num_vec;
+            query_idx += 1;
+        }
+
         let matrix_ptr = matrix.ptr(reference[j]);
         let scores1 = _mm_load_si256(matrix_ptr as *const __m128i);
         let scores2 = _mm_load_si256((matrix_ptr as *const __m128i) + 1);
 
+        // Vector for prefix scan calculations
         let mut delta_R_max = _mm256_set1_epi16(i16::MIN);
 
         // Begin initial pass
@@ -164,24 +195,6 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, ma
 
         mem::swap(&mut delta_Dx0_ptr, &mut delta_Dx1_ptr);
         mem::swap(&mut delta_Cx0_ptr, &mut delta_Cx1_ptr);
-
-        // Update ring buffers
-        {
-            let query_buf_curr = query_buf_ptr + ring_buf_idx;
-            let query_insert = if query_idx < 0 || query_idx >= query.len() as i32 {
-                0
-            } else {
-                *query.get_unchecked(query_idx as usize)
-            };
-            _mm_store_si128(query_buf_curr, _mm_insert_epi8(_mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
-
-            let delta_Dx0_curr = delta_Dx0_ptr + ring_buf_idx;
-            _mm_store_si128(query_buf_curr, _mm_insert_epi8(_mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
-            let delta_Cx0_curr = delta_Cx0_ptr + ring_buf_idx;
-            _mm_store_si128(query_buf_curr, _mm_insert_epi8(_mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
-
-            ring_buf_idx = (ring_buf_idx + 1) % num_vec;
-        }
     }
 }
 
