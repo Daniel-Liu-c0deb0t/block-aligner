@@ -6,6 +6,8 @@ use std::arch::x86_64::*;
 use std::{alloc, mem};
 
 const L: usize = 16usize;
+const VBYTES: usize = 32usize;
+const NULL: u8 = b'A' + 31u8;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
@@ -60,20 +62,20 @@ unsafe fn _mm256_sl_epi64(v: __m256i) -> __m256i {
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
-pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, matrix: &M) -> i32 {
+pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, matrix: &M, K: usize) -> i32 {
     let num_vec = (query.len() + L - 1) / L;
     let ceil_len = num_vec * L;
     let ceil_len_bytes = ceil_len * 2;
 
-    // These pointers are ring buffers!
-    let query_buf_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m128i;
-    let query_idx = 0i32; // TODO
+    // These pointers are ring buffers that represent the current band
+    let query_buf_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, VBYTES)) as *mut __m128i;
+    let query_idx = 0; // TODO
 
     // TODO: only one array for curr?
-    let delta_Dx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
-    let delta_Dx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
-    let delta_Cx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
-    let delta_Cx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, 32)) as *mut __m256i;
+    let delta_Dx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, VBYTES)) as *mut __m256i;
+    let delta_Dx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, VBYTES)) as *mut __m256i;
+    let delta_Cx0_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, VBYTES)) as *mut __m256i;
+    let delta_Cx1_ptr = alloc::alloc(alloc::Layout::from_size_align_unchecked(ceil_len_bytes, VBYTES)) as *mut __m256i;
 
     let mut ring_buf_idx = 0;
 
@@ -83,48 +85,55 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, ma
     let num_vec_gap2 = _mm256_set1_epi16(query.len() / L * gap_extend * 2);
     let num_vec_gap4 = _mm256_set1_epi16(query.len() / L * gap_extend * 4);
 
+    // TODO: x drop
+
     for j in 0..reference.len() {
-        // Update ring buffers
+        let mut delta_D00 = _mm256_set1_epi16(i16::MIN);
+
+        // TODO: while band_idx < K {
+
+        // Update ring buffers to slide current band down
         if j > 0 {
             let query_buf_curr = query_buf_ptr + ring_buf_idx;
-            let query_insert = if query_idx < 0 || query_idx >= query.len() as i32 {
-                0
+            let query_insert = if query_idx < 0 || query_idx >= query.len() {
+                NULL
             } else {
-                *query.get_unchecked(query_idx as usize)
+                *query.get_unchecked(query_idx)
             };
             _mm_store_si128(query_buf_curr, _mm_insert_epi8(
-                    _mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, 15));
+                    _mm_srli_si128(_mm_load_si128(query_buf_curr), 1), query_insert, L - 1));
 
             let delta_Dx0_curr = delta_Dx0_ptr + ring_buf_idx;
+            // Save first vector of the previous band iteration before it is replaced
+            delta_D00 = _mm256_load_si256(delta_Dx0_curr);
             _mm256_store_si256(delta_Dx0_curr, _mm256_insert_epi16(
-                    _mm256_sr_epi16(_mm256_load_si256(delta_Dx0_curr), 1), i16::MIN, 15));
+                    _mm256_sr_epi16(delta_D00, 1), i16::MIN, L - 1));
 
             let delta_Cx0_curr = delta_Cx0_ptr + ring_buf_idx;
             _mm256_store_si256(delta_Cx0_curr, _mm256_insert_epi16(
-                    _mm256_sr_epi16(_mm256_load_si256(delta_Cx0_curr), 1), i16::MIN, 15));
+                    _mm256_sr_epi16(_mm256_load_si256(delta_Cx0_curr), 1), i16::MIN, L - 1));
 
             ring_buf_idx = (ring_buf_idx + 1) % num_vec;
             query_idx += 1;
         }
-
-        let matrix_ptr = matrix.ptr(reference[j]);
-        let scores1 = _mm_load_si256(matrix_ptr as *const __m128i);
-        let scores2 = _mm_load_si256((matrix_ptr as *const __m128i) + 1);
 
         // Vector for prefix scan calculations
         let mut delta_R_max = _mm256_set1_epi16(i16::MIN);
 
         // Begin initial pass
         {
-            let mut delta_D00 = _mm256_sl_epi16(delta_Dx0.offset(num_vec - 1)); // TODO: insert
-            let mut delta_D10 = delta_Dx0.offset(num_vec);
+            let matrix_ptr = matrix.ptr(reference[j]);
+            let scores1 = _mm_load_si256(matrix_ptr as *const __m128i);
+            let scores2 = _mm_load_si256((matrix_ptr as *const __m128i) + 1);
+
             let mut delta_D01 = _mm256_set1_epi16(i16::MIN);
             let mut extend_to_end = num_vec_gap;
 
             for i in 0..num_vec {
-                let scores = _mm256_lookupepi8_epi16(scores1, scores2, _mm256_load_si256(query_ptr.offset(i)));
+                let scores = _mm256_lookupepi8_epi16(scores1, scores2, _mm256_load_si256(query_buf_ptr.offset((ring_buf_idx + i) % num_vec)));
                 let mut delta_D11 = _mm256_adds_epi16(delta_D00, scores);
 
+                let delta_D10 = _mm256_load_si256(delta_Dx0_ptr.offset(i));
                 let delta_C10 = _mm256_load_si256(delta_Cx0_ptr.offset(i));
                 let delta_C11 = _mm256_max_epi16(_mm256_adds_epi16(delta_C10, gap_extend), _mm256_adds_epi16(delta_D10, gap_open));
 
@@ -137,7 +146,6 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, ma
                 _mm256_store_si256(delta_Cx1_ptr.offset(i), delta_C11);
 
                 delta_D00 = delta_D10;
-                delta_D10 = _mm256_load_si256(delta_Dx0.offset(i));
                 delta_D01 = delta_D11;
             }
         }
@@ -193,6 +201,7 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &QueryAvx2, ma
         }
         // End final pass
 
+        // Slide current band to the right
         mem::swap(&mut delta_Dx0_ptr, &mut delta_Dx1_ptr);
         mem::swap(&mut delta_Cx0_ptr, &mut delta_Cx1_ptr);
     }
