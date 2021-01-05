@@ -5,6 +5,8 @@ use std::arch::x86_64::*;
 
 use std::{alloc, mem};
 
+use matrix::Matrix;
+
 const L: usize = 16usize;
 const L_BYTES: usize = 32usize;
 const NULL: u8 = b'A' + 26u8;
@@ -49,6 +51,12 @@ unsafe fn _mm256_sl_epi64(v: __m256i, zeros: __m256i) -> __m256i {
     _mm256_alignr_epi8(v, _mm256_permute2x128_si256(v, zeros, 0x02), 8)
 }
 
+#[inline]
+fn convert_char(c: u8) -> u8 {
+    debug_assert!(c >= b'A' && c <= NULL);
+    c - b'A'
+}
+
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11, gap extend = -1
 //
 // R[i][j] = max(R[i - 1][j] + gap_extend, D[i - 1][j] + gap_open)
@@ -63,9 +71,10 @@ unsafe fn _mm256_sl_epi64(v: __m256i, zeros: __m256i) -> __m256i {
 //
 // A band consists of multiple intervals. Each interval is made up of strided vectors.
 
+/// Ensure that the reference and the query are uppercase alphabetical letters.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
-pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &[u8], matrix: &M, K_half: usize) -> i32 {
+pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K_half: usize) -> i32 {
     let K = K_half * 2 + 1;
     let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of 16
     let ceil_len_bytes = ceil_len * 2;
@@ -73,23 +82,19 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &[u8], matrix:
 
     // These chunks of memory are contiguous ring buffers that represent every interval in the current band
     let query_buf_layout = alloc::Layout::from_size_align_unchecked(ceil_len, L_BYTES);
-    let query_buf_ptr = alloc::alloc(query_buf_layout);
+    let query_buf_ptr = alloc::alloc(query_buf_layout) as *mut u8;
 
     let delta_Dx0_layout = alloc::Layout::from_size_align_unchecked(ceil_len_bytes, L_BYTES);
-    let delta_Dx0_ptr = alloc::alloc(delta_Dx0_layout);
+    let delta_Dx0_ptr = alloc::alloc(delta_Dx0_layout) as *mut i16;
 
     let delta_Cx0_layout = alloc::Layout::from_size_align_unchecked(ceil_len_bytes, L_BYTES);
-    let delta_Cx0_ptr = alloc::alloc(delta_Cx0_layout);
+    let delta_Cx0_ptr = alloc::alloc(delta_Cx0_layout) as *mut i16;
 
     // 32-bit absolute values
     let abs_Ax0_layout = alloc::Layout::from_size_align_unchecked(num_intervals * 4, 4);
     let abs_Ax0_ptr = alloc::alloc(abs_Ax0_layout) as *mut i32;
 
     {
-        let query_buf_ptr = query_buf_ptr as *mut u8;
-        let delta_Dx0_ptr = delta_Dx0_ptr as *mut i16;
-        let delta_Cx0_ptr = delta_Cx0_ptr as *mut i16;
-
         let mut abs_prev = 0;
 
         for i in -(K_half as i32)..=(K_half as i32) {
@@ -99,8 +104,8 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &[u8], matrix:
             let buf_idx = interval_idx * I + idx % stride;
 
             if i >= 0 && i < query.len() as i32 {
-                ptr::write(query_buf_ptr.offset(buf_idx), if i > 0 {
-                    (*query.get_unchecked(i - 1)).to_ascii_uppercase() - 'A' } else { NULL });
+                ptr::write(query_buf_ptr.offset(buf_idx), convert_char(if i > 0 {
+                    *query.get_unchecked(i - 1) } else { NULL }));
 
                 let val = if i > 0 { matrix.gap_open() as i32 } else { 0 } + i * (matrix.gap_extend() as i32);
 
@@ -115,7 +120,7 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &[u8], matrix:
                     ptr::write(abs_Ax0_ptr.offset(interval_idx), 0);
                 }
 
-                ptr::write(query_buf_ptr.offset(buf_idx), NULL);
+                ptr::write(query_buf_ptr.offset(buf_idx), convert_char(NULL));
                 ptr::write(delta_Dx0_ptr.offset(buf_idx), i16::MIN);
             }
 
@@ -138,9 +143,10 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &[u8], matrix:
     // TODO: wasm
     // TODO: adaptive banding
     // TODO: can we not save array of abs?
+    // TODO: traceback
 
     for j in 0..reference.len() {
-        let matrix_ptr = matrix.ptr(*reference.get_unchecked(j));
+        let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)));
         let scores1 = _mm_load_si256(matrix_ptr as *const __m128i);
         let scores2 = _mm_load_si256((matrix_ptr as *const __m128i) + 1);
         let mut band_idx = 0;
@@ -171,8 +177,8 @@ pub unsafe fn scan_score_avx2<M: Matrix>(reference: &[u8], query: &[u8], matrix:
 
                 if next_band_idx >= K {
                     // This must be the last interval
-                    let c = if query_idx < query.len() { (*query.get_unchecked(query_idx)).to_ascii_uppercase() } else { NULL };
-                    query_insert = _mm_set1_epi8(c - 'A');
+                    let c = if query_idx < query.len() { *query.get_unchecked(query_idx) } else { NULL };
+                    query_insert = _mm_set1_epi8(convert_char(c));
                     delta_Dx0_insert = neg_inf;
                     delta_Cx0_insert = neg_inf;
                 } else {
