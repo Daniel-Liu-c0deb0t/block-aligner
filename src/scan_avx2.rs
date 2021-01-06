@@ -51,6 +51,15 @@ unsafe fn _mm256_sl_epi64(v: __m256i, zeros: __m256i) -> __m256i {
     _mm256_alignr_epi8(v, _mm256_permute2x128_si256(v, zeros, 0x02), 8)
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn slow_extract_epi16(v: __m256i, i: usize) {
+    let a = [0i16; L];
+    _mm256_storeu_si256(a.as_mut_ptr() as *mut __m256i, v);
+    return a[i];
+}
+
 #[inline]
 fn convert_char(c: u8) -> u8 {
     debug_assert!(c >= b'A' && c <= NULL);
@@ -97,17 +106,17 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
     {
         let mut abs_prev = 0;
 
-        for i in -(K_half as i32)..=(K_half as i32) {
-            let idx = (i as usize) + K_half;
-            let interval_idx = idx / I;
-            let stride = (cmp::min(I, K - interval_idx * I) + L - 1) / L;
-            let buf_idx = interval_idx * I + idx % stride;
+        for idx in 0..(ceil_len as isize) {
+            let i = idx - (K_half as isize);
+            let interval_idx = idx / (I as isize);
+            let stride = (cmp::min(I as isize, (K as isize) - interval_idx * (I as isize)) + (L as isize) - 1) / (L as isize);
+            let buf_idx = interval_idx * (I as isize) + idx % stride;
 
-            if i >= 0 && i < query.len() as i32 {
+            if i >= 0 && i < query.len() as isize {
                 ptr::write(query_buf_ptr.offset(buf_idx), convert_char(if i > 0 {
                     *query.get_unchecked(i - 1) } else { NULL }));
 
-                let val = if i > 0 { matrix.gap_open() as i32 } else { 0 } + i * (matrix.gap_extend() as i32);
+                let val = if i > 0 { matrix.gap_open() as i32 } else { 0 } + (i as i32) * (matrix.gap_extend() as i32);
 
                 if idx % I == 0 {
                     ptr::write(abs_Ax0_ptr.offset(interval_idx), val);
@@ -116,7 +125,7 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
 
                 ptr::write(delta_Dx0_ptr.offset(buf_idx), (val - abs_prev) as i16);
             } else {
-                if idx % I == 0 {
+                if idx % (I as isize) == 0 {
                     ptr::write(abs_Ax0_ptr.offset(interval_idx), 0);
                 }
 
@@ -132,8 +141,9 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
     let delta_Dx0_ptr = delta_Dx0_ptr as *mut __m256i;
     let delta_Cx0_ptr = delta_Cx0_ptr as *mut __m256i;
 
-    let query_idx = K_half;
-    let mut ring_buf_idx = 0;
+    let mut query_idx = ceil_len - K_half - 1;
+    let mut shift_idx = -(K_half as isize);
+    let mut ring_buf_idx = 0usize;
 
     let gap_open = _mm256_set1_epi16(matrix.gap_open() as i16);
     let gap_extend = _mm256_set1_epi16(matrix.gap_extend() as i16);
@@ -148,8 +158,8 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
     for j in 0..reference.len() {
         let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)));
         let scores1 = _mm_load_si256(matrix_ptr as *const __m128i);
-        let scores2 = _mm_load_si256((matrix_ptr as *const __m128i) + 1);
-        let mut band_idx = 0;
+        let scores2 = _mm_load_si256((matrix_ptr as *const __m128i).offset(1));
+        let mut band_idx = 0usize;
 
         let mut abs_R_interval = i32::MIN;
         let mut abs_D_interval = i32::MIN;
@@ -157,16 +167,17 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
         while band_idx < K {
             let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
 
-            let stride_gap_scalar = stride * gap_extend;
+            let stride_gap_scalar = (stride as i16) * (matrix.gap_extend() as i16);
             let stride_gap = _mm256_set1_epi16(stride_gap_scalar);
             let mut delta_D00 = neg_inf;
-            let mut abs_interval = *abs_Ax0_ptr.offset(band_idx / I);
+            let mut abs_interval = *abs_Ax0_ptr.offset((band_idx / I) as isize);
 
             // Update ring buffers to slide current band down
             {
                 let next_band_idx = band_idx + I;
 
-                let delta_Dx0_idx = delta_Dx0_ptr + idx;
+                let idx = (band_idx / L + ring_buf_idx % stride) as isize;
+                let delta_Dx0_idx = delta_Dx0_ptr.offset(idx);
                 // Save first vector of the previous interval before it is replaced
                 delta_D00 = _mm256_load_si256(delta_Dx0_idx);
                 abs_interval += _mm256_extract_epi16(delta_D00, 0) as i32;
@@ -184,18 +195,17 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
                 } else {
                     // Not the last interval; need to shift in a value from the next interval
                     let next_stride = (cmp::min(I, K - next_band_idx) + L - 1) / L;
-                    let next_idx = next_band_idx / L + ring_buf_idx % next_stride;
-                    let next_abs_interval = *abs_Ax0_ptr.offset(next_band_idx / I);
+                    let next_idx = (next_band_idx / L + ring_buf_idx % next_stride) as isize;
+                    let next_abs_interval = *abs_Ax0_ptr.offset((next_band_idx / I) as isize);
                     let abs_offset = _mm256_set1_epi16((next_abs_interval - abs_interval) as i16);
 
-                    query_insert = _mm_load_si128(query_buf_ptr + next_idx);
-                    delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr + next_idx), abs_offset);
-                    delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr + next_idx), abs_offset);
+                    query_insert = _mm_load_si128(query_buf_ptr.offset(next_idx));
+                    delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.offset(next_idx)), abs_offset);
+                    delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.offset(next_idx)), abs_offset);
                 }
 
-                let idx = band_idx / L + ring_buf_idx % stride;
-                let query_buf_idx = query_buf_ptr + idx;
-                let delta_Cx0_idx = delta_Cx0_ptr + idx;
+                let query_buf_idx = query_buf_ptr.offset(idx);
+                let delta_Cx0_idx = delta_Cx0_ptr.offset(idx);
 
                 // Now shift in new values for each interval
                 _mm_store_si128(query_buf_idx, _mm_alignr_si128(query_insert, _mm_load_si128(query_buf_idx), 1));
@@ -204,11 +214,12 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
 
                 ring_buf_idx += 1;
                 query_idx += 1;
+                shift_idx += 1;
             }
 
             // Vector for prefix scan calculations
             let mut delta_R_max = neg_inf;
-            let abs_offset = _mm256_set1_epi16((*abs_Ax0_ptr.offset(band_idx / I) - abs_interval) as i16);
+            let abs_offset = _mm256_set1_epi16((*abs_Ax0_ptr.offset((band_idx / I) as isize) - abs_interval) as i16);
 
             // Begin initial pass
             {
@@ -216,7 +227,7 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
                 let mut extend_to_end = stride_gap;
 
                 for i in 0..stride {
-                    let idx = band_idx / L + (ring_buf_idx + i) % stride;
+                    let idx = (band_idx / L + (ring_buf_idx + i) % stride) as isize;
 
                     let scores = _mm256_lookupepi8_epi16(scores1, scores2,
                                                          _mm_load_si128(query_buf_ptr.offset(idx)));
@@ -284,7 +295,7 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
                 let mut delta_D01 = _mm256_insert_epi16(neg_inf, (abs_D_interval - abs_interval) as i16, 0);
 
                 for i in 0..stride {
-                    let idx = band_idx / L + (ring_buf_idx + i) % stride;
+                    let idx = (band_idx / L + (ring_buf_idx + i) % stride) as isize;
 
                     let mut delta_R11 = _mm256_max_epi16(_mm256_adds_epi16(delta_R01, gap_extend), _mm256_adds_epi16(delta_D01, gap_open));
                     let mut delta_D11 = _mm256_load_si256(delta_Dx0_ptr.offset(idx));
@@ -300,17 +311,55 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
             }
             // End final pass
 
-            *abs_Ax0_ptr.offset(band_idx / I) = abs_interval;
+            *abs_Ax0_ptr.offset((band_idx / I) as isize) = abs_interval;
             band_idx += I;
         }
     }
+
+    let res_score = {
+        let res_i = ((query.len() as isize) - shift_idx) as usize;
+        let band_idx = (res_i / I) * I;
+        let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
+        let idx = band_idx / L + (res_i % I) % stride;
+        slow_extract_epi16(_mm256_load_si256(delta_Dx0_ptr.offset(idx as isize)), (res_i % I) / L) as i32
+    };
 
     alloc::dealloc(query_buf_ptr as *mut u8, query_buf_layout);
     alloc::dealloc(delta_Dx0_ptr as *mut u8, delta_Dx0_layout);
     alloc::dealloc(delta_Cx0_ptr as *mut u8, delta_Cx0_layout);
     alloc::dealloc(abs_Ax0_ptr as *mut u8, abs_Ax0_layout);
+
+    res_score
 }
 
-pub fn scan_traceback_avx2() {
+/*pub fn scan_traceback_avx2() {
 
+}*/
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[allow(dead_code)]
+fn dbg_avx(v: __m256i) {
+    let a = [0i16; L];
+    _mm256_storeu_si256(a.as_mut_ptr() as *mut __m256i, v);
+
+    for i in (0..a.len()).rev() {
+        print!(a[i]);
+        print!(" ");
+    }
+    println!();
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[allow(dead_code)]
+fn dbg_sse(v: __m128i) {
+    let a = [0i8; L];
+    _mm_storeu_si128(a.as_mut_ptr() as *mut __m128i, v);
+
+    for i in (0..a.len()).rev() {
+        print!(a[i]);
+        print!(" ");
+    }
+    println!();
 }

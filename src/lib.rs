@@ -1,1 +1,2 @@
-pub mod scan_delta_avx2;
+pub mod scan_avx2;
+pub mod matrix;
