@@ -1,17 +1,17 @@
 #[repr(align(32))]
 pub struct Scores {
-    pub data: [u8; 27 * 32]
+    pub data: [i8; 27 * 32]
 }
 
 impl Scores {
     #[inline]
-    fn get(&self, i: usize) -> *const u8 {
-        debug_assert!(i >= 0 && i < 27);
+    unsafe fn as_ptr(&self, i: usize) -> *const i8 {
+        debug_assert!(i < 27);
         self.data.as_ptr().offset((i as isize) * 32)
     }
 }
 
-static BLOSUM62 = Scores { data: [include!("../matrices/BLOSUM62")] };
+pub static BLOSUM62: Scores = Scores { data: include!("../matrices/BLOSUM62") };
 
 pub struct Matrix {
     scores: Scores,
@@ -20,13 +20,13 @@ pub struct Matrix {
 }
 
 impl Matrix {
-    pub fn new(scores: Scores, gap_open: i8, gap_extend: i8) {
+    pub fn new(scores: Scores, gap_open: i8, gap_extend: i8) -> Self {
         Matrix { scores, gap_open, gap_extend }
     }
 
     #[inline]
-    pub fn get(&self, i: usize) -> *const u8 {
-        self.scores.get(i)
+    pub fn as_ptr(&self, i: usize) -> *const i8 {
+        unsafe { self.scores.as_ptr(i) }
     }
 
     #[inline]

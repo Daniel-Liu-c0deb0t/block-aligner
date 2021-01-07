@@ -35,8 +35,13 @@ for name in names:
     for col in df.columns:
         df[col] = df[col].astype(int)
 
+    res = "[" + df.to_csv(index = False, header = False) + "]"
+    res = res.replace("\n", ",\n")
+    res_path = base_local_path + name
+
     print(name)
     print(df)
     print()
 
-    df.to_csv(base_local_path + name, index = False, header = False)
+    with open(res_path, "w") as f:
+        f.write(res)
