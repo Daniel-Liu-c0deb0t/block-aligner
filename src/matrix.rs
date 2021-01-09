@@ -1,4 +1,5 @@
 #[repr(align(32))]
+#[derive(Clone)]
 pub struct Scores {
     pub data: [i8; 27 * 32]
 }

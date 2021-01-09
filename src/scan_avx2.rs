@@ -122,7 +122,7 @@ unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, stride_gap_scal
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[allow(non_snake_case)]
-pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K_half: usize) -> i32 {
+pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half: usize) -> i32 {
     let K = K_half * 2 + 1;
     let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of 16
     let ceil_len_bytes = ceil_len * 2;
@@ -155,7 +155,7 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
                 ptr::write(query_buf_ptr.offset(buf_idx), convert_char(if i > 0 {
                     *query.get_unchecked(i as usize - 1) } else { NULL }));
 
-                let val = if i > 0 { matrix.gap_open() as i32 } else { 0 } + (i as i32) * (matrix.gap_extend() as i32);
+                let val = if i > 0 { (matrix.gap_open() as i32) + ((i as i32) - 1) * (matrix.gap_extend() as i32) } else { 0 };
 
                 if idx % (I as isize) == 0 {
                     ptr::write(abs_Ax0_ptr.offset(interval_idx), val);
@@ -200,8 +200,8 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
         let scores2 = _mm_load_si128((matrix_ptr as *const __m128i).offset(1));
         let mut band_idx = 0usize;
 
-        let mut abs_R_interval = i32::MIN;
-        let mut abs_D_interval = i32::MIN;
+        let mut abs_R_interval = *abs_Ax0_ptr;
+        let mut abs_D_interval = *abs_Ax0_ptr;
 
         while band_idx < K {
             let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
@@ -302,7 +302,7 @@ pub unsafe fn scan_score_avx2(reference: &[u8], query: &[u8], matrix: &Matrix, K
 
             // Begin final pass
             {
-                let mut delta_R01 = _mm256_subs_epi16(_mm256_adds_epi16(delta_R_max, gap_extend), gap_open);
+                let mut delta_R01 = _mm256_adds_epi16(_mm256_subs_epi16(delta_R_max, gap_extend), gap_open);
                 let mut delta_D01 = _mm256_insert_epi16(neg_inf, (abs_D_interval - abs_interval) as i16, 0);
 
                 for i in 0..stride {
@@ -385,6 +385,8 @@ mod tests {
 
     use super::*;
 
+    use crate::matrix::*;
+
     #[test]
     fn test_prefix_scan() {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -405,6 +407,25 @@ mod tests {
         let vec = _mm256_set_epi16(11, 14, 13, 12, 15, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
         let res = prefix_scan(vec, _mm256_set1_epi16(-1), -1, _mm256_set1_epi16(i16::MIN));
         assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
+    }
+
+    #[test]
+    fn test_scan_align() {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            if is_x86_feature_detected!("avx2") {
+                unsafe { test_scan_align_core() };
+            }
+        }
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[target_feature(enable = "avx2")]
+    unsafe fn test_scan_align_core() {
+        let r = b"AAAA";
+        let q = b"AARA";
+        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 1);
+        assert_eq!(res, -1);
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
