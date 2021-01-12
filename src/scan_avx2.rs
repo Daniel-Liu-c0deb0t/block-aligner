@@ -118,13 +118,19 @@ unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, stride_gap_scal
 //
 // A band consists of multiple intervals. Each interval is made up of strided vectors.
 
-/// Ensure that the reference and the query are uppercase alphabetical letters.
+/// Banded alignment.
+///
+/// Limitations:
+/// 1. Requires AVX2 support.
+/// 2. The reference and the query can only contain uppercase alphabetical characters.
+/// 3. The actual size of the band is K_half * 2 + 1 rounded up to the next multiple of the
+///    vector length of 16.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[allow(non_snake_case)]
 pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half: usize) -> i32 {
     let K = K_half * 2 + 1;
-    let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of 16
+    let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of L
     let ceil_len_bytes = ceil_len * 2;
     let num_intervals = (K + I - 1) / I;
 
@@ -149,9 +155,9 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
             let i = idx - (K_half as isize);
             let interval_idx = idx / (I as isize);
             let stride = (cmp::min(I as isize, (K as isize) - interval_idx * (I as isize)) + (L as isize) - 1) / (L as isize);
-            let buf_idx = interval_idx * (I as isize) + idx % stride;
+            let buf_idx = interval_idx * (I as isize) + ((idx % stride) * (L as isize) + (idx / stride));
 
-            if i >= 0 && i < query.len() as isize {
+            if i >= 0 && i <= query.len() as isize {
                 ptr::write(query_buf_ptr.offset(buf_idx), convert_char(if i > 0 {
                     *query.get_unchecked(i as usize - 1) } else { NULL }));
 
@@ -191,7 +197,7 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
     // TODO: x drop
     // TODO: wasm
     // TODO: adaptive banding
-    // TODO: can we not save array of abs?
+    // TODO: faster support for nucleotides
     // TODO: traceback
 
     for j in 0..reference.len() {
@@ -219,7 +225,10 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
                 let delta_Dx0_idx = delta_Dx0_ptr.offset(idx);
                 // Save first vector of the previous interval before it is replaced
                 delta_D00 = _mm256_load_si256(delta_Dx0_idx);
-                abs_interval += _mm256_extract_epi16(delta_D00, 0) as i32;
+
+                if shift_idx >= 0 {
+                    abs_interval += _mm256_extract_epi16(delta_D00, 0) as i32;
+                }
 
                 let query_insert;
                 let delta_Dx0_insert;
@@ -258,6 +267,7 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
             // Vector for prefix scan calculations
             let mut delta_R_max = neg_inf;
             let abs_offset = _mm256_set1_epi16((*abs_Ax0_ptr.offset((band_idx / I) as isize) - abs_interval) as i16);
+            delta_D00 = _mm256_adds_epi16(delta_D00, abs_offset);
 
             // Begin initial pass
             {
@@ -333,7 +343,11 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
         let band_idx = (res_i / I) * I;
         let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
         let idx = band_idx / L + (res_i % I) % stride;
-        slow_extract_epi16(_mm256_load_si256(delta_Dx0_ptr.offset(idx as isize)), (res_i % I) / stride) as i32
+
+        let delta = slow_extract_epi16(_mm256_load_si256(delta_Dx0_ptr.offset(idx as isize)), (res_i % I) / stride) as i32;
+        let abs = *abs_Ax0_ptr.offset((res_i / I) as isize);
+
+        delta + abs
     };
 
     alloc::dealloc(query_buf_ptr as *mut u8, query_buf_layout);
@@ -356,8 +370,7 @@ unsafe fn dbg_avx(v: __m256i) {
     _mm256_storeu_si256(a.as_mut_ptr() as *mut __m256i, v);
 
     for i in (0..a.len()).rev() {
-        print!("{}", a[i]);
-        print!(" ");
+        print!("{:6} ", a[i]);
     }
     println!();
 }
@@ -370,8 +383,7 @@ unsafe fn dbg_sse(v: __m128i) {
     _mm_storeu_si128(a.as_mut_ptr() as *mut __m128i, v);
 
     for i in (0..a.len()).rev() {
-        print!("{}", a[i]);
-        print!(" ");
+        print!("{:2} ", a[i]);
     }
     println!();
 }
@@ -425,7 +437,32 @@ mod tests {
         let r = b"AAAA";
         let q = b"AARA";
         let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 1);
-        assert_eq!(res, -1);
+        assert_eq!(res, 11);
+
+        let r = b"AAAA";
+        let q = b"AARA";
+        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 3);
+        assert_eq!(res, 11);
+
+        let r = b"AAAA";
+        let q = b"AAAA";
+        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 1);
+        assert_eq!(res, 16);
+
+        let r = b"AAAA";
+        let q = b"AARA";
+        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 0);
+        assert_eq!(res, 11);
+
+        let r = b"AAAA";
+        let q = b"RRRR";
+        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 4);
+        assert_eq!(res, -4);
+
+        let r = b"AAAA";
+        let q = b"AAA";
+        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 1);
+        assert_eq!(res, 1);
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
