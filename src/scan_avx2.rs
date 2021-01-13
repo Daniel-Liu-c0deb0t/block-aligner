@@ -3,9 +3,9 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use std::{alloc, cmp, ptr};
+use std::{alloc, cmp, ptr, i16};
 
-use crate::matrix::Matrix;
+use crate::scores::*;
 
 const L: usize = 16usize;
 const L_BYTES: usize = 32usize;
@@ -123,13 +123,13 @@ unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, stride_gap_scal
 /// Limitations:
 /// 1. Requires AVX2 support.
 /// 2. The reference and the query can only contain uppercase alphabetical characters.
-/// 3. The actual size of the band is K_half * 2 + 1 rounded up to the next multiple of the
+/// 3. The actual size of the band is K_HALF * 2 + 1 rounded up to the next multiple of the
 ///    vector length of 16.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[allow(non_snake_case)]
-pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half: usize) -> i32 {
-    let K = K_half * 2 + 1;
+pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, const NUC: bool>(reference: &[u8], query: &[u8], matrix: &SubMatrix) -> i32 {
+    let K = K_HALF * 2 + 1;
     let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of L
     let ceil_len_bytes = ceil_len * 2;
     let num_intervals = (K + I - 1) / I;
@@ -151,34 +151,34 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
     {
         let mut abs_prev = 0;
 
-        for idx in 0..(ceil_len as isize) {
-            let i = idx - (K_half as isize);
-            let interval_idx = idx / (I as isize);
-            let stride = (cmp::min(I as isize, (K as isize) - interval_idx * (I as isize)) + (L as isize) - 1) / (L as isize);
-            let buf_idx = interval_idx * (I as isize) + ((idx % stride) * (L as isize) + (idx / stride));
+        for idx in 0..ceil_len {
+            let i = (idx as isize) - (K_HALF as isize);
+            let interval_idx = idx / I;
+            let stride = (cmp::min(I, K - interval_idx * I) + L - 1) / L;
+            let buf_idx = interval_idx * I + ((idx % stride) * L + idx / stride);
 
             if i >= 0 && i <= query.len() as isize {
-                ptr::write(query_buf_ptr.offset(buf_idx), convert_char(if i > 0 {
+                ptr::write(query_buf_ptr.add(buf_idx), convert_char(if i > 0 {
                     *query.get_unchecked(i as usize - 1) } else { NULL }));
 
-                let val = if i > 0 { (matrix.gap_open() as i32) + ((i as i32) - 1) * (matrix.gap_extend() as i32) } else { 0 };
+                let val = if i > 0 { (G::GAP_OPEN as i32) + ((i as i32) - 1) * (G::GAP_EXTEND as i32) } else { 0 };
 
-                if idx % (I as isize) == 0 {
-                    ptr::write(abs_Ax0_ptr.offset(interval_idx), val);
+                if idx % I == 0 {
+                    ptr::write(abs_Ax0_ptr.add(interval_idx), val);
                     abs_prev = val;
                 }
 
-                ptr::write(delta_Dx0_ptr.offset(buf_idx), (val - abs_prev) as i16);
+                ptr::write(delta_Dx0_ptr.add(buf_idx), (val - abs_prev) as i16);
             } else {
-                if idx % (I as isize) == 0 {
-                    ptr::write(abs_Ax0_ptr.offset(interval_idx), 0);
+                if idx % I == 0 {
+                    ptr::write(abs_Ax0_ptr.add(interval_idx), 0);
                 }
 
-                ptr::write(query_buf_ptr.offset(buf_idx), convert_char(NULL));
-                ptr::write(delta_Dx0_ptr.offset(buf_idx), i16::MIN);
+                ptr::write(query_buf_ptr.add(buf_idx), convert_char(NULL));
+                ptr::write(delta_Dx0_ptr.add(buf_idx), i16::MIN);
             }
 
-            ptr::write(delta_Cx0_ptr.offset(buf_idx), i16::MIN);
+            ptr::write(delta_Cx0_ptr.add(buf_idx), i16::MIN);
         }
     }
 
@@ -186,12 +186,12 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
     let delta_Dx0_ptr = delta_Dx0_ptr as *mut __m256i;
     let delta_Cx0_ptr = delta_Cx0_ptr as *mut __m256i;
 
-    let mut query_idx = ceil_len - K_half - 1;
-    let mut shift_idx = -(K_half as isize);
+    let mut query_idx = ceil_len - K_HALF - 1;
+    let mut shift_idx = -(K_HALF as isize);
     let mut ring_buf_idx = 0usize;
 
-    let gap_open = _mm256_set1_epi16(matrix.gap_open() as i16);
-    let gap_extend = _mm256_set1_epi16(matrix.gap_extend() as i16);
+    let gap_open = _mm256_set1_epi16(G::GAP_OPEN as i16);
+    let gap_extend = _mm256_set1_epi16(G::GAP_EXTEND as i16);
     let neg_inf = _mm256_set1_epi16(i16::MIN);
 
     // TODO: x drop
@@ -203,7 +203,7 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
     for j in 0..reference.len() {
         let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)) as usize);
         let scores1 = _mm_load_si128(matrix_ptr as *const __m128i);
-        let scores2 = _mm_load_si128((matrix_ptr as *const __m128i).offset(1));
+        let scores2 = _mm_load_si128((matrix_ptr as *const __m128i).add(1));
         let mut band_idx = 0usize;
 
         let mut abs_R_interval = *abs_Ax0_ptr;
@@ -212,17 +212,17 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
         while band_idx < K {
             let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
 
-            let stride_gap_scalar = (stride as i16) * (matrix.gap_extend() as i16);
+            let stride_gap_scalar = (stride as i16) * (G::GAP_EXTEND as i16);
             let stride_gap = _mm256_set1_epi16(stride_gap_scalar);
             let mut delta_D00;
-            let mut abs_interval = *abs_Ax0_ptr.offset((band_idx / I) as isize);
+            let mut abs_interval = *abs_Ax0_ptr.add(band_idx / I);
 
             // Update ring buffers to slide current band down
             {
                 let next_band_idx = band_idx + I;
 
-                let idx = (band_idx / L + ring_buf_idx % stride) as isize;
-                let delta_Dx0_idx = delta_Dx0_ptr.offset(idx);
+                let idx = band_idx / L + ring_buf_idx % stride;
+                let delta_Dx0_idx = delta_Dx0_ptr.add(idx);
                 // Save first vector of the previous interval before it is replaced
                 delta_D00 = _mm256_load_si256(delta_Dx0_idx);
 
@@ -243,17 +243,17 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
                 } else {
                     // Not the last interval; need to shift in a value from the next interval
                     let next_stride = (cmp::min(I, K - next_band_idx) + L - 1) / L;
-                    let next_idx = (next_band_idx / L + ring_buf_idx % next_stride) as isize;
-                    let next_abs_interval = *abs_Ax0_ptr.offset((next_band_idx / I) as isize);
+                    let next_idx = next_band_idx / L + ring_buf_idx % next_stride;
+                    let next_abs_interval = *abs_Ax0_ptr.add(next_band_idx / I);
                     let abs_offset = _mm256_set1_epi16((next_abs_interval - abs_interval) as i16);
 
-                    query_insert = _mm_load_si128(query_buf_ptr.offset(next_idx));
-                    delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.offset(next_idx)), abs_offset);
-                    delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.offset(next_idx)), abs_offset);
+                    query_insert = _mm_load_si128(query_buf_ptr.add(next_idx));
+                    delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(next_idx)), abs_offset);
+                    delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.add(next_idx)), abs_offset);
                 }
 
-                let query_buf_idx = query_buf_ptr.offset(idx);
-                let delta_Cx0_idx = delta_Cx0_ptr.offset(idx);
+                let query_buf_idx = query_buf_ptr.add(idx);
+                let delta_Cx0_idx = delta_Cx0_ptr.add(idx);
 
                 // Now shift in new values for each interval
                 _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
@@ -266,7 +266,7 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
 
             // Vector for prefix scan calculations
             let mut delta_R_max = neg_inf;
-            let abs_offset = _mm256_set1_epi16((*abs_Ax0_ptr.offset((band_idx / I) as isize) - abs_interval) as i16);
+            let abs_offset = _mm256_set1_epi16((*abs_Ax0_ptr.add(band_idx / I) - abs_interval) as i16);
             delta_D00 = _mm256_adds_epi16(delta_D00, abs_offset);
 
             // Begin initial pass
@@ -274,14 +274,14 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
                 let mut extend_to_end = stride_gap;
 
                 for i in 0..stride {
-                    let idx = (band_idx / L + (ring_buf_idx + i) % stride) as isize;
+                    let idx = band_idx / L + (ring_buf_idx + i) % stride;
 
                     let scores = _mm256_lookupepi8_epi16(scores1, scores2,
-                                                         _mm_load_si128(query_buf_ptr.offset(idx)));
+                                                         _mm_load_si128(query_buf_ptr.add(idx)));
                     let mut delta_D11 = _mm256_adds_epi16(delta_D00, scores);
 
-                    let delta_D10 = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.offset(idx)), abs_offset);
-                    let delta_C10 = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.offset(idx)), abs_offset);
+                    let delta_D10 = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(idx)), abs_offset);
+                    let delta_C10 = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.add(idx)), abs_offset);
                     let delta_C11 = _mm256_max_epi16(_mm256_adds_epi16(delta_C10, gap_extend), _mm256_adds_epi16(delta_D10, gap_open));
 
                     delta_D11 = _mm256_max_epi16(delta_D11, delta_C11);
@@ -290,8 +290,8 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
                     delta_R_max = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(delta_D11, extend_to_end));
 
                     // Slide band right by directly overwriting the previous band
-                    _mm256_store_si256(delta_Dx0_ptr.offset(idx), delta_D11);
-                    _mm256_store_si256(delta_Cx0_ptr.offset(idx), delta_C11);
+                    _mm256_store_si256(delta_Dx0_ptr.add(idx), delta_D11);
+                    _mm256_store_si256(delta_Cx0_ptr.add(idx), delta_C11);
 
                     delta_D00 = delta_D10;
                 }
@@ -316,13 +316,13 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
                 let mut delta_D01 = _mm256_insert_epi16(neg_inf, (abs_D_interval - abs_interval) as i16, 0);
 
                 for i in 0..stride {
-                    let idx = (band_idx / L + (ring_buf_idx + i) % stride) as isize;
+                    let idx = band_idx / L + (ring_buf_idx + i) % stride;
 
                     let delta_R11 = _mm256_max_epi16(_mm256_adds_epi16(delta_R01, gap_extend), _mm256_adds_epi16(delta_D01, gap_open));
-                    let mut delta_D11 = _mm256_load_si256(delta_Dx0_ptr.offset(idx));
+                    let mut delta_D11 = _mm256_load_si256(delta_Dx0_ptr.add(idx));
                     delta_D11 = _mm256_max_epi16(delta_D11, delta_R11);
 
-                    _mm256_store_si256(delta_Dx0_ptr.offset(idx), delta_D11);
+                    _mm256_store_si256(delta_Dx0_ptr.add(idx), delta_D11);
 
                     delta_D01 = delta_D11;
                     delta_R01 = delta_R11;
@@ -332,7 +332,7 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
             }
             // End final pass
 
-            *abs_Ax0_ptr.offset((band_idx / I) as isize) = abs_interval;
+            *abs_Ax0_ptr.add(band_idx / I) = abs_interval;
             band_idx += I;
             shift_idx += 1;
         }
@@ -344,8 +344,8 @@ pub unsafe fn scan_align(reference: &[u8], query: &[u8], matrix: &Matrix, K_half
         let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
         let idx = band_idx / L + (res_i % I) % stride;
 
-        let delta = slow_extract_epi16(_mm256_load_si256(delta_Dx0_ptr.offset(idx as isize)), (res_i % I) / stride) as i32;
-        let abs = *abs_Ax0_ptr.offset((res_i / I) as isize);
+        let delta = slow_extract_epi16(_mm256_load_si256(delta_Dx0_ptr.add(idx)), (res_i % I) / stride) as i32;
+        let abs = *abs_Ax0_ptr.add(res_i / I);
 
         delta + abs
     };
@@ -395,9 +395,9 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::*;
 
-    use super::*;
+    use crate::scores::*;
 
-    use crate::matrix::*;
+    use super::*;
 
     #[test]
     fn test_prefix_scan() {
@@ -434,34 +434,36 @@ mod tests {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
     unsafe fn test_scan_align_core() {
+        type Scores = Gap<-11, -1>;
+
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 1);
+        let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
         assert_eq!(res, 11);
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 3);
+        let res = scan_align::<Scores, 3, false, false>(r, q, &BLOSUM62);
         assert_eq!(res, 11);
 
         let r = b"AAAA";
         let q = b"AAAA";
-        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 1);
+        let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
         assert_eq!(res, 16);
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 0);
+        let res = scan_align::<Scores, 0, false, false>(r, q, &BLOSUM62);
         assert_eq!(res, 11);
 
         let r = b"AAAA";
         let q = b"RRRR";
-        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 4);
+        let res = scan_align::<Scores, 4, false, false>(r, q, &BLOSUM62);
         assert_eq!(res, -4);
 
         let r = b"AAAA";
         let q = b"AAA";
-        let res = scan_align(r, q, &Matrix::new(BLOSUM62.clone(), -11, -1), 1);
+        let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
         assert_eq!(res, 1);
     }
 
