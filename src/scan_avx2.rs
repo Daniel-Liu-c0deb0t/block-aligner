@@ -104,6 +104,11 @@ unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, stride_gap_scal
     // D C B A  D C B A
 }
 
+#[inline]
+fn clamp(x: i32) -> i16 {
+    cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
+}
+
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11, gap extend = -1
 //
 // R[i][j] = max(R[i - 1][j] + gap_extend, D[i - 1][j] + gap_open)
@@ -208,8 +213,8 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     // TODO: x drop
     // TODO: wasm
     // TODO: adaptive banding
-    // TODO: faster support for nucleotides
-    // TODO: clamp abs?
+    // TODO: faster support for nucleotides and const I
+    // TODO: abstract into class for step by step
 
     for j in 0..reference.len() {
         let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)) as usize);
@@ -237,8 +242,8 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 // Save first vector of the previous interval before it is replaced
                 delta_D00 = _mm256_load_si256(delta_Dx0_idx);
 
-                if shift_idx >= 0 {
-                    abs_interval += _mm256_extract_epi16(delta_D00, 0) as i32;
+                if shift_idx + (band_idx as isize) >= 0 {
+                    abs_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D00, 0) as i32);
                 }
 
                 let query_insert;
@@ -256,7 +261,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     let next_stride = (cmp::min(I, K - next_band_idx) + L - 1) / L;
                     let next_idx = next_band_idx / L + ring_buf_idx % next_stride;
                     let next_abs_interval = *abs_Ax0_ptr.add(next_band_idx / I);
-                    let abs_offset = _mm256_set1_epi16((next_abs_interval - abs_interval) as i16);
+                    let abs_offset = _mm256_set1_epi16(clamp(next_abs_interval - abs_interval));
 
                     query_insert = _mm_load_si128(query_buf_ptr.add(next_idx));
                     delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(next_idx)), abs_offset);
@@ -270,14 +275,11 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
                 _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(delta_Dx0_insert, delta_D00));
                 _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(delta_Cx0_insert, _mm256_load_si256(delta_Cx0_idx)));
-
-                ring_buf_idx += 1;
-                query_idx += 1;
             }
 
             // Vector for prefix scan calculations
             let mut delta_R_max = neg_inf;
-            let abs_offset = _mm256_set1_epi16((*abs_Ax0_ptr.add(band_idx / I) - abs_interval) as i16);
+            let abs_offset = _mm256_set1_epi16(clamp(*abs_Ax0_ptr.add(band_idx / I) - abs_interval));
             delta_D00 = _mm256_adds_epi16(delta_D00, abs_offset);
 
             // Begin initial pass
@@ -285,7 +287,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 let mut extend_to_end = stride_gap;
 
                 for i in 0..stride {
-                    let idx = band_idx / L + (ring_buf_idx + i) % stride;
+                    let idx = band_idx / L + (ring_buf_idx + 1 + i) % stride;
 
                     let scores = _mm256_lookupepi8_epi16(scores1, scores2,
                                                          _mm_load_si128(query_buf_ptr.add(idx)));
@@ -318,21 +320,21 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
             {
                 let delta_R_max_last = _mm256_extract_epi16(delta_R_max, L as i32 - 1) as i32;
                 delta_R_max = _mm256_sl_epi16(delta_R_max, neg_inf);
-                delta_R_max = _mm256_insert_epi16(delta_R_max, (abs_R_interval - abs_interval) as i16, 0);
+                delta_R_max = _mm256_insert_epi16(delta_R_max, clamp(abs_R_interval - abs_interval), 0);
 
                 delta_R_max = prefix_scan(delta_R_max, stride_gap, stride_gap_scalar, neg_inf);
 
-                abs_R_interval = abs_interval + cmp::max(delta_R_max_last, _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i32);
+                abs_R_interval = abs_interval.saturating_add(cmp::max(delta_R_max_last, _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i32));
             }
             // End prefix scan
 
             // Begin final pass
             {
                 let mut delta_R01 = _mm256_adds_epi16(_mm256_subs_epi16(delta_R_max, gap_extend), gap_open);
-                let mut delta_D01 = _mm256_insert_epi16(neg_inf, (abs_D_interval - abs_interval) as i16, 0);
+                let mut delta_D01 = _mm256_insert_epi16(neg_inf, clamp(abs_D_interval - abs_interval), 0);
 
                 for i in 0..stride {
-                    let idx = band_idx / L + (ring_buf_idx + i) % stride;
+                    let idx = band_idx / L + (ring_buf_idx + 1 + i) % stride;
 
                     let delta_R11 = _mm256_max_epi16(_mm256_adds_epi16(delta_R01, gap_extend), _mm256_adds_epi16(delta_D01, gap_open));
                     let mut delta_D11 = _mm256_load_si256(delta_Dx0_ptr.add(idx));
@@ -351,14 +353,17 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     delta_R01 = delta_R11;
                 }
 
-                abs_D_interval = abs_interval + (_mm256_extract_epi16(delta_D01, L as i32 - 1) as i32);
+                abs_D_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D01, L as i32 - 1) as i32);
             }
             // End final pass
 
             *abs_Ax0_ptr.add(band_idx / I) = abs_interval;
             band_idx += I;
-            shift_idx += 1;
         }
+
+        ring_buf_idx += 1;
+        query_idx += 1;
+        shift_idx += 1;
     }
 
     // Extract the score from the last band
