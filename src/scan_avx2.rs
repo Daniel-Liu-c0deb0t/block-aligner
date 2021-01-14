@@ -128,7 +128,7 @@ unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, stride_gap_scal
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[allow(non_snake_case)]
-pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, const NUC: bool>(reference: &[u8], query: &[u8], matrix: &SubMatrix) -> i32 {
+pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, const NUC: bool>(reference: &[u8], query: &[u8], matrix: &SubMatrix) -> (i32, Option<Vec<u32>>) {
     let K = K_HALF * 2 + 1;
     let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of L
     let ceil_len_bytes = ceil_len * 2;
@@ -147,6 +147,17 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     // 32-bit absolute values
     let abs_Ax0_layout = alloc::Layout::from_size_align_unchecked(num_intervals * 4, 4);
     let abs_Ax0_ptr = alloc::alloc(abs_Ax0_layout) as *mut i32;
+
+    // optional 32-bit traceback
+    // 0b00 = up and left, 0b10 or 0b11 = up, 0b01 = left
+    let mut trace;
+    let even_bits = 0x55555555u32;
+
+    if TRACE {
+        trace = vec![even_bits << 1; (reference.len() + 1) * ceil_len / L];
+    } else {
+        trace = vec![];
+    }
 
     {
         let mut abs_prev = 0;
@@ -198,7 +209,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     // TODO: wasm
     // TODO: adaptive banding
     // TODO: faster support for nucleotides
-    // TODO: traceback
+    // TODO: clamp abs?
 
     for j in 0..reference.len() {
         let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)) as usize);
@@ -286,6 +297,11 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
 
                     delta_D11 = _mm256_max_epi16(delta_D11, delta_C11);
 
+                    if TRACE {
+                        let trace_idx = (ceil_len / L) * (j + 1) + band_idx / L + i;
+                        *trace.get_unchecked_mut(trace_idx) = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_C11, delta_D11)) as u32;
+                    }
+
                     extend_to_end = _mm256_subs_epi16(extend_to_end, gap_extend);
                     delta_R_max = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(delta_D11, extend_to_end));
 
@@ -322,6 +338,13 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     let mut delta_D11 = _mm256_load_si256(delta_Dx0_ptr.add(idx));
                     delta_D11 = _mm256_max_epi16(delta_D11, delta_R11);
 
+                    if TRACE {
+                        let trace_idx = (ceil_len / L) * (j + 1) + band_idx / L + i;
+                        let prev_trace = *trace.get_unchecked(trace_idx);
+                        let curr_trace = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_R11, delta_D11)) as u32;
+                        *trace.get_unchecked_mut(trace_idx) = (prev_trace & even_bits) | ((curr_trace & even_bits) << 1);
+                    }
+
                     _mm256_store_si256(delta_Dx0_ptr.add(idx), delta_D11);
 
                     delta_D01 = delta_D11;
@@ -338,6 +361,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
         }
     }
 
+    // Extract the score from the last band
     let res_score = {
         let res_i = ((query.len() as isize) - shift_idx) as usize;
         let band_idx = (res_i / I) * I;
@@ -355,7 +379,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     alloc::dealloc(delta_Cx0_ptr as *mut u8, delta_Cx0_layout);
     alloc::dealloc(abs_Ax0_ptr as *mut u8, abs_Ax0_layout);
 
-    res_score
+    if TRACE { (res_score, Some(trace)) } else { (res_score, None) }
 }
 
 /*pub fn scan_traceback_avx2() {
@@ -439,32 +463,32 @@ mod tests {
         let r = b"AAAA";
         let q = b"AARA";
         let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
-        assert_eq!(res, 11);
+        assert_eq!(res.0, 11);
 
         let r = b"AAAA";
         let q = b"AARA";
         let res = scan_align::<Scores, 3, false, false>(r, q, &BLOSUM62);
-        assert_eq!(res, 11);
+        assert_eq!(res.0, 11);
 
         let r = b"AAAA";
         let q = b"AAAA";
         let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
-        assert_eq!(res, 16);
+        assert_eq!(res.0, 16);
 
         let r = b"AAAA";
         let q = b"AARA";
         let res = scan_align::<Scores, 0, false, false>(r, q, &BLOSUM62);
-        assert_eq!(res, 11);
+        assert_eq!(res.0, 11);
 
         let r = b"AAAA";
         let q = b"RRRR";
         let res = scan_align::<Scores, 4, false, false>(r, q, &BLOSUM62);
-        assert_eq!(res, -4);
+        assert_eq!(res.0, -4);
 
         let r = b"AAAA";
         let q = b"AAA";
         let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
-        assert_eq!(res, 1);
+        assert_eq!(res.0, 1);
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
