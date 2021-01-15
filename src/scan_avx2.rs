@@ -215,6 +215,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     // TODO: adaptive banding
     // TODO: faster support for nucleotides and const I
     // TODO: abstract into class for step by step
+    // TODO: early exit??
 
     for j in 0..reference.len() {
         let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)) as usize);
@@ -246,16 +247,18 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     abs_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D00, 0) as i32);
                 }
 
-                let query_insert;
-                let delta_Dx0_insert;
-                let delta_Cx0_insert;
+                let query_buf_idx = query_buf_ptr.add(idx);
+                let delta_Cx0_idx = delta_Cx0_ptr.add(idx);
 
                 if next_band_idx >= K {
                     // This must be the last interval
                     let c = if query_idx < query.len() { *query.get_unchecked(query_idx) } else { NULL };
-                    query_insert = _mm_set1_epi8(convert_char(c) as i8);
-                    delta_Dx0_insert = neg_inf;
-                    delta_Cx0_insert = neg_inf;
+                    let query_insert = _mm_set1_epi8(convert_char(c) as i8);
+
+                    // Now shift in new values for each interval
+                    _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
+                    _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(neg_inf, delta_D00));
+                    _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(neg_inf, _mm256_load_si256(delta_Cx0_idx)));
                 } else {
                     // Not the last interval; need to shift in a value from the next interval
                     let next_stride = (cmp::min(I, K - next_band_idx) + L - 1) / L;
@@ -263,18 +266,15 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     let next_abs_interval = *abs_Ax0_ptr.add(next_band_idx / I);
                     let abs_offset = _mm256_set1_epi16(clamp(next_abs_interval - abs_interval));
 
-                    query_insert = _mm_load_si128(query_buf_ptr.add(next_idx));
-                    delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(next_idx)), abs_offset);
-                    delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.add(next_idx)), abs_offset);
+                    let query_insert = _mm_load_si128(query_buf_ptr.add(next_idx));
+                    let delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(next_idx)), abs_offset);
+                    let delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.add(next_idx)), abs_offset);
+
+                    // Now shift in new values for each interval
+                    _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
+                    _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(delta_Dx0_insert, delta_D00));
+                    _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(delta_Cx0_insert, _mm256_load_si256(delta_Cx0_idx)));
                 }
-
-                let query_buf_idx = query_buf_ptr.add(idx);
-                let delta_Cx0_idx = delta_Cx0_ptr.add(idx);
-
-                // Now shift in new values for each interval
-                _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
-                _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(delta_Dx0_insert, delta_D00));
-                _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(delta_Cx0_insert, _mm256_load_si256(delta_Cx0_idx)));
             }
 
             // Vector for prefix scan calculations
@@ -386,10 +386,6 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
 
     if TRACE { (res_score, Some(trace)) } else { (res_score, None) }
 }
-
-/*pub fn scan_traceback_avx2() {
-
-}*/
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
