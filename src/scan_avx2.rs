@@ -56,6 +56,20 @@ unsafe fn _mm256_sl_epi64(v: __m256i, zeros: __m256i) -> __m256i {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
+unsafe fn _mm256_sl_epi128(v: __m256i, zeros: __m256i) -> __m256i {
+    _mm256_permute2x128_si256(v, zeros, 0x02)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn _mm256_sl_epi192(v: __m256i, zeros: __m256i) -> __m256i {
+    _mm256_alignr_epi8(_mm256_permute2x128_si256(v, zeros, 0x02), zeros, 8)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[inline]
 unsafe fn slow_extract_epi16(v: __m256i, i: usize) -> i16 {
     debug_assert!(i < L);
 
@@ -87,33 +101,47 @@ unsafe fn hmax(mut v: __m256i) -> i16 {
 #[target_feature(enable = "avx2")]
 #[inline]
 #[allow(non_snake_case)]
-unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, neg_inf: __m256i) -> __m256i {
+unsafe fn prefix_scan_epi16(delta_R_max: __m256i, stride_gap: __m256i, neg_inf: __m256i) -> __m256i {
     let stride_gap2 = _mm256_adds_epi16(stride_gap, stride_gap);
     let stride_gap4 = _mm256_adds_epi16(stride_gap2, stride_gap2);
 
-    // D C B A  D C B A
+    // D C B A  D C B A  D C B A  D C B A
     let reduce1 = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(stride_gap, _mm256_slli_si256(delta_R_max, 2)));
-    // D   B    D   B
+    // D   B    D   B    D   B    D   B
     let mut reduce2 = _mm256_max_epi16(reduce1, _mm256_adds_epi16(stride_gap2, _mm256_slli_si256(reduce1, 4)));
-    // D        D
+    // D        D        D        D
 
-    for _ in 0..(L / 4 - 1) {
-        let prev = reduce2;
-        reduce2 = _mm256_sl_epi64(reduce2, neg_inf);
-        reduce2 = _mm256_adds_epi16(reduce2, stride_gap4);
-        reduce2 = _mm256_max_epi16(reduce2, prev);
+    // Unrolled loop with multiple accumulators for prefix add and max
+    {
+        let shift0 = reduce2;
+        let mut shift4 = _mm256_sl_epi64(reduce2, neg_inf);
+        let mut shift8 = _mm256_sl_epi128(reduce2, neg_inf);
+        let mut shift12 = _mm256_sl_epi192(reduce2, neg_inf);
+
+        let mut stride_gap_sum = stride_gap4;
+        shift4 = _mm256_adds_epi16(shift4, stride_gap_sum);
+        shift4 = _mm256_max_epi16(shift0, shift4);
+
+        stride_gap_sum = _mm256_adds_epi16(stride_gap_sum, stride_gap4);
+        shift8 = _mm256_adds_epi16(shift8, stride_gap_sum);
+
+        stride_gap_sum = _mm256_adds_epi16(stride_gap_sum, stride_gap4);
+        shift12 = _mm256_adds_epi16(shift12, stride_gap_sum);
+        shift12 = _mm256_max_epi16(shift8, shift12);
+
+        reduce2 = _mm256_max_epi16(shift4, shift12);
     }
     // reduce2
-    // D        D
+    // D        D        D        D
 
     let unreduce1_mid = _mm256_max_epi16(_mm256_adds_epi16(_mm256_sl_epi32(reduce2, neg_inf), stride_gap2), reduce1);
-    //     B        B
+    //     B        B        B        B
     let unreduce1 = _mm256_blend_epi16(reduce2, unreduce1_mid, 0b0010_0010_0010_0010);
-    // D   B    D   B
+    // D   B    D   B    D   B    D   B
     let unreduce2 = _mm256_max_epi16(_mm256_adds_epi16(_mm256_sl_epi16(unreduce1, neg_inf), stride_gap), delta_R_max);
-    //   C   A    C   A
+    //   C   A    C   A    C   A    C   A
     _mm256_blend_epi16(unreduce1, unreduce2, 0b0101_0101_0101_0101)
-    // D C B A  D C B A
+    // D C B A  D C B A  D C B A  D C B A
 }
 
 #[inline]
@@ -336,7 +364,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 delta_R_max = _mm256_sl_epi16(delta_R_max, neg_inf);
                 delta_R_max = _mm256_insert_epi16(delta_R_max, clamp(abs_R_interval - abs_interval), 0);
 
-                delta_R_max = prefix_scan(delta_R_max, stride_gap, neg_inf);
+                delta_R_max = prefix_scan_epi16(delta_R_max, stride_gap, neg_inf);
 
                 abs_R_interval = abs_interval.saturating_add(cmp::max(delta_R_max_last, _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i32));
             }
@@ -452,11 +480,11 @@ mod tests {
     #[target_feature(enable = "avx2")]
     unsafe fn test_prefix_scan_core() {
         let vec = _mm256_set_epi16(11, 14, 13, 12, 15, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-        let res = prefix_scan(vec, _mm256_setzero_si256(), _mm256_set1_epi16(i16::MIN));
+        let res = prefix_scan_epi16(vec, _mm256_setzero_si256(), _mm256_set1_epi16(i16::MIN));
         assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = _mm256_set_epi16(11, 14, 13, 12, 15, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-        let res = prefix_scan(vec, _mm256_set1_epi16(-1), _mm256_set1_epi16(i16::MIN));
+        let res = prefix_scan_epi16(vec, _mm256_set1_epi16(-1), _mm256_set1_epi16(i16::MIN));
         assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
     }
 
