@@ -3,6 +3,8 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use std::intrinsics::unlikely;
+
 use std::{alloc, cmp, ptr, i16};
 
 use crate::scores::*;
@@ -74,10 +76,20 @@ fn convert_char(c: u8) -> u8 {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
+unsafe fn hmax(mut v: __m256i) -> i16 {
+    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 2));
+    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 4));
+    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 8));
+    cmp::max(_mm256_extract_epi16(v, 0), _mm256_extract_epi16(v, (L as i32) / 2))
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[inline]
 #[allow(non_snake_case)]
-unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, stride_gap_scalar: i16, neg_inf: __m256i) -> __m256i {
-    let stride_gap2 = _mm256_set1_epi16(stride_gap_scalar * 2);
-    let stride_gap4 = _mm256_set1_epi16(stride_gap_scalar * 4);
+unsafe fn prefix_scan(delta_R_max: __m256i, stride_gap: __m256i, neg_inf: __m256i) -> __m256i {
+    let stride_gap2 = _mm256_adds_epi16(stride_gap, stride_gap);
+    let stride_gap4 = _mm256_adds_epi16(stride_gap2, stride_gap2);
 
     // D C B A  D C B A
     let reduce1 = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(stride_gap, _mm256_slli_si256(delta_R_max, 2)));
@@ -214,6 +226,9 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     // TODO: wasm
     // TODO: adaptive banding
     // TODO: faster support for nucleotides and const I
+    // TODO: split interval loop into 2, one handles interval len I, one handles special case OR
+    // adaptive I
+    // get rid of division/modulo!!!
     // TODO: abstract into class for step by step
     // TODO: early exit??
 
@@ -229,8 +244,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
         while band_idx < K {
             let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
 
-            let stride_gap_scalar = (stride as i16) * (G::GAP_EXTEND as i16);
-            let stride_gap = _mm256_set1_epi16(stride_gap_scalar);
+            let stride_gap = _mm256_set1_epi16((stride as i16) * (G::GAP_EXTEND as i16));
             let mut delta_D00;
             let mut abs_interval = *abs_Ax0_ptr.add(band_idx / I);
 
@@ -322,7 +336,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 delta_R_max = _mm256_sl_epi16(delta_R_max, neg_inf);
                 delta_R_max = _mm256_insert_epi16(delta_R_max, clamp(abs_R_interval - abs_interval), 0);
 
-                delta_R_max = prefix_scan(delta_R_max, stride_gap, stride_gap_scalar, neg_inf);
+                delta_R_max = prefix_scan(delta_R_max, stride_gap, neg_inf);
 
                 abs_R_interval = abs_interval.saturating_add(cmp::max(delta_R_max_last, _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i32));
             }
@@ -438,11 +452,11 @@ mod tests {
     #[target_feature(enable = "avx2")]
     unsafe fn test_prefix_scan_core() {
         let vec = _mm256_set_epi16(11, 14, 13, 12, 15, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-        let res = prefix_scan(vec, _mm256_setzero_si256(), 0, _mm256_set1_epi16(i16::MIN));
+        let res = prefix_scan(vec, _mm256_setzero_si256(), _mm256_set1_epi16(i16::MIN));
         assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = _mm256_set_epi16(11, 14, 13, 12, 15, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-        let res = prefix_scan(vec, _mm256_set1_epi16(-1), -1, _mm256_set1_epi16(i16::MIN));
+        let res = prefix_scan(vec, _mm256_set1_epi16(-1), _mm256_set1_epi16(i16::MIN));
         assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
     }
 
