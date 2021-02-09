@@ -177,7 +177,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     let K = K_HALF * 2 + 1;
     let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of L
     let ceil_len_bytes = ceil_len * 2;
-    let num_intervals = (K + I - 1) / I;
+    let num_intervals = (ceil_len + I - 1) / I;
 
     // These chunks of memory are contiguous ring buffers that represent every interval in the current band
     let query_buf_layout = alloc::Layout::from_size_align_unchecked(ceil_len, L_BYTES);
@@ -204,14 +204,17 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
         trace = vec![];
     }
 
+    // Initialize DP columns
+    // Not extremely optimized, since it only runs once
     {
         let mut abs_prev = 0;
 
         for idx in 0..ceil_len {
             let i = (idx as isize) - (K_HALF as isize);
             let interval_idx = idx / I;
-            let stride = (cmp::min(I, K - interval_idx * I) + L - 1) / L;
-            let buf_idx = interval_idx * I + ((idx % stride) * L + idx / stride);
+            let stride = cmp::min(I, ceil_len - interval_idx * I) / L;
+            let buf_idx = interval_idx * I + (((idx % I) % stride) * L + (idx % I) / stride);
+            debug_assert!(buf_idx < ceil_len);
 
             if i >= 0 && i <= query.len() as isize {
                 ptr::write(query_buf_ptr.add(buf_idx), convert_char(if i > 0 {
@@ -250,17 +253,19 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     let gap_extend = _mm256_set1_epi16(G::GAP_EXTEND as i16);
     let neg_inf = _mm256_set1_epi16(i16::MIN);
 
+    // Use precomputed strides so compiler can avoid division/modulo instructions
+    let stride_I = I / L;
+    let stride_last = (ceil_len - ((ceil_len - 1) / I) * I) / L;
+
     // TODO: x drop
     // TODO: wasm
     // TODO: adaptive banding
-    // TODO: faster support for nucleotides and const I
-    // TODO: split interval loop into 2, one handles interval len I, one handles special case OR
-    // adaptive I
-    // get rid of division/modulo!!!
+    // TODO: faster support for nucleotides (just use smaller score matrix) and const I
     // TODO: abstract into class for step by step
     // TODO: early exit??
 
     for j in 0..reference.len() {
+        // Load scores for the current reference character
         let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)) as usize);
         let scores1 = _mm_load_si128(matrix_ptr as *const __m128i);
         let scores2 = _mm_load_si128((matrix_ptr as *const __m128i).add(1));
@@ -269,18 +274,17 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
         let mut abs_R_interval = *abs_Ax0_ptr;
         let mut abs_D_interval = *abs_Ax0_ptr;
 
-        while band_idx < K {
-            let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
-
+        while band_idx < ceil_len {
+            let last_interval = (band_idx + I) >= ceil_len;
+            let stride = if last_interval { stride_last } else { stride_I };
             let stride_gap = _mm256_set1_epi16((stride as i16) * (G::GAP_EXTEND as i16));
             let mut delta_D00;
             let mut abs_interval = *abs_Ax0_ptr.add(band_idx / I);
 
             // Update ring buffers to slide current band down
             {
-                let next_band_idx = band_idx + I;
-
-                let idx = band_idx / L + ring_buf_idx % stride;
+                let idx = band_idx / L
+                    + if last_interval { ring_buf_idx % stride_last } else { ring_buf_idx % stride_I };
                 let delta_Dx0_idx = delta_Dx0_ptr.add(idx);
                 // Save first vector of the previous interval before it is replaced
                 delta_D00 = _mm256_load_si256(delta_Dx0_idx);
@@ -292,7 +296,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 let query_buf_idx = query_buf_ptr.add(idx);
                 let delta_Cx0_idx = delta_Cx0_ptr.add(idx);
 
-                if next_band_idx >= K {
+                if last_interval {
                     // This must be the last interval
                     let c = if query_idx < query.len() { *query.get_unchecked(query_idx) } else { NULL };
                     let query_insert = _mm_set1_epi8(convert_char(c) as i8);
@@ -303,10 +307,13 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(neg_inf, _mm256_load_si256(delta_Cx0_idx)));
                 } else {
                     // Not the last interval; need to shift in a value from the next interval
-                    let next_stride = (cmp::min(I, K - next_band_idx) + L - 1) / L;
-                    let next_idx = next_band_idx / L + ring_buf_idx % next_stride;
+                    let next_band_idx = band_idx + I;
+                    let next_last_interval = next_band_idx >= ceil_len;
+                    let next_idx = next_band_idx / L +
+                        if next_last_interval { ring_buf_idx % stride_last } else { ring_buf_idx % stride_I };
                     let next_abs_interval = *abs_Ax0_ptr.add(next_band_idx / I);
                     let abs_offset = _mm256_set1_epi16(clamp(next_abs_interval - abs_interval));
+                    debug_assert!(next_idx < ceil_len / L);
 
                     let query_insert = _mm_load_si128(query_buf_ptr.add(next_idx));
                     let delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(next_idx)), abs_offset);
@@ -329,7 +336,12 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 let mut extend_to_end = stride_gap;
 
                 for i in 0..stride {
-                    let idx = band_idx / L + (ring_buf_idx + 1 + i) % stride;
+                    let idx = {
+                        let mut idx = ring_buf_idx + 1 + i;
+                        idx = if last_interval { idx % stride_last } else { idx % stride_I };
+                        band_idx / L + idx
+                    };
+                    debug_assert!(idx < ceil_len / L);
 
                     let scores = _mm256_lookupepi8_epi16(scores1, scores2,
                                                          _mm_load_si128(query_buf_ptr.add(idx)));
@@ -343,6 +355,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
 
                     if TRACE {
                         let trace_idx = (ceil_len / L) * (j + 1) + band_idx / L + i;
+                        debug_assert!(trace_idx < trace.len());
                         *trace.get_unchecked_mut(trace_idx) = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_C11, delta_D11)) as u32;
                     }
 
@@ -376,7 +389,12 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 let mut delta_D01 = _mm256_insert_epi16(neg_inf, clamp(abs_D_interval - abs_interval), 0);
 
                 for i in 0..stride {
-                    let idx = band_idx / L + (ring_buf_idx + 1 + i) % stride;
+                    let idx = {
+                        let mut idx = ring_buf_idx + 1 + i;
+                        idx = if last_interval { idx % stride_last } else { idx % stride_I };
+                        band_idx / L + idx
+                    };
+                    debug_assert!(idx < ceil_len / L);
 
                     let delta_R11 = _mm256_max_epi16(_mm256_adds_epi16(delta_R01, gap_extend), _mm256_adds_epi16(delta_D01, gap_open));
                     let mut delta_D11 = _mm256_load_si256(delta_Dx0_ptr.add(idx));
@@ -384,6 +402,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
 
                     if TRACE {
                         let trace_idx = (ceil_len / L) * (j + 1) + band_idx / L + i;
+                        debug_assert!(trace_idx < trace.len());
                         let prev_trace = *trace.get_unchecked(trace_idx);
                         let curr_trace = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_R11, delta_D11)) as u32;
                         *trace.get_unchecked_mut(trace_idx) = (prev_trace & even_bits) | ((curr_trace & even_bits) << 1);
@@ -399,6 +418,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
             }
             // End final pass
 
+            debug_assert!(band_idx / I < num_intervals);
             *abs_Ax0_ptr.add(band_idx / I) = abs_interval;
             band_idx += I;
         }
@@ -412,8 +432,9 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     let res_score = {
         let res_i = ((query.len() as isize) - shift_idx) as usize;
         let band_idx = (res_i / I) * I;
-        let stride = (cmp::min(I, K - band_idx) + L - 1) / L;
+        let stride = cmp::min(I, ceil_len - band_idx) / L;
         let idx = band_idx / L + (res_i % I) % stride;
+        debug_assert!(idx < ceil_len / L);
 
         let delta = slow_extract_epi16(_mm256_load_si256(delta_Dx0_ptr.add(idx)), (res_i % I) / stride) as i32;
         let abs = *abs_Ax0_ptr.add(res_i / I);
