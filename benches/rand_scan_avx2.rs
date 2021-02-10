@@ -1,5 +1,4 @@
 #![feature(test)]
-#![feature(min_const_generics)]
 
 extern crate test;
 use test::{Bencher, black_box};

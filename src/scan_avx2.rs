@@ -3,8 +3,6 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use std::intrinsics::unlikely;
-
 use std::{alloc, cmp, ptr, i16};
 
 use crate::scores::*;
@@ -100,7 +98,7 @@ unsafe fn hmax(mut v: __m256i) -> i16 {
     v = _mm256_max_epi16(v, _mm256_srli_si256(v, 2));
     v = _mm256_max_epi16(v, _mm256_srli_si256(v, 4));
     v = _mm256_max_epi16(v, _mm256_srli_si256(v, 8));
-    cmp::max(_mm256_extract_epi16(v, 0), _mm256_extract_epi16(v, (L as i32) / 2))
+    cmp::max(_mm256_extract_epi16(v, 0) as i16, _mm256_extract_epi16(v, (L as i32) / 2) as i16)
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -299,7 +297,7 @@ pub unsafe fn scan_align<P: ScoreParams, M: Matrix, const K_HALF: usize, const T
                 delta_D00 = _mm256_load_si256(delta_Dx0_idx);
 
                 if shift_idx + (band_idx as isize) >= 0 {
-                    abs_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D00, 0) as i32);
+                    abs_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D00, 0) as i16 as i32);
                 }
 
                 let query_buf_idx = query_buf_ptr.add(idx);
@@ -386,13 +384,13 @@ pub unsafe fn scan_align<P: ScoreParams, M: Matrix, const K_HALF: usize, const T
 
             // Begin prefix scan
             {
-                let prev_delta_R_max_last = _mm256_extract_epi16(delta_R_max, L as i32 - 1) as i32;
+                let prev_delta_R_max_last = _mm256_extract_epi16(delta_R_max, L as i32 - 1) as i16 as i32;
                 delta_R_max = _mm256_sl_epi16(delta_R_max, neg_inf);
                 delta_R_max = _mm256_insert_epi16(delta_R_max, clamp(abs_R_interval - abs_interval), 0);
 
                 delta_R_max = prefix_scan_epi16(delta_R_max, stride_gap, neg_inf);
 
-                let curr_delta_R_max_last = _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i32;
+                let curr_delta_R_max_last = _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i16 as i32;
                 abs_R_interval = abs_interval.saturating_add(cmp::max(prev_delta_R_max_last, curr_delta_R_max_last));
             }
             // End prefix scan
@@ -428,7 +426,7 @@ pub unsafe fn scan_align<P: ScoreParams, M: Matrix, const K_HALF: usize, const T
                     delta_R01 = delta_R11;
                 }
 
-                abs_D_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D01, L as i32 - 1) as i32);
+                abs_D_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D01, L as i32 - 1) as i16 as i32);
             }
             // End final pass
 
