@@ -59,6 +59,10 @@ fn bench_scan_avx2_nuc_1023_10000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<
 fn bench_scan_avx2_nuc_1024_10000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<1024>(b, 10000); }
 #[bench]
 fn bench_scan_avx2_nuc_2500_5000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<2500>(b, 5000); }
+#[bench]
+fn bench_scan_avx2_nuc_5_100(b: &mut Bencher) { bench_scan_avx2_nuc_core::<5>(b, 100); }
+#[bench]
+fn bench_scan_avx2_nuc_50_1000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<50>(b, 1000); }
 
 fn rand_mutate<R: Rng>(a: &[u8], k: usize, alpha: &[u8], rng: &mut R) -> Vec<u8> {
     let mut edits = vec![0u8; a.len()];
