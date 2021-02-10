@@ -10,19 +10,25 @@ use std::{alloc, cmp, ptr, i16};
 use crate::scores::*;
 
 const L: usize = 16usize;
-const L_BYTES: usize = 32usize;
-const NULL: u8 = b'A' + 26u8;
-const I: usize = 1024usize; // I % L == 0
+const L_BYTES: usize = L * 2;
+const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn _mm256_lookupepi8_epi16(lut1: __m128i, lut2: __m128i, v: __m128i) -> __m256i {
+unsafe fn _mm256_lookup32_epi16(lut1: __m128i, lut2: __m128i, v: __m128i) -> __m256i {
     let a = _mm_shuffle_epi8(lut1, v);
     let b = _mm_shuffle_epi8(lut2, v);
     let mask = _mm_cmpgt_epi8(_mm_set1_epi8(0b00010000), v);
     let c = _mm_blendv_epi8(b, a, mask);
     _mm256_cvtepi8_epi16(c)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn _mm256_lookup16_epi16(lut: __m128i, v: __m128i) -> __m256i {
+    _mm256_cvtepi8_epi16(_mm_shuffle_epi8(lut, v))
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -82,9 +88,9 @@ unsafe fn slow_extract_epi16(v: __m256i, i: usize) -> i16 {
 }
 
 #[inline]
-fn convert_char(c: u8) -> u8 {
+fn convert_char(c: u8, nuc: bool) -> u8 {
     debug_assert!(c >= b'A' && c <= NULL);
-    c - b'A'
+    if nuc { c } else { c - b'A' }
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -173,7 +179,11 @@ fn clamp(x: i32) -> i16 {
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
 #[allow(non_snake_case)]
-pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, const NUC: bool>(reference: &[u8], query: &[u8], matrix: &SubMatrix) -> (i32, Option<Vec<u32>>) {
+pub unsafe fn scan_align<P: ScoreParams, M: Matrix, const K_HALF: usize, const TRACE: bool>(reference: &[u8], query: &[u8], matrix: &M) -> (i32, Option<Vec<u32>>) {
+    assert!(P::GAP_OPEN <= P::GAP_EXTEND);
+    let I = P::I; // used very often
+    assert!(I % L == 0);
+
     let K = K_HALF * 2 + 1;
     let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of L
     let ceil_len_bytes = ceil_len * 2;
@@ -218,9 +228,9 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
 
             if i >= 0 && i <= query.len() as isize {
                 ptr::write(query_buf_ptr.add(buf_idx), convert_char(if i > 0 {
-                    *query.get_unchecked(i as usize - 1) } else { NULL }));
+                    *query.get_unchecked(i as usize - 1) } else { NULL }, M::NUC));
 
-                let val = if i > 0 { (G::GAP_OPEN as i32) + ((i as i32) - 1) * (G::GAP_EXTEND as i32) } else { 0 };
+                let val = if i > 0 { (P::GAP_OPEN as i32) + ((i as i32) - 1) * (P::GAP_EXTEND as i32) } else { 0 };
 
                 if idx % I == 0 {
                     ptr::write(abs_Ax0_ptr.add(interval_idx), val);
@@ -233,7 +243,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     ptr::write(abs_Ax0_ptr.add(interval_idx), 0);
                 }
 
-                ptr::write(query_buf_ptr.add(buf_idx), convert_char(NULL));
+                ptr::write(query_buf_ptr.add(buf_idx), convert_char(NULL, M::NUC));
                 ptr::write(delta_Dx0_ptr.add(buf_idx), i16::MIN);
             }
 
@@ -249,8 +259,8 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     let mut shift_idx = -(K_HALF as isize);
     let mut ring_buf_idx = 0usize;
 
-    let gap_open = _mm256_set1_epi16(G::GAP_OPEN as i16);
-    let gap_extend = _mm256_set1_epi16(G::GAP_EXTEND as i16);
+    let gap_open = _mm256_set1_epi16(P::GAP_OPEN as i16);
+    let gap_extend = _mm256_set1_epi16(P::GAP_EXTEND as i16);
     let neg_inf = _mm256_set1_epi16(i16::MIN);
 
     // Use precomputed strides so compiler can avoid division/modulo instructions
@@ -258,26 +268,25 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
     let stride_last = (ceil_len - ((ceil_len - 1) / I) * I) / L;
 
     // TODO: x drop
-    // TODO: wasm
     // TODO: adaptive banding
-    // TODO: faster support for nucleotides (just use smaller score matrix) and const I
+    // TODO: early exit
+    // TODO: wasm
     // TODO: abstract into class for step by step
-    // TODO: early exit??
 
     for j in 0..reference.len() {
         // Load scores for the current reference character
-        let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j)) as usize);
+        let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
         let scores1 = _mm_load_si128(matrix_ptr as *const __m128i);
-        let scores2 = _mm_load_si128((matrix_ptr as *const __m128i).add(1));
-        let mut band_idx = 0usize;
+        let scores2 = if M::NUC { None } else { Some(_mm_load_si128((matrix_ptr as *const __m128i).add(1))) };
 
-        let mut abs_R_interval = *abs_Ax0_ptr;
-        let mut abs_D_interval = *abs_Ax0_ptr;
+        let mut band_idx = 0usize;
+        let mut abs_R_interval = i16::MIN as i32;
+        let mut abs_D_interval = i16::MIN as i32;
 
         while band_idx < ceil_len {
             let last_interval = (band_idx + I) >= ceil_len;
             let stride = if last_interval { stride_last } else { stride_I };
-            let stride_gap = _mm256_set1_epi16((stride as i16) * (G::GAP_EXTEND as i16));
+            let stride_gap = _mm256_set1_epi16((stride as i16) * (P::GAP_EXTEND as i16));
             let mut delta_D00;
             let mut abs_interval = *abs_Ax0_ptr.add(band_idx / I);
 
@@ -299,7 +308,7 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                 if last_interval {
                     // This must be the last interval
                     let c = if query_idx < query.len() { *query.get_unchecked(query_idx) } else { NULL };
-                    let query_insert = _mm_set1_epi8(convert_char(c) as i8);
+                    let query_insert = _mm_set1_epi8(convert_char(c, M::NUC) as i8);
 
                     // Now shift in new values for each interval
                     _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
@@ -343,8 +352,12 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
                     };
                     debug_assert!(idx < ceil_len / L);
 
-                    let scores = _mm256_lookupepi8_epi16(scores1, scores2,
-                                                         _mm_load_si128(query_buf_ptr.add(idx)));
+                    let scores = if M::NUC {
+                        _mm256_lookup16_epi16(scores1, _mm_load_si128(query_buf_ptr.add(idx)))
+                    } else {
+                        _mm256_lookup32_epi16(scores1, scores2.unwrap(), _mm_load_si128(query_buf_ptr.add(idx)))
+                    };
+
                     let mut delta_D11 = _mm256_adds_epi16(delta_D00, scores);
 
                     let delta_D10 = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(idx)), abs_offset);
@@ -373,13 +386,14 @@ pub unsafe fn scan_align<G: GapScores, const K_HALF: usize, const TRACE: bool, c
 
             // Begin prefix scan
             {
-                let delta_R_max_last = _mm256_extract_epi16(delta_R_max, L as i32 - 1) as i32;
+                let prev_delta_R_max_last = _mm256_extract_epi16(delta_R_max, L as i32 - 1) as i32;
                 delta_R_max = _mm256_sl_epi16(delta_R_max, neg_inf);
                 delta_R_max = _mm256_insert_epi16(delta_R_max, clamp(abs_R_interval - abs_interval), 0);
 
                 delta_R_max = prefix_scan_epi16(delta_R_max, stride_gap, neg_inf);
 
-                abs_R_interval = abs_interval.saturating_add(cmp::max(delta_R_max_last, _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i32));
+                let curr_delta_R_max_last = _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i32;
+                abs_R_interval = abs_interval.saturating_add(cmp::max(prev_delta_R_max_last, curr_delta_R_max_last));
             }
             // End prefix scan
 
@@ -522,37 +536,51 @@ mod tests {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
     unsafe fn test_scan_align_core() {
-        type Scores = Gap<-11, -1>;
+        type TestParams = Params<-11, -1, 1024>;
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
+        let res = scan_align::<TestParams, AAMatrix, 1, false>(r, q, &BLOSUM62);
         assert_eq!(res.0, 11);
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align::<Scores, 3, false, false>(r, q, &BLOSUM62);
+        let res = scan_align::<TestParams, AAMatrix, 3, false>(r, q, &BLOSUM62);
         assert_eq!(res.0, 11);
 
         let r = b"AAAA";
         let q = b"AAAA";
-        let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
+        let res = scan_align::<TestParams, AAMatrix, 1, false>(r, q, &BLOSUM62);
         assert_eq!(res.0, 16);
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align::<Scores, 0, false, false>(r, q, &BLOSUM62);
+        let res = scan_align::<TestParams, AAMatrix, 0, false>(r, q, &BLOSUM62);
         assert_eq!(res.0, 11);
 
         let r = b"AAAA";
         let q = b"RRRR";
-        let res = scan_align::<Scores, 4, false, false>(r, q, &BLOSUM62);
+        let res = scan_align::<TestParams, AAMatrix, 4, false>(r, q, &BLOSUM62);
         assert_eq!(res.0, -4);
 
         let r = b"AAAA";
         let q = b"AAA";
-        let res = scan_align::<Scores, 1, false, false>(r, q, &BLOSUM62);
+        let res = scan_align::<TestParams, AAMatrix, 1, false>(r, q, &BLOSUM62);
         assert_eq!(res.0, 1);
+
+        type TestParams2 = Params<-1, -1, 2048>;
+
+        let r = b"AAAN";
+        let q = b"ATAA";
+        let res = scan_align::<TestParams2, NucMatrix, 2, false>(r, q, &NW1);
+        assert_eq!(res.0, 1);
+
+        let r = b"AAAA";
+        let q = b"C";
+        let res = scan_align::<TestParams2, NucMatrix, 4, false>(r, q, &NW1);
+        assert_eq!(res.0, -4);
+        let res = scan_align::<TestParams2, NucMatrix, 4, false>(q, r, &NW1);
+        assert_eq!(res.0, -4);
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
