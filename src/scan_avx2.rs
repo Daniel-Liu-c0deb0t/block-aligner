@@ -4,6 +4,7 @@ use std::arch::x86::*;
 use std::arch::x86_64::*;
 
 use std::{alloc, cmp, ptr, i16};
+use std::marker::PhantomData;
 
 use crate::scores::*;
 
@@ -153,7 +154,7 @@ fn clamp(x: i32) -> i16 {
     cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
 }
 
-// BLOSUM62 matrix max = 11, min = -4; gap open = -11, gap extend = -1
+// BLOSUM62 matrix max = 11, min = -4; gap open = -11 (includes extension), gap extend = -1
 //
 // R[i][j] = max(R[i - 1][j] + gap_extend, D[i - 1][j] + gap_open)
 // C[i][j] = max(C[i][j - 1] + gap_extend, D[i][j - 1] + gap_open)
@@ -166,300 +167,350 @@ fn clamp(x: i32) -> i16 {
 // 1x | 10   11
 //
 // A band consists of multiple intervals. Each interval is made up of strided vectors.
+//
+// TODO: abstract into class for step by step
+// TODO: x drop and early exit
+// TODO: adaptive banding
+// TODO: wasm
+// TODO: i8
 
-/// Banded alignment.
-///
-/// Limitations:
-/// 1. Requires AVX2 support.
-/// 2. The reference and the query can only contain uppercase alphabetical characters.
-/// 3. The actual size of the band is K_HALF * 2 + 1 rounded up to the next multiple of the
-///    vector length of 16.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
 #[allow(non_snake_case)]
-pub unsafe fn scan_align<P: ScoreParams, M: Matrix, const K_HALF: usize, const TRACE: bool>(reference: &[u8], query: &[u8], matrix: &M) -> (i32, Option<Vec<u32>>) {
-    assert!(P::GAP_OPEN <= P::GAP_EXTEND);
-    let I = P::I; // used very often
-    assert!(I % L == 0);
+pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> {
+    query_buf_layout: alloc::Layout,
+    query_buf_ptr: *mut __m128i,
+    delta_Dx0_layout: alloc::Layout,
+    delta_Dx0_ptr: *mut __m256i,
+    delta_Cx0_layout: alloc::Layout,
+    delta_Cx0_ptr: *mut __m256i,
+    abs_Ax0_layout: alloc::Layout,
+    abs_Ax0_ptr: *mut i32,
 
-    let K = K_HALF * 2 + 1;
-    let ceil_len = ((K + L - 1) / L) * L; // round up to multiple of L
-    let ceil_len_bytes = ceil_len * 2;
-    let num_intervals = (ceil_len + I - 1) / I;
+    trace: Vec<u32>,
 
-    // These chunks of memory are contiguous ring buffers that represent every interval in the current band
-    let query_buf_layout = alloc::Layout::from_size_align_unchecked(ceil_len, L_BYTES);
-    let query_buf_ptr = alloc::alloc(query_buf_layout) as *mut u8;
+    query_idx: usize,
+    shift_idx: isize,
+    ring_buf_idx: usize,
 
-    let delta_Dx0_layout = alloc::Layout::from_size_align_unchecked(ceil_len_bytes, L_BYTES);
-    let delta_Dx0_ptr = alloc::alloc(delta_Dx0_layout) as *mut i16;
+    query: &'a [u8],
+    matrix: &'a M,
 
-    let delta_Cx0_layout = alloc::Layout::from_size_align_unchecked(ceil_len_bytes, L_BYTES);
-    let delta_Cx0_ptr = alloc::alloc(delta_Cx0_layout) as *mut i16;
+    _phantom: PhantomData<P>
+}
 
-    // 32-bit absolute values
-    let abs_Ax0_layout = alloc::Layout::from_size_align_unchecked(num_intervals * 4, 4);
-    let abs_Ax0_ptr = alloc::alloc(abs_Ax0_layout) as *mut i32;
-
-    // optional 32-bit traceback
-    // 0b00 = up and left, 0b10 or 0b11 = up, 0b01 = left
-    let mut trace;
-    let even_bits = 0x55555555u32;
-
-    if TRACE {
-        trace = vec![even_bits << 1; (reference.len() + 1) * ceil_len / L];
-    } else {
-        trace = vec![];
-    }
-
-    // Initialize DP columns
-    // Not extremely optimized, since it only runs once
-    {
-        let mut abs_prev = 0;
-
-        for idx in 0..ceil_len {
-            let i = (idx as isize) - (K_HALF as isize);
-            let interval_idx = idx / I;
-            let stride = cmp::min(I, ceil_len - interval_idx * I) / L;
-            let buf_idx = interval_idx * I + (((idx % I) % stride) * L + (idx % I) / stride);
-            debug_assert!(buf_idx < ceil_len);
-
-            if i >= 0 && i <= query.len() as isize {
-                ptr::write(query_buf_ptr.add(buf_idx), convert_char(if i > 0 {
-                    *query.get_unchecked(i as usize - 1) } else { NULL }, M::NUC));
-
-                let val = if i > 0 { (P::GAP_OPEN as i32) + ((i as i32) - 1) * (P::GAP_EXTEND as i32) } else { 0 };
-
-                if idx % I == 0 {
-                    ptr::write(abs_Ax0_ptr.add(interval_idx), val);
-                    abs_prev = val;
-                }
-
-                ptr::write(delta_Dx0_ptr.add(buf_idx), (val - abs_prev) as i16);
-            } else {
-                if idx % I == 0 {
-                    ptr::write(abs_Ax0_ptr.add(interval_idx), 0);
-                }
-
-                ptr::write(query_buf_ptr.add(buf_idx), convert_char(NULL, M::NUC));
-                ptr::write(delta_Dx0_ptr.add(buf_idx), i16::MIN);
-            }
-
-            ptr::write(delta_Cx0_ptr.add(buf_idx), i16::MIN);
-        }
-    }
-
-    let query_buf_ptr = query_buf_ptr as *mut __m128i;
-    let delta_Dx0_ptr = delta_Dx0_ptr as *mut __m256i;
-    let delta_Cx0_ptr = delta_Cx0_ptr as *mut __m256i;
-
-    let mut query_idx = ceil_len - K_HALF - 1;
-    let mut shift_idx = -(K_HALF as isize);
-    let mut ring_buf_idx = 0usize;
-
-    let gap_open = _mm256_set1_epi16(P::GAP_OPEN as i16);
-    let gap_extend = _mm256_set1_epi16(P::GAP_EXTEND as i16);
-    let neg_inf = _mm256_set1_epi16(i16::MIN);
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> ScanAligner<'a, P, M, { K_HALF }, { TRACE }> {
+    const K: usize = K_HALF * 2 + 1;
+    const CEIL_K: usize = ((Self::K + L - 1) / L) * L; // round up to multiple of L
+    const NUM_INTERVALS: usize = (Self::CEIL_K + P::I - 1) / P::I;
 
     // Use precomputed strides so compiler can avoid division/modulo instructions
-    let stride_I = I / L;
-    let stride_last = (ceil_len - ((ceil_len - 1) / I) * I) / L;
+    const STRIDE_I: usize = P::I / L;
+    const STRIDE_LAST: usize = (Self::CEIL_K - ((Self::CEIL_K - 1) / P::I) * P::I) / L;
 
-    // TODO: x drop
-    // TODO: adaptive banding
-    // TODO: early exit
-    // TODO: wasm
-    // TODO: abstract into class for step by step
+    const EVEN_BITS: u32 = 0x55555555u32;
 
-    for j in 0..reference.len() {
-        // Load scores for the current reference character
-        let matrix_ptr = matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
-        let scores1 = _mm_load_si128(matrix_ptr as *const __m128i);
-        let scores2 = if M::NUC { None } else { Some(_mm_load_si128((matrix_ptr as *const __m128i).add(1))) };
+    #[target_feature(enable = "avx2")]
+    #[allow(non_snake_case)]
+    pub unsafe fn new(query: &'a [u8], matrix: &'a M) -> Self {
+        assert!(P::GAP_OPEN <= P::GAP_EXTEND);
+        assert!(P::I % L == 0);
 
-        let mut band_idx = 0usize;
-        let mut abs_R_interval = i16::MIN as i32;
-        let mut abs_D_interval = i16::MIN as i32;
+        // These chunks of memory are contiguous ring buffers that represent every interval in the current band
+        let query_buf_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K, L_BYTES);
+        let query_buf_ptr = alloc::alloc(query_buf_layout) as *mut u8;
 
-        while band_idx < ceil_len {
-            let last_interval = (band_idx + I) >= ceil_len;
-            let stride = if last_interval { stride_last } else { stride_I };
-            let stride_gap = _mm256_set1_epi16((stride as i16) * (P::GAP_EXTEND as i16));
-            let mut delta_D00;
-            let mut abs_interval = *abs_Ax0_ptr.add(band_idx / I);
+        let delta_Dx0_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * 2, L_BYTES);
+        let delta_Dx0_ptr = alloc::alloc(delta_Dx0_layout) as *mut i16;
 
-            // Update ring buffers to slide current band down
-            {
-                let idx = band_idx / L
-                    + if last_interval { ring_buf_idx % stride_last } else { ring_buf_idx % stride_I };
-                let delta_Dx0_idx = delta_Dx0_ptr.add(idx);
-                // Save first vector of the previous interval before it is replaced
-                delta_D00 = _mm256_load_si256(delta_Dx0_idx);
+        let delta_Cx0_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * 2, L_BYTES);
+        let delta_Cx0_ptr = alloc::alloc(delta_Cx0_layout) as *mut i16;
 
-                if shift_idx + (band_idx as isize) >= 0 {
-                    abs_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D00, 0) as i16 as i32);
-                }
+        // 32-bit absolute values
+        let abs_Ax0_layout = alloc::Layout::array::<i32>(Self::NUM_INTERVALS).unwrap();
+        let abs_Ax0_ptr = alloc::alloc(abs_Ax0_layout) as *mut i32;
 
-                let query_buf_idx = query_buf_ptr.add(idx);
-                let delta_Cx0_idx = delta_Cx0_ptr.add(idx);
+        // Initialize DP columns
+        // Not extremely optimized, since it only runs once
+        {
+            let mut abs_prev = 0;
 
-                if last_interval {
-                    // This must be the last interval
-                    let c = if query_idx < query.len() { *query.get_unchecked(query_idx) } else { NULL };
-                    let query_insert = _mm_set1_epi8(convert_char(c, M::NUC) as i8);
+            for idx in 0..Self::CEIL_K {
+                let i = (idx as isize) - (K_HALF as isize);
+                let interval_idx = idx / P::I;
+                let stride = cmp::min(P::I, Self::CEIL_K - interval_idx * P::I) / L;
+                let buf_idx = interval_idx * P::I + (((idx % P::I) % stride) * L + (idx % P::I) / stride);
+                debug_assert!(buf_idx < Self::CEIL_K);
 
-                    // Now shift in new values for each interval
-                    _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
-                    _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(neg_inf, delta_D00));
-                    _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(neg_inf, _mm256_load_si256(delta_Cx0_idx)));
+                if i >= 0 && i <= query.len() as isize {
+                    ptr::write(query_buf_ptr.add(buf_idx), convert_char(if i > 0 {
+                        *query.get_unchecked(i as usize - 1) } else { NULL }, M::NUC));
+
+                    let val = if i > 0 { (P::GAP_OPEN as i32) + ((i as i32) - 1) * (P::GAP_EXTEND as i32) } else { 0 };
+
+                    if idx % P::I == 0 {
+                        ptr::write(abs_Ax0_ptr.add(interval_idx), val);
+                        abs_prev = val;
+                    }
+
+                    ptr::write(delta_Dx0_ptr.add(buf_idx), (val - abs_prev) as i16);
                 } else {
-                    // Not the last interval; need to shift in a value from the next interval
-                    let next_band_idx = band_idx + I;
-                    let next_last_interval = next_band_idx >= ceil_len;
-                    let next_idx = next_band_idx / L +
-                        if next_last_interval { ring_buf_idx % stride_last } else { ring_buf_idx % stride_I };
-                    let next_abs_interval = *abs_Ax0_ptr.add(next_band_idx / I);
-                    let abs_offset = _mm256_set1_epi16(clamp(next_abs_interval - abs_interval));
-                    debug_assert!(next_idx < ceil_len / L);
-
-                    let query_insert = _mm_load_si128(query_buf_ptr.add(next_idx));
-                    let delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(next_idx)), abs_offset);
-                    let delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.add(next_idx)), abs_offset);
-
-                    // Now shift in new values for each interval
-                    _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
-                    _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(delta_Dx0_insert, delta_D00));
-                    _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(delta_Cx0_insert, _mm256_load_si256(delta_Cx0_idx)));
-                }
-            }
-
-            // Vector for prefix scan calculations
-            let mut delta_R_max = neg_inf;
-            let abs_offset = _mm256_set1_epi16(clamp(*abs_Ax0_ptr.add(band_idx / I) - abs_interval));
-            delta_D00 = _mm256_adds_epi16(delta_D00, abs_offset);
-
-            // Begin initial pass
-            {
-                let mut extend_to_end = stride_gap;
-
-                for i in 0..stride {
-                    let idx = {
-                        let mut idx = ring_buf_idx + 1 + i;
-                        idx = if last_interval { idx % stride_last } else { idx % stride_I };
-                        band_idx / L + idx
-                    };
-                    debug_assert!(idx < ceil_len / L);
-
-                    let scores = if M::NUC {
-                        _mm256_lookup16_epi16(scores1, _mm_load_si128(query_buf_ptr.add(idx)))
-                    } else {
-                        _mm256_lookup32_epi16(scores1, scores2.unwrap(), _mm_load_si128(query_buf_ptr.add(idx)))
-                    };
-
-                    let mut delta_D11 = _mm256_adds_epi16(delta_D00, scores);
-
-                    let delta_D10 = _mm256_adds_epi16(_mm256_load_si256(delta_Dx0_ptr.add(idx)), abs_offset);
-                    let delta_C10 = _mm256_adds_epi16(_mm256_load_si256(delta_Cx0_ptr.add(idx)), abs_offset);
-                    let delta_C11 = _mm256_max_epi16(_mm256_adds_epi16(delta_C10, gap_extend), _mm256_adds_epi16(delta_D10, gap_open));
-
-                    delta_D11 = _mm256_max_epi16(delta_D11, delta_C11);
-
-                    if TRACE {
-                        let trace_idx = (ceil_len / L) * (j + 1) + band_idx / L + i;
-                        debug_assert!(trace_idx < trace.len());
-                        *trace.get_unchecked_mut(trace_idx) = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_C11, delta_D11)) as u32;
+                    if idx % P::I == 0 {
+                        ptr::write(abs_Ax0_ptr.add(interval_idx), 0);
                     }
 
-                    extend_to_end = _mm256_subs_epi16(extend_to_end, gap_extend);
-                    delta_R_max = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(delta_D11, extend_to_end));
-
-                    // Slide band right by directly overwriting the previous band
-                    _mm256_store_si256(delta_Dx0_ptr.add(idx), delta_D11);
-                    _mm256_store_si256(delta_Cx0_ptr.add(idx), delta_C11);
-
-                    delta_D00 = delta_D10;
-                }
-            }
-            // End initial pass
-
-            // Begin prefix scan
-            {
-                let prev_delta_R_max_last = _mm256_extract_epi16(delta_R_max, L as i32 - 1) as i16 as i32;
-                delta_R_max = _mm256_sl_epi16(delta_R_max, neg_inf);
-                delta_R_max = _mm256_insert_epi16(delta_R_max, clamp(abs_R_interval - abs_interval), 0);
-
-                delta_R_max = prefix_scan_epi16(delta_R_max, stride_gap, neg_inf);
-
-                let curr_delta_R_max_last = _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i16 as i32;
-                abs_R_interval = abs_interval.saturating_add(cmp::max(prev_delta_R_max_last, curr_delta_R_max_last));
-            }
-            // End prefix scan
-
-            // Begin final pass
-            {
-                let mut delta_R01 = _mm256_adds_epi16(_mm256_subs_epi16(delta_R_max, gap_extend), gap_open);
-                let mut delta_D01 = _mm256_insert_epi16(neg_inf, clamp(abs_D_interval - abs_interval), 0);
-
-                for i in 0..stride {
-                    let idx = {
-                        let mut idx = ring_buf_idx + 1 + i;
-                        idx = if last_interval { idx % stride_last } else { idx % stride_I };
-                        band_idx / L + idx
-                    };
-                    debug_assert!(idx < ceil_len / L);
-
-                    let delta_R11 = _mm256_max_epi16(_mm256_adds_epi16(delta_R01, gap_extend), _mm256_adds_epi16(delta_D01, gap_open));
-                    let mut delta_D11 = _mm256_load_si256(delta_Dx0_ptr.add(idx));
-                    delta_D11 = _mm256_max_epi16(delta_D11, delta_R11);
-
-                    if TRACE {
-                        let trace_idx = (ceil_len / L) * (j + 1) + band_idx / L + i;
-                        debug_assert!(trace_idx < trace.len());
-                        let prev_trace = *trace.get_unchecked(trace_idx);
-                        let curr_trace = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_R11, delta_D11)) as u32;
-                        *trace.get_unchecked_mut(trace_idx) = (prev_trace & even_bits) | ((curr_trace & even_bits) << 1);
-                    }
-
-                    _mm256_store_si256(delta_Dx0_ptr.add(idx), delta_D11);
-
-                    delta_D01 = delta_D11;
-                    delta_R01 = delta_R11;
+                    ptr::write(query_buf_ptr.add(buf_idx), convert_char(NULL, M::NUC));
+                    ptr::write(delta_Dx0_ptr.add(buf_idx), i16::MIN);
                 }
 
-                abs_D_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D01, L as i32 - 1) as i16 as i32);
+                ptr::write(delta_Cx0_ptr.add(buf_idx), i16::MIN);
             }
-            // End final pass
-
-            debug_assert!(band_idx / I < num_intervals);
-            *abs_Ax0_ptr.add(band_idx / I) = abs_interval;
-            band_idx += I;
         }
 
-        ring_buf_idx += 1;
-        query_idx += 1;
-        shift_idx += 1;
+        Self {
+            query_buf_layout,
+            query_buf_ptr: query_buf_ptr as *mut __m128i,
+            delta_Dx0_layout,
+            delta_Dx0_ptr: delta_Dx0_ptr as *mut __m256i,
+            delta_Cx0_layout,
+            delta_Cx0_ptr: delta_Cx0_ptr as *mut __m256i,
+            abs_Ax0_layout,
+            abs_Ax0_ptr,
+
+            trace: vec![],
+
+            query_idx: Self::CEIL_K - K_HALF - 1,
+            shift_idx: -(K_HALF as isize),
+            ring_buf_idx: 0,
+
+            query,
+            matrix,
+
+            _phantom: PhantomData
+        }
     }
 
-    // Extract the score from the last band
-    let res_score = {
-        let res_i = ((query.len() as isize) - shift_idx) as usize;
-        let band_idx = (res_i / I) * I;
-        let stride = cmp::min(I, ceil_len - band_idx) / L;
-        let idx = band_idx / L + (res_i % I) % stride;
-        debug_assert!(idx < ceil_len / L);
+    /// Banded alignment.
+    ///
+    /// Limitations:
+    /// 1. Requires AVX2 support.
+    /// 2. The reference and the query can only contain uppercase alphabetical characters.
+    /// 3. The actual size of the band is K_HALF * 2 + 1 rounded up to the next multiple of the
+    ///    vector length of 16.
+    #[target_feature(enable = "avx2")]
+    #[allow(non_snake_case)]
+    pub unsafe fn align(&mut self, reference: &[u8]) {
+        // optional 32-bit traceback
+        // 0b00 = up and left, 0b10 or 0b11 = up, 0b01 = left
+        if TRACE {
+            self.trace.resize(self.trace.len() + (reference.len() + 1) * Self::CEIL_K / L, Self::EVEN_BITS << 1);
+        }
 
-        let delta = slow_extract_epi16(_mm256_load_si256(delta_Dx0_ptr.add(idx)), (res_i % I) / stride) as i32;
-        let abs = *abs_Ax0_ptr.add(res_i / I);
+        let gap_open = _mm256_set1_epi16(P::GAP_OPEN as i16);
+        let gap_extend = _mm256_set1_epi16(P::GAP_EXTEND as i16);
+        let neg_inf = _mm256_set1_epi16(i16::MIN);
+
+        for j in 0..reference.len() {
+            // Load scores for the current reference character
+            let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
+            let scores1 = _mm_load_si128(matrix_ptr as *const __m128i);
+            let scores2 = if M::NUC { None } else { Some(_mm_load_si128((matrix_ptr as *const __m128i).add(1))) };
+
+            let mut band_idx = 0usize;
+            let mut abs_R_interval = i16::MIN as i32;
+            let mut abs_D_interval = i16::MIN as i32;
+
+            while band_idx < Self::CEIL_K {
+                let last_interval = (band_idx + P::I) >= Self::CEIL_K;
+                let stride = if last_interval { Self::STRIDE_LAST } else { Self::STRIDE_I };
+                let stride_gap = _mm256_set1_epi16((stride as i16) * (P::GAP_EXTEND as i16));
+                let mut delta_D00;
+                let mut abs_interval = *self.abs_Ax0_ptr.add(band_idx / P::I);
+
+                // Update ring buffers to slide current band down
+                {
+                    let idx = band_idx / L
+                        + if last_interval { self.ring_buf_idx % Self::STRIDE_LAST } else { self.ring_buf_idx % Self::STRIDE_I };
+                    let delta_Dx0_idx = self.delta_Dx0_ptr.add(idx);
+                    // Save first vector of the previous interval before it is replaced
+                    delta_D00 = _mm256_load_si256(delta_Dx0_idx);
+
+                    if self.shift_idx + (band_idx as isize) >= 0 {
+                        abs_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D00, 0) as i16 as i32);
+                    }
+
+                    let query_buf_idx = self.query_buf_ptr.add(idx);
+                    let delta_Cx0_idx = self.delta_Cx0_ptr.add(idx);
+
+                    if last_interval {
+                        // This must be the last interval
+                        let c = if self.query_idx < self.query.len() { *self.query.get_unchecked(self.query_idx) } else { NULL };
+                        let query_insert = _mm_set1_epi8(convert_char(c, M::NUC) as i8);
+
+                        // Now shift in new values for each interval
+                        _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
+                        _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(neg_inf, delta_D00));
+                        _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(neg_inf, _mm256_load_si256(delta_Cx0_idx)));
+                    } else {
+                        // Not the last interval; need to shift in a value from the next interval
+                        let next_band_idx = band_idx + P::I;
+                        let next_last_interval = next_band_idx >= Self::CEIL_K;
+                        let next_idx = next_band_idx / L +
+                            if next_last_interval { self.ring_buf_idx % Self::STRIDE_LAST } else { self.ring_buf_idx % Self::STRIDE_I };
+                        let next_abs_interval = *self.abs_Ax0_ptr.add(next_band_idx / P::I);
+                        let abs_offset = _mm256_set1_epi16(clamp(next_abs_interval - abs_interval));
+                        debug_assert!(next_idx < Self::CEIL_K / L);
+
+                        let query_insert = _mm_load_si128(self.query_buf_ptr.add(next_idx));
+                        let delta_Dx0_insert = _mm256_adds_epi16(_mm256_load_si256(self.delta_Dx0_ptr.add(next_idx)), abs_offset);
+                        let delta_Cx0_insert = _mm256_adds_epi16(_mm256_load_si256(self.delta_Cx0_ptr.add(next_idx)), abs_offset);
+
+                        // Now shift in new values for each interval
+                        _mm_store_si128(query_buf_idx, _mm_alignr_epi8(query_insert, _mm_load_si128(query_buf_idx), 1));
+                        _mm256_store_si256(delta_Dx0_idx, _mm256_alignr_epi16(delta_Dx0_insert, delta_D00));
+                        _mm256_store_si256(delta_Cx0_idx, _mm256_alignr_epi16(delta_Cx0_insert, _mm256_load_si256(delta_Cx0_idx)));
+                    }
+                }
+
+                // Vector for prefix scan calculations
+                let mut delta_R_max = neg_inf;
+                let abs_offset = _mm256_set1_epi16(clamp(*self.abs_Ax0_ptr.add(band_idx / P::I) - abs_interval));
+                delta_D00 = _mm256_adds_epi16(delta_D00, abs_offset);
+
+                // Begin initial pass
+                {
+                    let mut extend_to_end = stride_gap;
+
+                    for i in 0..stride {
+                        let idx = {
+                            let mut idx = self.ring_buf_idx + 1 + i;
+                            idx = if last_interval { idx % Self::STRIDE_LAST } else { idx % Self::STRIDE_I };
+                            band_idx / L + idx
+                        };
+                        debug_assert!(idx < Self::CEIL_K / L);
+
+                        let scores = if M::NUC {
+                            _mm256_lookup16_epi16(scores1, _mm_load_si128(self.query_buf_ptr.add(idx)))
+                        } else {
+                            _mm256_lookup32_epi16(scores1, scores2.unwrap(), _mm_load_si128(self.query_buf_ptr.add(idx)))
+                        };
+
+                        let mut delta_D11 = _mm256_adds_epi16(delta_D00, scores);
+
+                        let delta_D10 = _mm256_adds_epi16(_mm256_load_si256(self.delta_Dx0_ptr.add(idx)), abs_offset);
+                        let delta_C10 = _mm256_adds_epi16(_mm256_load_si256(self.delta_Cx0_ptr.add(idx)), abs_offset);
+                        let delta_C11 = _mm256_max_epi16(_mm256_adds_epi16(delta_C10, gap_extend), _mm256_adds_epi16(delta_D10, gap_open));
+
+                        delta_D11 = _mm256_max_epi16(delta_D11, delta_C11);
+
+                        if TRACE {
+                            let trace_idx = (Self::CEIL_K / L) * (j + 1) + band_idx / L + i;
+                            debug_assert!(trace_idx < self.trace.len());
+                            *self.trace.get_unchecked_mut(trace_idx) = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_C11, delta_D11)) as u32;
+                        }
+
+                        extend_to_end = _mm256_subs_epi16(extend_to_end, gap_extend);
+                        delta_R_max = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(delta_D11, extend_to_end));
+
+                        // Slide band right by directly overwriting the previous band
+                        _mm256_store_si256(self.delta_Dx0_ptr.add(idx), delta_D11);
+                        _mm256_store_si256(self.delta_Cx0_ptr.add(idx), delta_C11);
+
+                        delta_D00 = delta_D10;
+                    }
+                }
+                // End initial pass
+
+                // Begin prefix scan
+                {
+                    let prev_delta_R_max_last = _mm256_extract_epi16(delta_R_max, L as i32 - 1) as i16 as i32;
+                    delta_R_max = _mm256_sl_epi16(delta_R_max, neg_inf);
+                    delta_R_max = _mm256_insert_epi16(delta_R_max, clamp(abs_R_interval - abs_interval), 0);
+
+                    delta_R_max = prefix_scan_epi16(delta_R_max, stride_gap, neg_inf);
+
+                    let curr_delta_R_max_last = _mm256_extract_epi16(_mm256_adds_epi16(delta_R_max, stride_gap), L as i32 - 1) as i16 as i32;
+                    abs_R_interval = abs_interval.saturating_add(cmp::max(prev_delta_R_max_last, curr_delta_R_max_last));
+                }
+                // End prefix scan
+
+                // Begin final pass
+                {
+                    let mut delta_R01 = _mm256_adds_epi16(_mm256_subs_epi16(delta_R_max, gap_extend), gap_open);
+                    let mut delta_D01 = _mm256_insert_epi16(neg_inf, clamp(abs_D_interval - abs_interval), 0);
+
+                    for i in 0..stride {
+                        let idx = {
+                            let mut idx = self.ring_buf_idx + 1 + i;
+                            idx = if last_interval { idx % Self::STRIDE_LAST } else { idx % Self::STRIDE_I };
+                            band_idx / L + idx
+                        };
+                        debug_assert!(idx < Self::CEIL_K / L);
+
+                        let delta_R11 = _mm256_max_epi16(_mm256_adds_epi16(delta_R01, gap_extend), _mm256_adds_epi16(delta_D01, gap_open));
+                        let mut delta_D11 = _mm256_load_si256(self.delta_Dx0_ptr.add(idx));
+                        delta_D11 = _mm256_max_epi16(delta_D11, delta_R11);
+
+                        if TRACE {
+                            let trace_idx = (Self::CEIL_K / L) * (j + 1) + band_idx / L + i;
+                            debug_assert!(trace_idx < self.trace.len());
+                            let prev_trace = *self.trace.get_unchecked(trace_idx);
+                            let curr_trace = _mm256_movemask_epi8(_mm256_cmpeq_epi16(delta_R11, delta_D11)) as u32;
+                            *self.trace.get_unchecked_mut(trace_idx) = (prev_trace & Self::EVEN_BITS) | ((curr_trace & Self::EVEN_BITS) << 1);
+                        }
+
+                        _mm256_store_si256(self.delta_Dx0_ptr.add(idx), delta_D11);
+
+                        delta_D01 = delta_D11;
+                        delta_R01 = delta_R11;
+                    }
+
+                    abs_D_interval = abs_interval.saturating_add(_mm256_extract_epi16(delta_D01, L as i32 - 1) as i16 as i32);
+                }
+                // End final pass
+
+                debug_assert!(band_idx / P::I < Self::NUM_INTERVALS);
+                *self.abs_Ax0_ptr.add(band_idx / P::I) = abs_interval;
+                band_idx += P::I;
+            }
+
+            self.ring_buf_idx += 1;
+            self.query_idx += 1;
+            self.shift_idx += 1;
+        }
+    }
+
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn score(&self) -> i32 {
+        // Extract the score from the last band
+        let res_i = ((self.query.len() as isize) - self.shift_idx) as usize;
+        let band_idx = (res_i / P::I) * P::I;
+        let stride = cmp::min(P::I, Self::CEIL_K - band_idx) / L;
+        let idx = band_idx / L + (res_i % P::I) % stride;
+        debug_assert!(idx < Self::CEIL_K / L);
+
+        let delta = slow_extract_epi16(_mm256_load_si256(self.delta_Dx0_ptr.add(idx)), (res_i % P::I) / stride) as i32;
+        let abs = *self.abs_Ax0_ptr.add(res_i / P::I);
 
         delta + abs
-    };
+    }
 
-    alloc::dealloc(query_buf_ptr as *mut u8, query_buf_layout);
-    alloc::dealloc(delta_Dx0_ptr as *mut u8, delta_Dx0_layout);
-    alloc::dealloc(delta_Cx0_ptr as *mut u8, delta_Cx0_layout);
-    alloc::dealloc(abs_Ax0_ptr as *mut u8, abs_Ax0_layout);
+    pub fn raw_trace(&self) -> &[u32] {
+        assert!(TRACE);
+        &self.trace
+    }
+}
 
-    if TRACE { (res_score, Some(trace)) } else { (res_score, None) }
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> Drop for ScanAligner<'a, P, M, { K_HALF }, { TRACE }> {
+    fn drop(&mut self) {
+        unsafe {
+            alloc::dealloc(self.query_buf_ptr as *mut u8, self.query_buf_layout);
+            alloc::dealloc(self.delta_Dx0_ptr as *mut u8, self.delta_Dx0_layout);
+            alloc::dealloc(self.delta_Cx0_ptr as *mut u8, self.delta_Cx0_layout);
+            alloc::dealloc(self.abs_Ax0_ptr as *mut u8, self.abs_Ax0_layout);
+        }
+    }
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -538,47 +589,56 @@ mod tests {
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align::<TestParams, AAMatrix, 1, false>(r, q, &BLOSUM62);
-        assert_eq!(res.0, 11);
+        let mut a = ScanAligner::<TestParams, _, 1, false>::new(q, &BLOSUM62);
+        a.align(r);
+        assert_eq!(a.score(), 11);
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align::<TestParams, AAMatrix, 3, false>(r, q, &BLOSUM62);
-        assert_eq!(res.0, 11);
+        let mut a = ScanAligner::<TestParams, _, 3, false>::new(q, &BLOSUM62);
+        a.align(r);
+        assert_eq!(a.score(), 11);
 
         let r = b"AAAA";
         let q = b"AAAA";
-        let res = scan_align::<TestParams, AAMatrix, 1, false>(r, q, &BLOSUM62);
-        assert_eq!(res.0, 16);
+        let mut a = ScanAligner::<TestParams, _, 1, false>::new(q, &BLOSUM62);
+        a.align(r);
+        assert_eq!(a.score(), 16);
 
         let r = b"AAAA";
         let q = b"AARA";
-        let res = scan_align::<TestParams, AAMatrix, 0, false>(r, q, &BLOSUM62);
-        assert_eq!(res.0, 11);
+        let mut a = ScanAligner::<TestParams, _, 0, false>::new(q, &BLOSUM62);
+        a.align(r);
+        assert_eq!(a.score(), 11);
 
         let r = b"AAAA";
         let q = b"RRRR";
-        let res = scan_align::<TestParams, AAMatrix, 4, false>(r, q, &BLOSUM62);
-        assert_eq!(res.0, -4);
+        let mut a = ScanAligner::<TestParams, _, 4, false>::new(q, &BLOSUM62);
+        a.align(r);
+        assert_eq!(a.score(), -4);
 
         let r = b"AAAA";
         let q = b"AAA";
-        let res = scan_align::<TestParams, AAMatrix, 1, false>(r, q, &BLOSUM62);
-        assert_eq!(res.0, 1);
+        let mut a = ScanAligner::<TestParams, _, 1, false>::new(q, &BLOSUM62);
+        a.align(r);
+        assert_eq!(a.score(), 1);
 
         type TestParams2 = Params<-1, -1, 2048>;
 
         let r = b"AAAN";
         let q = b"ATAA";
-        let res = scan_align::<TestParams2, NucMatrix, 2, false>(r, q, &NW1);
-        assert_eq!(res.0, 1);
+        let mut a = ScanAligner::<TestParams2, _, 2, false>::new(q, &NW1);
+        a.align(r);
+        assert_eq!(a.score(), 1);
 
         let r = b"AAAA";
         let q = b"C";
-        let res = scan_align::<TestParams2, NucMatrix, 4, false>(r, q, &NW1);
-        assert_eq!(res.0, -4);
-        let res = scan_align::<TestParams2, NucMatrix, 4, false>(q, r, &NW1);
-        assert_eq!(res.0, -4);
+        let mut a = ScanAligner::<TestParams2, _, 4, false>::new(q, &NW1);
+        a.align(r);
+        assert_eq!(a.score(), -4);
+        let mut a = ScanAligner::<TestParams2, _, 4, false>::new(r, &NW1);
+        a.align(q);
+        assert_eq!(a.score(), -4);
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

@@ -24,7 +24,11 @@ fn bench_scan_avx2_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = Params<-11, -1, 1024>;
 
     b.iter(|| {
-        unsafe { scan_align::<BenchParams, AAMatrix, K, false>(&r, &q, &BLOSUM62) }
+        unsafe {
+            let mut a = ScanAligner::<BenchParams, _, K, false>::new(&q, &BLOSUM62);
+            a.align(&r);
+            a.score()
+        }
     });
 }
 
@@ -35,7 +39,11 @@ fn bench_scan_avx2_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = Params<-1, -1, 2048>;
 
     b.iter(|| {
-        unsafe { scan_align::<BenchParams, NucMatrix, K, false>(&r, &q, &NW1) }
+        unsafe {
+            let mut a = ScanAligner::<BenchParams, _, K, false>::new(&q, &NW1);
+            a.align(&r);
+            a.score()
+        }
     });
 }
 
