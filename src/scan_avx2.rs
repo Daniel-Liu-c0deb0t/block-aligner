@@ -168,13 +168,13 @@ fn clamp(x: i32) -> i16 {
 //
 // A band consists of multiple intervals. Each interval is made up of strided vectors.
 //
-// TODO: abstract into class for step by step
 // TODO: x drop and early exit
 // TODO: adaptive banding
 // TODO: wasm
-// TODO: i8
+// TODO: target features
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_feature = "avx2")]
 #[allow(non_snake_case)]
 pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> {
     query_buf_layout: alloc::Layout,
@@ -199,6 +199,7 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_feature = "avx2")]
 impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> ScanAligner<'a, P, M, { K_HALF }, { TRACE }> {
     const K: usize = K_HALF * 2 + 1;
     const CEIL_K: usize = ((Self::K + L - 1) / L) * L; // round up to multiple of L
@@ -502,6 +503,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_feature = "avx2")]
 impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> Drop for ScanAligner<'a, P, M, { K_HALF }, { TRACE }> {
     fn drop(&mut self) {
         unsafe {
