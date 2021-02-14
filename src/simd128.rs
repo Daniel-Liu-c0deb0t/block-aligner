@@ -1,55 +1,54 @@
-#[cfg(target_arch = "x86")]
-use std::arch::x86::*;
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
+use std::arch::wasm32::*;
 
 use std::cmp;
 
-pub type Simd = __m256i;
-pub type HalfSimd = __m128i;
-pub const L: usize = 16;
+pub type Simd = v128;
+pub type HalfSimd = v128;
+pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 
-#[target_feature(enable = "avx2")]
-#[inline]
-pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { _mm256_adds_epi16(a, b) }
+// TODO: swizzle high bits 0
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_subs_i16(a: Simd, b: Simd) -> Simd { _mm256_subs_epi16(a, b) }
+pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { i16x8_add_saturate_s(a, b) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_max_i16(a: Simd, b: Simd) -> Simd { _mm256_max_epi16(a, b) }
+pub unsafe fn simd_subs_i16(a: Simd, b: Simd) -> Simd { i16x8_sub_saturate_s(a, b) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { _mm256_cmpeq_epi16(a, b) }
+pub unsafe fn simd_max_i16(a: Simd, b: Simd) -> Simd { i16x8_max_s(a, b) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_load(ptr: *const Simd) -> Simd { _mm256_load_si256(ptr) }
+pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { i16x8_eq(a, b) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { _mm256_store_si256(ptr, a) }
+pub unsafe fn simd_load(ptr: *const Simd) -> Simd { v128_load(ptr) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_set1_i16(v: i16) -> Simd { _mm256_set1_epi16(v) }
+pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { v128_store(ptr, a) }
+
+#[target_feature(enable = "avx2")]
+#[inline]
+pub unsafe fn simd_set1_i16(v: i16) -> Simd { i16x8_splat(v) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
 pub unsafe fn simd_extract_i16<const IDX: usize>(a: Simd) -> i16 {
     debug_assert!(IDX < L);
-    _mm256_extract_epi16(a, IDX as i32) as i16
+    i16x8_extract_lane::<{ IDX }>(a)
 }
 
 #[target_feature(enable = "avx2")]
 #[inline]
 pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
     debug_assert!(IDX < L);
-    _mm256_insert_epi16(a, v, IDX as i32)
+    i16x8_replace_lane::<{ IDX }>(a, v)
 }
 
 #[target_feature(enable = "avx2")]
@@ -190,7 +189,7 @@ pub unsafe fn halfsimd_sr_i8<const NUM: usize>(a: HalfSimd, b: HalfSimd) -> Half
 #[target_feature(enable = "avx2")]
 #[allow(dead_code)]
 pub unsafe fn simd_dbg_i16(v: Simd) {
-    #[repr(align(32))]
+    #[repr(align(16))]
     struct A([i16; L]);
 
     let mut a = A([0i16; L]);
@@ -211,7 +210,7 @@ pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
     let mut a = A([0i8; L]);
     halfsimd_store(a.0.as_mut_ptr() as *mut HalfSimd, v);
 
-    for i in (0..a.0.len()).rev() {
+    for i in (0..a.0.len() / 2).rev() {
         print!("{:3} ", a.0[i]);
     }
     println!();
@@ -219,7 +218,7 @@ pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
 
 #[target_feature(enable = "avx2")]
 pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
-    #[repr(align(32))]
+    #[repr(align(16))]
     struct A([i16; L]);
 
     let mut arr = A([0i16; L]);
@@ -238,15 +237,15 @@ mod tests {
 
     #[target_feature(enable = "avx2")]
     unsafe fn test_prefix_scan_core() {
-        #[repr(align(32))]
+        #[repr(align(16))]
         struct A([i16; L]);
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
         let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set1_i16(i16::MIN));
-        simd_assert_vec_eq(res.0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
+        simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
         let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set1_i16(i16::MIN));
-        simd_assert_vec_eq(res.0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
+        simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
     }
 }
