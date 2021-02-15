@@ -7,86 +7,90 @@ pub type HalfSimd = v128;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 
-// TODO: swizzle high bits 0
-
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { i16x8_add_saturate_s(a, b) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_subs_i16(a: Simd, b: Simd) -> Simd { i16x8_sub_saturate_s(a, b) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_max_i16(a: Simd, b: Simd) -> Simd { i16x8_max_s(a, b) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { i16x8_eq(a, b) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_load(ptr: *const Simd) -> Simd { v128_load(ptr) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { v128_store(ptr, a) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_set1_i16(v: i16) -> Simd { i16x8_splat(v) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_extract_i16<const IDX: usize>(a: Simd) -> i16 {
     debug_assert!(IDX < L);
     i16x8_extract_lane::<{ IDX }>(a)
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
     debug_assert!(IDX < L);
     i16x8_replace_lane::<{ IDX }>(a, v)
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_movemask_i8(a: Simd) -> u32 { _mm256_movemask_epi8(a) as u32 }
+pub unsafe fn simd_movemask_i8(a: Simd) -> u32 {
+    //i8x16_bitmask(a) as u32
+    const mul: u64 = {
+        let mul = 0u64;
+        mul |= 1u64 << (0 - 0);
+        mul |= 1u64 << (8 - 1);
+        mul |= 1u64 << (16 - 2);
+        mul |= 1u64 << (24 - 3);
+        mul |= 1u64 << (32 - 4);
+        mul |= 1u64 << (40 - 5);
+        mul |= 1u64 << (48 - 6);
+        mul |= 1u64 << (56 - 7);
+        mul
+    };
+    let b = i64x2_mul(i8x16_and(a, i8x16_splat(0b10000000u8 as i8)), i64x2_splat(mul));
+    let res1 = i8x16_extract_lane::<{ L * 2 - 1 }>(b) as u32;
+    let res2 = i8x16_extract_lane::<{ L - 1 }>(b) as u32;
+    (res1 << 8) | res2
+}
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_sl_i16<const NUM: usize>(a: Simd, b: Simd) -> Simd {
-    debug_assert!(2 * NUM <= L);
-    _mm256_alignr_epi8(a, _mm256_permute2x128_si256(a, b, 0x02), (L - (2 * NUM)) as i32)
+    debug_assert!(NUM <= L);
+    v16x8_shuffle::<{ 0 + NUM }, { 1 + NUM }, { 2 + NUM }, { 3 + NUM }, { 4 + NUM }, { 5 + NUM }, { 6 + NUM }, { 7 + NUM }>(a, b)
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_sr_i16<const NUM: usize>(a: Simd, b: Simd) -> Simd {
-    debug_assert!(2 * NUM <= L);
-    _mm256_alignr_epi8(_mm256_permute2x128_si256(a, b, 0x03), b, (2 * NUM) as i32)
+    debug_assert!(NUM <= L);
+    v16x8_shuffle::<{ 8 - NUM }, { 9 - NUM }, { 10 - NUM }, { 11 - NUM }, { 12 - NUM }, { 13 - NUM }, { 14 - NUM }, { 15 - NUM }>(a, b)
 }
 
-#[target_feature(enable = "avx2")]
-#[inline]
-unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
-    _mm256_permute2x128_si256(a, b, 0x02)
-}
-
-#[target_feature(enable = "avx2")]
-#[inline]
-unsafe fn simd_sl_i192(a: Simd, b: Simd) -> Simd {
-    _mm256_alignr_epi8(_mm256_permute2x128_si256(a, b, 0x02), b, 8)
-}
-
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     debug_assert!(i < L);
 
-    #[repr(align(32))]
+    #[repr(align(16))]
     struct A([i16; L]);
 
     let mut a = A([0i16; L]);
@@ -94,16 +98,16 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     *a.0.get_unchecked(i)
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_hmax_i16(mut v: Simd) -> i16 {
-    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 2));
-    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 4));
-    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 8));
+    v = i16x8_max_s(v, simd_sr_i16::<1>(v));
+    v = i16x8_max_s(v, simd_sr_i16::<2>(v));
+    v = i16x8_max_s(v, simd_sr_i16::<4>(v));
     cmp::max(simd_extract_i16::<0>(v), simd_extract_i16::<{ L / 2 }>(v))
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 #[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf: Simd) -> Simd {
@@ -149,44 +153,45 @@ pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf:
     // D C B A  D C B A  D C B A  D C B A
 }
 
-// use avx2 target feature to prevent legacy SSE mode penalty
-
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
-    let a = _mm_shuffle_epi8(lut1, v);
-    let b = _mm_shuffle_epi8(lut2, v);
-    let mask = _mm_cmpgt_epi8(_mm_set1_epi8(0b00010000), v);
-    let c = _mm_blendv_epi8(b, a, mask);
-    _mm256_cvtepi8_epi16(c)
+    let mask = i8x16_splat(0b1111);
+    let v = v128_and(v, mask);
+    let a = v8x16_swizzle(lut1, v);
+    let b = v8x16_swizzle(lut2, v);
+    let mask = i8x16_gt_s(v, mask);
+    let c = v128_bitselect(b, a, mask);
+    i16x8_widen_low_i8x16_s(c)
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_lookup1_i16(lut: HalfSimd, v: HalfSimd) -> Simd {
-    _mm256_cvtepi8_epi16(_mm_shuffle_epi8(lut, v))
+    i16x8_widen_low_i8x16_s(v8x16_swizzle(lut, v128_and(v, i8x16_splat(0b1111))))
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { _mm_load_si128(ptr) }
+pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { _mm_store_si128(ptr, a) }
+pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, a) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
+pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i16x8_splat(v) }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_sr_i8<const NUM: usize>(a: HalfSimd, b: HalfSimd) -> HalfSimd {
     debug_assert!(NUM <= L);
-    _mm_alignr_epi8(a, b, NUM as i32)
+    v8x16_shuffle::<{ 16 - NUM }, { 17 - NUM }, { 18 - NUM }, { 19 - NUM }, { 20 - NUM }, { 21 - NUM }, { 22 - NUM }, { 23 - NUM },
+        { 24 - NUM }, { 25 - NUM }, { 26 - NUM }, { 27 - NUM }, { 28 - NUM }, { 29 - NUM }, { 30 - NUM }, { 31 - NUM }>(a, b)
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[allow(dead_code)]
 pub unsafe fn simd_dbg_i16(v: Simd) {
     #[repr(align(16))]
@@ -201,7 +206,7 @@ pub unsafe fn simd_dbg_i16(v: Simd) {
     println!();
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 #[allow(dead_code)]
 pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
     #[repr(align(16))]
@@ -216,7 +221,7 @@ pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
     println!();
 }
 
-#[target_feature(enable = "avx2")]
+#[target_feature(enable = "simd128")]
 pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
     #[repr(align(16))]
     struct A([i16; L]);
@@ -235,17 +240,17 @@ mod tests {
         unsafe { test_prefix_scan_core() };
     }
 
-    #[target_feature(enable = "avx2")]
+    #[target_feature(enable = "simd128")]
     unsafe fn test_prefix_scan_core() {
         #[repr(align(16))]
         struct A([i16; L]);
 
-        let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
+        let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
         let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set1_i16(i16::MIN));
-        simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
+        simd_assert_vec_eq(res, [8, 9, 10, 15, 15, 15, 15, 15]);
 
-        let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
+        let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
         let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set1_i16(i16::MIN));
-        simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
+        simd_assert_vec_eq(res, [8, 9, 10, 15, 14, 13, 14, 13]);
     }
 }
