@@ -136,14 +136,15 @@ pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_g
 
     // Almost there: correct each group using an element from the previous group
     let mut correct = simd_sl_i16!(temp, neg_inf, 1);
-    correct = _mm256_adds_epi16(correct, stride_gap1234);
 
     let shuffle_mask = _mm256_set_epi8(9, 8, 9, 8, 9, 8, 9, 8,
                                        1, 0, 1, 0, 1, 0, 1, 0,
                                        9, 8, 9, 8, 9, 8, 9, 8,
                                        1, 0, 1, 0, 1, 0, 1, 0);
+    correct = _mm256_shuffle_epi8(correct, shuffle_mask);
+    correct = _mm256_adds_epi16(correct, stride_gap1234);
 
-    _mm256_max_epi16(temp, _mm256_shuffle_epi8(correct, shuffle_mask))
+    _mm256_max_epi16(temp, correct)
 }
 
 // use avx2 target feature to prevent legacy SSE mode penalty
