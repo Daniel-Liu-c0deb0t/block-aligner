@@ -71,18 +71,24 @@ pub unsafe fn simd_movemask_i8(a: Simd) -> u32 {
     (res1 << 8) | res2
 }
 
-#[target_feature(enable = "simd128")]
-#[inline]
-pub unsafe fn simd_sl_i16<const NUM: usize>(a: Simd, b: Simd) -> Simd {
-    debug_assert!(NUM <= L);
-    v16x8_shuffle::<{ 0 + NUM }, { 1 + NUM }, { 2 + NUM }, { 3 + NUM }, { 4 + NUM }, { 5 + NUM }, { 6 + NUM }, { 7 + NUM }>(a, b)
+macro_rules! simd_sl_i16 {
+    ($a:expr, $b:expr, $num:literal) => {
+        {
+            debug_assert!($num <= L);
+            use std::arch::wasm32::*;
+            v16x8_shuffle::<{ 0 + $num }, { 1 + $num }, { 2 + $num }, { 3 + $num }, { 4 + $num }, { 5 + $num }, { 6 + $num }, { 7 + $num }>($a, $b)
+        }
+    };
 }
 
-#[target_feature(enable = "simd128")]
-#[inline]
-pub unsafe fn simd_sr_i16<const NUM: usize>(a: Simd, b: Simd) -> Simd {
-    debug_assert!(NUM <= L);
-    v16x8_shuffle::<{ 8 - NUM }, { 9 - NUM }, { 10 - NUM }, { 11 - NUM }, { 12 - NUM }, { 13 - NUM }, { 14 - NUM }, { 15 - NUM }>(a, b)
+macro_rules! simd_sr_i16 {
+    ($a:expr, $b:expr, $num:literal) => {
+        {
+            debug_assert!($num <= L);
+            use std::arch::wasm32::*;
+            v16x8_shuffle::<{ 8 - $num }, { 9 - $num }, { 10 - $num }, { 11 - $num }, { 12 - $num }, { 13 - $num }, { 14 - $num }, { 15 - $num }>($a, $b)
+        }
+    };
 }
 
 #[target_feature(enable = "simd128")]
@@ -101,9 +107,9 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
 #[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_hmax_i16(mut v: Simd) -> i16 {
-    v = i16x8_max_s(v, simd_sr_i16::<1>(v));
-    v = i16x8_max_s(v, simd_sr_i16::<2>(v));
-    v = i16x8_max_s(v, simd_sr_i16::<4>(v));
+    v = i16x8_max_s(v, simd_sr_i16!(v, v, 1));
+    v = i16x8_max_s(v, simd_sr_i16!(v, v, 2));
+    v = i16x8_max_s(v, simd_sr_i16!(v, v, 4));
     cmp::max(simd_extract_i16::<0>(v), simd_extract_i16::<{ L / 2 }>(v))
 }
 
@@ -183,12 +189,15 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, 
 #[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i16x8_splat(v) }
 
-#[target_feature(enable = "simd128")]
-#[inline]
-pub unsafe fn halfsimd_sr_i8<const NUM: usize>(a: HalfSimd, b: HalfSimd) -> HalfSimd {
-    debug_assert!(NUM <= L);
-    v8x16_shuffle::<{ 16 - NUM }, { 17 - NUM }, { 18 - NUM }, { 19 - NUM }, { 20 - NUM }, { 21 - NUM }, { 22 - NUM }, { 23 - NUM },
-        { 24 - NUM }, { 25 - NUM }, { 26 - NUM }, { 27 - NUM }, { 28 - NUM }, { 29 - NUM }, { 30 - NUM }, { 31 - NUM }>(a, b)
+macro_rules! halfsimd_sr_i8 {
+    ($a:expr, $b:expr, $num:literal) => {
+        {
+            debug_assert!($num <= L);
+            use std::arch::wasm32::*;
+            v8x16_shuffle::<{ 16 - $num }, { 17 - $num }, { 18 - $num }, { 19 - $num }, { 20 - $num }, { 21 - $num }, { 22 - $num }, { 23 - $num },
+                { 24 - $num }, { 25 - $num }, { 26 - $num }, { 27 - $num }, { 28 - $num }, { 29 - $num }, { 30 - $num }, { 31 - $num }>($a, $b)
+        }
+    };
 }
 
 #[target_feature(enable = "simd128")]

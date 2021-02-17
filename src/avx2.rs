@@ -40,6 +40,10 @@ pub unsafe fn simd_set1_i16(v: i16) -> Simd { _mm256_set1_epi16(v) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
+pub unsafe fn simd_set4_i16(d: i16, c: i16, b: i16, a: i16) -> Simd { _mm256_set_epi16(d, c, b, a, d, c, b, a, d, c, b, a, d, c, b, a) }
+
+#[target_feature(enable = "avx2")]
+#[inline]
 pub unsafe fn simd_extract_i16<const IDX: usize>(a: Simd) -> i16 {
     debug_assert!(IDX < L);
     _mm256_extract_epi16(a, IDX as i32) as i16
@@ -56,18 +60,30 @@ pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
 #[inline]
 pub unsafe fn simd_movemask_i8(a: Simd) -> u32 { _mm256_movemask_epi8(a) as u32 }
 
-#[target_feature(enable = "avx2")]
-#[inline]
-pub unsafe fn simd_sl_i16<const NUM: usize>(a: Simd, b: Simd) -> Simd {
-    debug_assert!(2 * NUM <= L);
-    _mm256_alignr_epi8(a, _mm256_permute2x128_si256(a, b, 0x02), (L - (2 * NUM)) as i32)
+macro_rules! simd_sl_i16 {
+    ($a:expr, $b:expr, $num:literal) => {
+        {
+            debug_assert!(2 * $num <= L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_alignr_epi8($a, _mm256_permute2x128_si256($a, $b, 0x02), (L - (2 * $num)) as i32)
+        }
+    };
 }
 
-#[target_feature(enable = "avx2")]
-#[inline]
-pub unsafe fn simd_sr_i16<const NUM: usize>(a: Simd, b: Simd) -> Simd {
-    debug_assert!(2 * NUM <= L);
-    _mm256_alignr_epi8(_mm256_permute2x128_si256(a, b, 0x03), b, (2 * NUM) as i32)
+macro_rules! simd_sr_i16 {
+    ($a:expr, $b:expr, $num:literal) => {
+        {
+            debug_assert!(2 * $num <= L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_alignr_epi8(_mm256_permute2x128_si256($a, $b, 0x03), $b, (2 * $num) as i32)
+        }
+    };
 }
 
 #[target_feature(enable = "avx2")]
@@ -98,42 +114,36 @@ pub unsafe fn simd_hmax_i16(mut v: Simd) -> i16 {
     cmp::max(simd_extract_i16::<0>(v), simd_extract_i16::<{ L / 2 }>(v))
 }
 
-// TODO: MAKE L/R SHIFT MACROS
-
 #[target_feature(enable = "avx2")]
 #[inline]
 #[allow(non_snake_case)]
-pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf: Simd) -> Simd {
-    let stride_gap2 = _mm256_adds_epi16(stride_gap, stride_gap);
-    let stride_gap4 = _mm256_adds_epi16(stride_gap2, stride_gap2);
-    let stride_gap8 = _mm256_adds_epi16(stride_gap4, stride_gap4);
+pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_gap1234: Simd, neg_inf: Simd) -> Simd {
+    // Optimized prefix add and max for every four elements
+    let mut shift1 = simd_sl_i16!(delta_R_max, neg_inf, 1);
+    shift1 = _mm256_adds_epi16(shift1, stride_gap);
+    shift1 = _mm256_max_epi16(shift1, delta_R_max);
+    let mut shift2 = simd_sl_i16!(shift1, neg_inf, 2);
+    shift2 = _mm256_adds_epi16(shift2, _mm256_slli_epi16(stride_gap, 1));
+    shift2 = _mm256_max_epi16(shift1, shift2);
 
-    // D C B A  D C B A  D C B A  D C B A
-    let reduce1 = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(stride_gap, _mm256_slli_si256(delta_R_max, 2)));
-    // D   B    D   B    D   B    D   B
-    let mut reduce2 = _mm256_max_epi16(reduce1, _mm256_adds_epi16(stride_gap2, _mm256_slli_si256(reduce1, 4)));
-    // D        D        D        D
+    // Optimized prefix add and max for every group of four elements
+    let mut shift4 = simd_sl_i16!(shift2, neg_inf, 4);
+    shift4 = _mm256_adds_epi16(shift4, _mm256_slli_epi16(stride_gap, 2));
+    shift4 = _mm256_max_epi16(shift2, shift4);
+    let mut shift8 = simd_sl_i128(shift4, neg_inf);
+    shift8 = _mm256_adds_epi16(shift8, _mm256_slli_epi16(stride_gap, 3));
+    let temp = _mm256_max_epi16(shift4, shift8);
 
-    // Optimized prefix add and max for the remaining four elements
-    {
-        let mut shift4 = simd_sl_i16::<4>(reduce2, neg_inf);
-        shift4 = _mm256_adds_epi16(shift4, stride_gap4);
-        shift4 = _mm256_max_epi16(reduce2, shift4);
-        let mut shift8 = simd_sl_i128(shift4, neg_inf);
-        shift8 = _mm256_adds_epi16(shift8, stride_gap8);
-        reduce2 = _mm256_max_epi16(shift8, shift4);
-    }
-    // reduce2
-    // D        D        D        D
+    // Almost there: correct each group using an element from the previous group
+    let mut correct = simd_sl_i16!(temp, neg_inf, 1);
+    correct = _mm256_adds_epi16(correct, stride_gap1234);
 
-    let unreduce1_mid = _mm256_max_epi16(_mm256_adds_epi16(simd_sl_i16::<2>(reduce2, neg_inf), stride_gap2), reduce1);
-    //     B        B        B        B
-    let unreduce1 = _mm256_blend_epi16(reduce2, unreduce1_mid, 0b0010_0010_0010_0010);
-    // D   B    D   B    D   B    D   B
-    let unreduce2 = _mm256_max_epi16(_mm256_adds_epi16(simd_sl_i16::<1>(unreduce1, neg_inf), stride_gap), delta_R_max);
-    //   C   A    C   A    C   A    C   A
-    _mm256_blend_epi16(unreduce1, unreduce2, 0b0101_0101_0101_0101)
-    // D C B A  D C B A  D C B A  D C B A
+    let shuffle_mask = _mm256_set_epi8(9, 8, 9, 8, 9, 8, 9, 8,
+                                       1, 0, 1, 0, 1, 0, 1, 0,
+                                       9, 8, 9, 8, 9, 8, 9, 8,
+                                       1, 0, 1, 0, 1, 0, 1, 0);
+
+    _mm256_max_epi16(temp, _mm256_shuffle_epi8(correct, shuffle_mask))
 }
 
 // use avx2 target feature to prevent legacy SSE mode penalty
@@ -166,11 +176,17 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { _mm_store_si128(
 #[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
 
-#[target_feature(enable = "avx2")]
-#[inline]
-pub unsafe fn halfsimd_sr_i8<const NUM: usize>(a: HalfSimd, b: HalfSimd) -> HalfSimd {
-    debug_assert!(NUM <= L);
-    _mm_alignr_epi8(a, b, NUM as i32)
+macro_rules! halfsimd_sr_i8 {
+    ($a:expr, $b:expr, $num:literal) => {
+        {
+            debug_assert!($num <= L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm_alignr_epi8($a, $b, $num as i32)
+        }
+    };
 }
 
 #[target_feature(enable = "avx2")]
@@ -228,11 +244,11 @@ mod tests {
         struct A([i16; L]);
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set4_i16(0, 0, 0, 0), simd_set1_i16(i16::MIN));
         simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set4_i16(-4, -3, -2, -1), simd_set1_i16(i16::MIN));
         simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
     }
 }

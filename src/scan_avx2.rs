@@ -177,6 +177,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
         let gap_extend = simd_set1_i16(P::GAP_EXTEND as i16);
         let neg_inf = simd_set1_i16(i16::MIN);
 
+        let stride_gap_I_scalar = (Self::STRIDE_I as i16) * (P::GAP_EXTEND as i16);
+        let stride_gap_I = simd_set1_i16(stride_gap_I_scalar);
+        let stride_gap_last_scalar = (Self::STRIDE_LAST as i16) * (P::GAP_EXTEND as i16);
+        let stride_gap_last = simd_set1_i16(stride_gap_last_scalar);
+        let stride_gap1234_I = simd_set4_i16(stride_gap_I_scalar * 4,
+                                             stride_gap_I_scalar * 3,
+                                             stride_gap_I_scalar * 2,
+                                             stride_gap_I_scalar * 1);
+        let stride_gap1234_last = simd_set4_i16(stride_gap_last_scalar * 4,
+                                                stride_gap_last_scalar * 3,
+                                                stride_gap_last_scalar * 2,
+                                                stride_gap_last_scalar * 1);
+
         for j in 0..reference.len() {
             // Load scores for the current reference character
             let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
@@ -194,7 +207,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
             while band_idx < Self::CEIL_K {
                 let last_interval = (band_idx + P::I) >= Self::CEIL_K;
                 let stride = if last_interval { Self::STRIDE_LAST } else { Self::STRIDE_I };
-                let stride_gap = simd_set1_i16((stride as i16) * (P::GAP_EXTEND as i16));
+                let stride_gap = if last_interval { stride_gap_last } else { stride_gap_I };
                 let mut delta_D00;
                 let mut abs_interval = *self.abs_Ax0_ptr.add(band_idx / P::I);
 
@@ -226,9 +239,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                         let query_insert = halfsimd_set1_i8(convert_char(c, M::NUC) as i8);
 
                         // Now shift in new values for each interval
-                        halfsimd_store(query_buf_idx, halfsimd_sr_i8::<1>(query_insert, halfsimd_load(query_buf_idx)));
-                        simd_store(delta_Dx0_idx, simd_sr_i16::<1>(neg_inf, delta_D00));
-                        simd_store(delta_Cx0_idx, simd_sr_i16::<1>(neg_inf, simd_load(delta_Cx0_idx)));
+                        halfsimd_store(query_buf_idx, halfsimd_sr_i8!(query_insert, halfsimd_load(query_buf_idx), 1));
+                        simd_store(delta_Dx0_idx, simd_sr_i16!(neg_inf, delta_D00, 1));
+                        simd_store(delta_Cx0_idx, simd_sr_i16!(neg_inf, simd_load(delta_Cx0_idx), 1));
                     } else {
                         // Not the last interval; need to shift in a value from the next interval
                         let next_band_idx = band_idx + P::I;
@@ -247,9 +260,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                         let delta_Cx0_insert = simd_adds_i16(simd_load(self.delta_Cx0_ptr.add(next_idx)), abs_offset);
 
                         // Now shift in new values for each interval
-                        halfsimd_store(query_buf_idx, halfsimd_sr_i8::<1>(query_insert, halfsimd_load(query_buf_idx)));
-                        simd_store(delta_Dx0_idx, simd_sr_i16::<1>(delta_Dx0_insert, delta_D00));
-                        simd_store(delta_Cx0_idx, simd_sr_i16::<1>(delta_Cx0_insert, simd_load(delta_Cx0_idx)));
+                        halfsimd_store(query_buf_idx, halfsimd_sr_i8!(query_insert, halfsimd_load(query_buf_idx), 1));
+                        simd_store(delta_Dx0_idx, simd_sr_i16!(delta_Dx0_insert, delta_D00, 1));
+                        simd_store(delta_Cx0_idx, simd_sr_i16!(delta_Cx0_insert, simd_load(delta_Cx0_idx), 1));
                     }
                 }
 
@@ -307,10 +320,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                 // Begin prefix scan
                 {
                     let prev_delta_R_max_last = simd_extract_i16::<{ L - 1 }>(delta_R_max) as i32;
-                    delta_R_max = simd_sl_i16::<1>(delta_R_max, neg_inf);
+                    delta_R_max = simd_sl_i16!(delta_R_max, neg_inf, 1);
                     delta_R_max = simd_insert_i16::<0>(delta_R_max, clamp(abs_R_interval - abs_interval));
 
-                    delta_R_max = simd_prefix_scan_i16(delta_R_max, stride_gap, neg_inf);
+                    let stride_gap1234 = if last_interval { stride_gap1234_last } else { stride_gap1234_I };
+                    delta_R_max = simd_prefix_scan_i16(delta_R_max, stride_gap, stride_gap1234, neg_inf);
 
                     let curr_delta_R_max_last = simd_extract_i16::<{ L - 1 }>(simd_adds_i16(delta_R_max, stride_gap)) as i32;
                     abs_R_interval = abs_interval.saturating_add(cmp::max(prev_delta_R_max_last, curr_delta_R_max_last));
