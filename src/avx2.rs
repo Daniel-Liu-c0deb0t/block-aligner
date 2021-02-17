@@ -78,12 +78,6 @@ unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
 
 #[target_feature(enable = "avx2")]
 #[inline]
-unsafe fn simd_sl_i192(a: Simd, b: Simd) -> Simd {
-    _mm256_alignr_epi8(_mm256_permute2x128_si256(a, b, 0x02), b, 8)
-}
-
-#[target_feature(enable = "avx2")]
-#[inline]
 pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     debug_assert!(i < L);
 
@@ -104,12 +98,15 @@ pub unsafe fn simd_hmax_i16(mut v: Simd) -> i16 {
     cmp::max(simd_extract_i16::<0>(v), simd_extract_i16::<{ L / 2 }>(v))
 }
 
+// TODO: MAKE L/R SHIFT MACROS
+
 #[target_feature(enable = "avx2")]
 #[inline]
 #[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf: Simd) -> Simd {
     let stride_gap2 = _mm256_adds_epi16(stride_gap, stride_gap);
     let stride_gap4 = _mm256_adds_epi16(stride_gap2, stride_gap2);
+    let stride_gap8 = _mm256_adds_epi16(stride_gap4, stride_gap4);
 
     // D C B A  D C B A  D C B A  D C B A
     let reduce1 = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(stride_gap, _mm256_slli_si256(delta_R_max, 2)));
@@ -117,25 +114,14 @@ pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf:
     let mut reduce2 = _mm256_max_epi16(reduce1, _mm256_adds_epi16(stride_gap2, _mm256_slli_si256(reduce1, 4)));
     // D        D        D        D
 
-    // Unrolled loop with multiple accumulators for prefix add and max
+    // Optimized prefix add and max for the remaining four elements
     {
-        let shift0 = reduce2;
         let mut shift4 = simd_sl_i16::<4>(reduce2, neg_inf);
-        let mut shift8 = simd_sl_i128(reduce2, neg_inf);
-        let mut shift12 = simd_sl_i192(reduce2, neg_inf);
-
-        let mut stride_gap_sum = stride_gap4;
-        shift4 = _mm256_adds_epi16(shift4, stride_gap_sum);
-        shift4 = _mm256_max_epi16(shift0, shift4);
-
-        stride_gap_sum = _mm256_adds_epi16(stride_gap_sum, stride_gap4);
-        shift8 = _mm256_adds_epi16(shift8, stride_gap_sum);
-
-        stride_gap_sum = _mm256_adds_epi16(stride_gap_sum, stride_gap4);
-        shift12 = _mm256_adds_epi16(shift12, stride_gap_sum);
-        shift12 = _mm256_max_epi16(shift8, shift12);
-
-        reduce2 = _mm256_max_epi16(shift4, shift12);
+        shift4 = _mm256_adds_epi16(shift4, stride_gap4);
+        shift4 = _mm256_max_epi16(reduce2, shift4);
+        let mut shift8 = simd_sl_i128(shift4, neg_inf);
+        shift8 = _mm256_adds_epi16(shift8, stride_gap8);
+        reduce2 = _mm256_max_epi16(shift8, shift4);
     }
     // reduce2
     // D        D        D        D
@@ -243,10 +229,10 @@ mod tests {
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
         let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set1_i16(i16::MIN));
-        simd_assert_vec_eq(res.0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
+        simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
         let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set1_i16(i16::MIN));
-        simd_assert_vec_eq(res.0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
+        simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
     }
 }
