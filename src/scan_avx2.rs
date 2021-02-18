@@ -1,6 +1,9 @@
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::avx2::*;
 
+#[cfg(target_arch = "wasm32")]
+use crate::simd128::*;
+
 use crate::scores::*;
 
 use std::{alloc, cmp, ptr, i16};
@@ -35,7 +38,6 @@ fn clamp(x: i32) -> i16 {
 //
 // TODO: x drop and early exit
 // TODO: adaptive banding
-// TODO: wasm
 
 #[allow(non_snake_case)]
 pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> {

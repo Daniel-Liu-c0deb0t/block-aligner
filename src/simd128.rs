@@ -7,6 +7,9 @@ pub type HalfSimd = v128;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 
+// TODO: example folder without dependencies
+// TODO: simd indexing order?
+
 #[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { i16x8_add_saturate_s(a, b) }
@@ -37,6 +40,10 @@ pub unsafe fn simd_set1_i16(v: i16) -> Simd { i16x8_splat(v) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
+pub unsafe fn simd_set4_i16(d: i16, c: i16, b: i16, a: i16) -> Simd { i16x8_const(d, c, b, a, d, c, b, a) }
+
+#[target_feature(enable = "simd128")]
+#[inline]
 pub unsafe fn simd_extract_i16<const IDX: usize>(a: Simd) -> i16 {
     debug_assert!(IDX < L);
     i16x8_extract_lane::<{ IDX }>(a)
@@ -53,19 +60,19 @@ pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
 #[inline]
 pub unsafe fn simd_movemask_i8(a: Simd) -> u32 {
     //i8x16_bitmask(a) as u32
-    const mul: u64 = {
-        let mul = 0u64;
-        mul |= 1u64 << (0 - 0);
-        mul |= 1u64 << (8 - 1);
-        mul |= 1u64 << (16 - 2);
-        mul |= 1u64 << (24 - 3);
-        mul |= 1u64 << (32 - 4);
-        mul |= 1u64 << (40 - 5);
-        mul |= 1u64 << (48 - 6);
-        mul |= 1u64 << (56 - 7);
-        mul
+    const MUL: i64 = {
+        let mut m = 0u64;
+        m |= 1u64 << (0 - 0);
+        m |= 1u64 << (8 - 1);
+        m |= 1u64 << (16 - 2);
+        m |= 1u64 << (24 - 3);
+        m |= 1u64 << (32 - 4);
+        m |= 1u64 << (40 - 5);
+        m |= 1u64 << (48 - 6);
+        m |= 1u64 << (56 - 7);
+        m as i64
     };
-    let b = i64x2_mul(i8x16_and(a, i8x16_splat(0b10000000u8 as i8)), i64x2_splat(mul));
+    let b = i64x2_mul(v128_and(a, i8x16_splat(0b10000000u8 as i8)), i64x2_splat(MUL));
     let res1 = i8x16_extract_lane::<{ L * 2 - 1 }>(b) as u32;
     let res2 = i8x16_extract_lane::<{ L - 1 }>(b) as u32;
     (res1 << 8) | res2
@@ -116,47 +123,20 @@ pub unsafe fn simd_hmax_i16(mut v: Simd) -> i16 {
 #[target_feature(enable = "simd128")]
 #[inline]
 #[allow(non_snake_case)]
-pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf: Simd) -> Simd {
-    let stride_gap2 = _mm256_adds_epi16(stride_gap, stride_gap);
-    let stride_gap4 = _mm256_adds_epi16(stride_gap2, stride_gap2);
+pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_gap1234: Simd, neg_inf: Simd) -> Simd {
+    // Optimized prefix add and max for every four elements
+    let mut shift1 = simd_sl_i16!(delta_R_max, neg_inf, 1);
+    shift1 = i16x8_add_saturate_s(shift1, stride_gap);
+    shift1 = i16x8_max_s(shift1, delta_R_max);
+    let mut shift2 = simd_sl_i16!(shift1, neg_inf, 2);
+    shift2 = i16x8_add_saturate_s(shift2, i16x8_shl(stride_gap, 1));
+    let temp = i16x8_max_s(shift1, shift2);
 
-    // D C B A  D C B A  D C B A  D C B A
-    let reduce1 = _mm256_max_epi16(delta_R_max, _mm256_adds_epi16(stride_gap, _mm256_slli_si256(delta_R_max, 2)));
-    // D   B    D   B    D   B    D   B
-    let mut reduce2 = _mm256_max_epi16(reduce1, _mm256_adds_epi16(stride_gap2, _mm256_slli_si256(reduce1, 4)));
-    // D        D        D        D
+    // Almost there: correct the last group using the last element of the previous group
+    let mut correct = v16x8_shuffle::<3, 3, 3, 3, 0, 0, 0, 0>(temp, temp);
+    correct = i16x8_add_saturate_s(correct, stride_gap1234);
 
-    // Unrolled loop with multiple accumulators for prefix add and max
-    {
-        let shift0 = reduce2;
-        let mut shift4 = simd_sl_i16::<4>(reduce2, neg_inf);
-        let mut shift8 = simd_sl_i128(reduce2, neg_inf);
-        let mut shift12 = simd_sl_i192(reduce2, neg_inf);
-
-        let mut stride_gap_sum = stride_gap4;
-        shift4 = _mm256_adds_epi16(shift4, stride_gap_sum);
-        shift4 = _mm256_max_epi16(shift0, shift4);
-
-        stride_gap_sum = _mm256_adds_epi16(stride_gap_sum, stride_gap4);
-        shift8 = _mm256_adds_epi16(shift8, stride_gap_sum);
-
-        stride_gap_sum = _mm256_adds_epi16(stride_gap_sum, stride_gap4);
-        shift12 = _mm256_adds_epi16(shift12, stride_gap_sum);
-        shift12 = _mm256_max_epi16(shift8, shift12);
-
-        reduce2 = _mm256_max_epi16(shift4, shift12);
-    }
-    // reduce2
-    // D        D        D        D
-
-    let unreduce1_mid = _mm256_max_epi16(_mm256_adds_epi16(simd_sl_i16::<2>(reduce2, neg_inf), stride_gap2), reduce1);
-    //     B        B        B        B
-    let unreduce1 = _mm256_blend_epi16(reduce2, unreduce1_mid, 0b0010_0010_0010_0010);
-    // D   B    D   B    D   B    D   B
-    let unreduce2 = _mm256_max_epi16(_mm256_adds_epi16(simd_sl_i16::<1>(unreduce1, neg_inf), stride_gap), delta_R_max);
-    //   C   A    C   A    C   A    C   A
-    _mm256_blend_epi16(unreduce1, unreduce2, 0b0101_0101_0101_0101)
-    // D C B A  D C B A  D C B A  D C B A
+    i16x8_max_s(temp, correct)
 }
 
 #[target_feature(enable = "simd128")]
@@ -187,7 +167,7 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, 
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i16x8_splat(v) }
+pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i8x16_splat(v) }
 
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:literal) => {
@@ -255,11 +235,11 @@ mod tests {
         struct A([i16; L]);
 
         let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set4_i16(0, 0, 0, 0), simd_set1_i16(i16::MIN));
         simd_assert_vec_eq(res, [8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set4_i16(-4, -3, -2, -1), simd_set1_i16(i16::MIN));
         simd_assert_vec_eq(res, [8, 9, 10, 15, 14, 13, 14, 13]);
     }
 }
