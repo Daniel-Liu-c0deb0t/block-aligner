@@ -1,5 +1,5 @@
 cargo clean
-RUSTFLAGS="-g --target=wasm32-wasi -C target-feature=+simd128" cargo build --release --benches
+RUSTFLAGS="-g --target=wasm32-wasi -C target-feature=+simd128" cargo build --release --tests
 
 # demangle symbols
 cargo install rustfilt

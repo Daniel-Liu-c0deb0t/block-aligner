@@ -15,5 +15,5 @@ debug-assertions = false
 
 [dependencies]
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 rand = "^0.7"
