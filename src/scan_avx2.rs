@@ -81,7 +81,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
         assert!(P::I % L == 0);
 
         // These chunks of memory are contiguous ring buffers that represent every interval in the current band
-        let query_buf_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K, L_BYTES);
+        let query_buf_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * HALFSIMD_MUL, L_BYTES);
         let query_buf_ptr = alloc::alloc(query_buf_layout) as *mut u8;
 
         let delta_Dx0_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * 2, L_BYTES);
@@ -107,7 +107,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                 debug_assert!(buf_idx < Self::CEIL_K);
 
                 if i >= 0 && i <= query.len() as isize {
-                    ptr::write(query_buf_ptr.add(buf_idx), convert_char(if i > 0 {
+                    ptr::write(query_buf_ptr.add(halfsimd_get_idx(buf_idx)), convert_char(if i > 0 {
                         *query.get_unchecked(i as usize - 1) } else { NULL }, M::NUC));
 
                     let val = if i > 0 {
@@ -127,7 +127,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                         ptr::write(abs_Ax0_ptr.add(interval_idx), 0);
                     }
 
-                    ptr::write(query_buf_ptr.add(buf_idx), convert_char(NULL, M::NUC));
+                    ptr::write(query_buf_ptr.add(halfsimd_get_idx(buf_idx)), convert_char(NULL, M::NUC));
                     ptr::write(delta_Dx0_ptr.add(buf_idx), i16::MIN);
                 }
 
@@ -191,7 +191,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                                                 stride_gap_last_scalar * 3,
                                                 stride_gap_last_scalar * 2,
                                                 stride_gap_last_scalar * 1);
-
         for j in 0..reference.len() {
             // Load scores for the current reference character
             let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
@@ -388,7 +387,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
         let res_i = ((self.query.len() as isize) - self.shift_idx) as usize;
         let band_idx = (res_i / P::I) * P::I;
         let stride = cmp::min(P::I, Self::CEIL_K - band_idx) / L;
-        let idx = band_idx / L + (res_i % P::I) % stride;
+        let idx = band_idx / L + (self.ring_buf_idx + (res_i % P::I)) % stride;
         debug_assert!(idx < Self::CEIL_K / L);
 
         let delta = simd_slow_extract_i16(simd_load(self.delta_Dx0_ptr.add(idx)), (res_i % P::I) / stride) as i32;

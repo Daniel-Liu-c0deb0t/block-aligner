@@ -3,12 +3,15 @@ use std::arch::wasm32::*;
 use std::cmp;
 
 pub type Simd = v128;
+// no v64 type, so HalfSimd is just v128 with upper half ignored
 pub type HalfSimd = v128;
+pub const HALFSIMD_MUL: usize = 2;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 
 // TODO: example folder without dependencies
-// TODO: simd indexing order?
+
+// Note: SIMD vectors treated as little-endian
 
 #[target_feature(enable = "simd128")]
 #[inline]
@@ -40,7 +43,7 @@ pub unsafe fn simd_set1_i16(v: i16) -> Simd { i16x8_splat(v) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_set4_i16(d: i16, c: i16, b: i16, a: i16) -> Simd { i16x8_const(d, c, b, a, d, c, b, a) }
+pub unsafe fn simd_set4_i16(d: i16, c: i16, b: i16, a: i16) -> Simd { i16x8_const(a, b, c, d, a, b, c, d) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
@@ -83,7 +86,7 @@ macro_rules! simd_sl_i16 {
         {
             debug_assert!($num <= L);
             use std::arch::wasm32::*;
-            v16x8_shuffle::<{ 0 + $num }, { 1 + $num }, { 2 + $num }, { 3 + $num }, { 4 + $num }, { 5 + $num }, { 6 + $num }, { 7 + $num }>($a, $b)
+            v16x8_shuffle::<{ 8 - $num }, { 9 - $num }, { 10 - $num }, { 11 - $num }, { 12 - $num }, { 13 - $num }, { 14 - $num }, { 15 - $num }>($b, $a)
         }
     };
 }
@@ -93,7 +96,7 @@ macro_rules! simd_sr_i16 {
         {
             debug_assert!($num <= L);
             use std::arch::wasm32::*;
-            v16x8_shuffle::<{ 8 - $num }, { 9 - $num }, { 10 - $num }, { 11 - $num }, { 12 - $num }, { 13 - $num }, { 14 - $num }, { 15 - $num }>($a, $b)
+            v16x8_shuffle::<{ 0 + $num }, { 1 + $num }, { 2 + $num }, { 3 + $num }, { 4 + $num }, { 5 + $num }, { 6 + $num }, { 7 + $num }>($b, $a)
         }
     };
 }
@@ -133,7 +136,7 @@ pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_g
     let temp = i16x8_max_s(shift1, shift2);
 
     // Almost there: correct the last group using the last element of the previous group
-    let mut correct = v16x8_shuffle::<3, 3, 3, 3, 0, 0, 0, 0>(temp, temp);
+    let mut correct = v16x8_shuffle::<0, 0, 0, 0, 3, 3, 3, 3>(temp, temp);
     correct = i16x8_add_saturate_s(correct, stride_gap1234);
 
     i16x8_max_s(temp, correct)
@@ -143,11 +146,11 @@ pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_g
 #[inline]
 pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
     let mask = i8x16_splat(0b1111);
-    let v = v128_and(v, mask);
-    let a = v8x16_swizzle(lut1, v);
-    let b = v8x16_swizzle(lut2, v);
-    let mask = i8x16_gt_s(v, mask);
-    let c = v128_bitselect(b, a, mask);
+    let v_mask = v128_and(v, mask);
+    let a = v8x16_swizzle(lut1, v_mask);
+    let b = v8x16_swizzle(lut2, v_mask);
+    let lut_mask = i8x16_gt_s(v, mask);
+    let c = v128_bitselect(b, a, lut_mask);
     i16x8_widen_low_i8x16_s(c)
 }
 
@@ -169,13 +172,23 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, 
 #[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i8x16_splat(v) }
 
+// only the low 8 bytes are out of each v128 for halfsimd
+#[inline]
+pub fn halfsimd_get_idx(i: usize) -> usize { i + i / L * L }
+
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:literal) => {
         {
             debug_assert!($num <= L);
             use std::arch::wasm32::*;
-            v8x16_shuffle::<{ 16 - $num }, { 17 - $num }, { 18 - $num }, { 19 - $num }, { 20 - $num }, { 21 - $num }, { 22 - $num }, { 23 - $num },
-                { 24 - $num }, { 25 - $num }, { 26 - $num }, { 27 - $num }, { 28 - $num }, { 29 - $num }, { 30 - $num }, { 31 - $num }>($a, $b)
+            // special indexing to skip over the high 8 bytes that are unused
+            const fn get_idx(i: usize) -> usize { if i >= L { i + L } else { i } }
+            v8x16_shuffle::<
+                { get_idx(0 + $num) }, { get_idx(1 + $num) }, { get_idx(2 + $num) }, { get_idx(3 + $num) },
+                { get_idx(4 + $num) }, { get_idx(5 + $num) }, { get_idx(6 + $num) }, { get_idx(7 + $num) },
+                8, 9, 10, 11,
+                12, 13, 14, 15
+            >($b, $a)
         }
     };
 }
@@ -199,12 +212,12 @@ pub unsafe fn simd_dbg_i16(v: Simd) {
 #[allow(dead_code)]
 pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
     #[repr(align(16))]
-    struct A([i8; L]);
+    struct A([i8; L * HALFSIMD_MUL]);
 
-    let mut a = A([0i8; L]);
+    let mut a = A([0i8; L * HALFSIMD_MUL]);
     halfsimd_store(a.0.as_mut_ptr() as *mut HalfSimd, v);
 
-    for i in (0..a.0.len() / 2).rev() {
+    for i in (0..a.0.len()).rev() {
         print!("{:3} ", a.0[i]);
     }
     println!();
@@ -220,9 +233,51 @@ pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
     assert_eq!(arr.0, b);
 }
 
+#[target_feature(enable = "simd128")]
+pub unsafe fn halfsimd_assert_vec_eq(a: HalfSimd, b: [i8; L]) {
+    #[repr(align(16))]
+    struct A([i8; L * HALFSIMD_MUL]);
+
+    let mut arr = A([0i8; L * HALFSIMD_MUL]);
+    halfsimd_store(arr.0.as_mut_ptr() as *mut HalfSimd, a);
+    assert_eq!(&arr.0[..L], b);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_endianness() {
+        unsafe { test_endianness_core() };
+    }
+
+    #[target_feature(enable = "simd128")]
+    unsafe fn test_endianness_core() {
+        #[repr(align(16))]
+        struct A([i16; L]);
+
+        let vec = A([1, 2, 3, 4, 5, 6, 7, 8]);
+        let vec = simd_load(vec.0.as_ptr() as *const Simd);
+        let res = simd_sl_i16!(vec, vec, 1);
+        simd_assert_vec_eq(res, [8, 1, 2, 3, 4, 5, 6, 7]);
+
+        let vec = A([1, 2, 3, 4, 5, 6, 7, 8]);
+        let vec = simd_load(vec.0.as_ptr() as *const Simd);
+        let res = simd_sr_i16!(vec, vec, 1);
+        simd_assert_vec_eq(res, [2, 3, 4, 5, 6, 7, 8, 1]);
+
+        #[repr(align(16))]
+        struct B([i8; L * HALFSIMD_MUL]);
+
+        let vec = B([1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let vec = halfsimd_load(vec.0.as_ptr() as *const HalfSimd);
+        let res = halfsimd_sr_i8!(vec, vec, 1);
+        halfsimd_assert_vec_eq(res, [2, 3, 4, 5, 6, 7, 8, 1]);
+
+        let vec = simd_set4_i16(4, 3, 2, 1);
+        simd_assert_vec_eq(vec, [1, 2, 3, 4, 1, 2, 3, 4]);
+    }
 
     #[test]
     fn test_prefix_scan() {

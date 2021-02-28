@@ -15,5 +15,5 @@ debug-assertions = false
 
 [dependencies]
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-rand = "^0.7"
+[dev-dependencies]
+rand = { version = "^0.8", default-features = false, features = ["std_rng", "alloc"] }

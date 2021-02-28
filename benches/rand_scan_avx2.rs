@@ -74,12 +74,12 @@ fn bench_scan_avx2_nuc_50_1000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<50>
 
 fn rand_mutate<R: Rng>(a: &[u8], k: usize, alpha: &[u8], rng: &mut R) -> Vec<u8> {
     let mut edits = vec![0u8; a.len()];
-    let curr_k: usize = rng.gen_range(k / 2, k + 1);
+    let curr_k: usize = rng.gen_range(k / 2..k + 1);
     let mut idx: Vec<usize> = (0usize..a.len()).collect();
     idx.shuffle(rng);
 
     for i in 0..curr_k {
-        edits[idx[i]] = rng.gen_range(1u8, 4u8);
+        edits[idx[i]] = rng.gen_range(1u8..4u8);
     }
 
     let mut b = vec![];

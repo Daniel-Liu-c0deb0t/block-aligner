@@ -9,6 +9,7 @@ pub type Simd = __m256i;
 pub type HalfSimd = __m128i;
 pub const L: usize = 16;
 pub const L_BYTES: usize = L * 2;
+pub const HALFSIMD_MUL: usize = 1;
 
 #[target_feature(enable = "avx2")]
 #[inline]
@@ -174,6 +175,9 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { _mm_store_si128(
 #[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
 
+#[inline]
+pub fn halfsimd_get_idx(i: usize) -> usize { i }
+
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:literal) => {
         {
@@ -224,6 +228,16 @@ pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
 
     let mut arr = A([0i16; L]);
     simd_store(arr.0.as_mut_ptr() as *mut Simd, a);
+    assert_eq!(arr.0, b);
+}
+
+#[target_feature(enable = "avx2")]
+pub unsafe fn halfsimd_assert_vec_eq(a: HalfSimd, b: [i8; L]) {
+    #[repr(align(32))]
+    struct A([i8; L]);
+
+    let mut arr = A([0i8; L]);
+    halfsimd_store(arr.0.as_mut_ptr() as *mut HalfSimd, a);
     assert_eq!(arr.0, b);
 }
 
