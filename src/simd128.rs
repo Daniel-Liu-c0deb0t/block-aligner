@@ -9,8 +9,6 @@ pub const HALFSIMD_MUL: usize = 2;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 
-// TODO: example folder without dependencies
-
 // Note: SIMD vectors treated as little-endian
 
 #[target_feature(enable = "simd128")]

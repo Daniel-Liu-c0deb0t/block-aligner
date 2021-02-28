@@ -10,6 +10,6 @@ pub mod avx2;
 pub mod simd128;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
-pub mod scan_avx2;
+pub mod scan;
 
 pub mod scores;

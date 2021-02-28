@@ -161,7 +161,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
     /// Banded alignment.
     ///
     /// Limitations:
-    /// 1. Requires AVX2 support.
+    /// 1. Requires x86 AVX2 or WASM SIMD support.
     /// 2. The reference and the query can only contain uppercase alphabetical characters.
     /// 3. The actual size of the band is K_HALF * 2 + 1 rounded up to the next multiple of the
     ///    vector length of 16.

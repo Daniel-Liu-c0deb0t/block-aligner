@@ -5,7 +5,7 @@ use test::{Bencher, black_box};
 
 use rand::prelude::*;
 
-use better_alignment::scan_avx2::*;
+use better_alignment::scan::*;
 use better_alignment::scores::*;
 
 static AMINO_ACIDS: [u8; 20] = [
@@ -17,7 +17,7 @@ static NUC: [u8; 5] = [
     b'A', b'C', b'G', b'N', b'T'
 ];
 
-fn bench_scan_avx2_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
+fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
@@ -32,7 +32,7 @@ fn bench_scan_avx2_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     });
 }
 
-fn bench_scan_avx2_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
+fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &NUC, &mut rng));
     let q = black_box(rand_mutate(&r, K, &NUC, &mut rng));
@@ -48,29 +48,29 @@ fn bench_scan_avx2_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
 }
 
 #[bench]
-fn bench_scan_avx2_aa_15_100(b: &mut Bencher) { bench_scan_avx2_aa_core::<15>(b, 100); }
+fn bench_scan_aa_15_100(b: &mut Bencher) { bench_scan_aa_core::<15>(b, 100); }
 #[bench]
-fn bench_scan_avx2_aa_15_1000(b: &mut Bencher) { bench_scan_avx2_aa_core::<15>(b, 1000); }
+fn bench_scan_aa_15_1000(b: &mut Bencher) { bench_scan_aa_core::<15>(b, 1000); }
 #[bench]
-fn bench_scan_avx2_aa_15_10000(b: &mut Bencher) { bench_scan_avx2_aa_core::<15>(b, 10000); }
+fn bench_scan_aa_15_10000(b: &mut Bencher) { bench_scan_aa_core::<15>(b, 10000); }
 
 #[bench]
-fn bench_scan_avx2_aa_1023_10000(b: &mut Bencher) { bench_scan_avx2_aa_core::<1023>(b, 10000); }
+fn bench_scan_aa_1023_10000(b: &mut Bencher) { bench_scan_aa_core::<1023>(b, 10000); }
 #[bench]
-fn bench_scan_avx2_aa_1024_10000(b: &mut Bencher) { bench_scan_avx2_aa_core::<1024>(b, 10000); }
+fn bench_scan_aa_1024_10000(b: &mut Bencher) { bench_scan_aa_core::<1024>(b, 10000); }
 #[bench]
-fn bench_scan_avx2_aa_2500_5000(b: &mut Bencher) { bench_scan_avx2_aa_core::<2500>(b, 5000); }
+fn bench_scan_aa_2500_5000(b: &mut Bencher) { bench_scan_aa_core::<2500>(b, 5000); }
 
 #[bench]
-fn bench_scan_avx2_nuc_1023_10000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<1023>(b, 10000); }
+fn bench_scan_nuc_1023_10000(b: &mut Bencher) { bench_scan_nuc_core::<1023>(b, 10000); }
 #[bench]
-fn bench_scan_avx2_nuc_1024_10000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<1024>(b, 10000); }
+fn bench_scan_nuc_1024_10000(b: &mut Bencher) { bench_scan_nuc_core::<1024>(b, 10000); }
 #[bench]
-fn bench_scan_avx2_nuc_2500_5000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<2500>(b, 5000); }
+fn bench_scan_nuc_2500_5000(b: &mut Bencher) { bench_scan_nuc_core::<2500>(b, 5000); }
 #[bench]
-fn bench_scan_avx2_nuc_5_100(b: &mut Bencher) { bench_scan_avx2_nuc_core::<5>(b, 100); }
+fn bench_scan_nuc_5_100(b: &mut Bencher) { bench_scan_nuc_core::<5>(b, 100); }
 #[bench]
-fn bench_scan_avx2_nuc_50_1000(b: &mut Bencher) { bench_scan_avx2_nuc_core::<50>(b, 1000); }
+fn bench_scan_nuc_50_1000(b: &mut Bencher) { bench_scan_nuc_core::<50>(b, 1000); }
 
 fn rand_mutate<R: Rng>(a: &[u8], k: usize, alpha: &[u8], rng: &mut R) -> Vec<u8> {
     let mut edits = vec![0u8; a.len()];
