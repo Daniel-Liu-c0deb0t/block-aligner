@@ -171,8 +171,9 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, 
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i8x16_splat(v) }
 
 // only the low 8 bytes are out of each v128 for halfsimd
+#[target_feature(enable = "simd128")]
 #[inline]
-pub fn halfsimd_get_idx(i: usize) -> usize { i + i / L * L }
+pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i + i / L * L }
 
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:literal) => {

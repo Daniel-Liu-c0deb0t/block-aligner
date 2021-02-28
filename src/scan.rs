@@ -11,14 +11,18 @@ use std::marker::PhantomData;
 
 const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
 
+#[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 #[inline]
-fn convert_char(c: u8, nuc: bool) -> u8 {
+unsafe fn convert_char(c: u8, nuc: bool) -> u8 {
     debug_assert!(c >= b'A' && c <= NULL);
     if nuc { c } else { c - b'A' }
 }
 
+#[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 #[inline]
-fn clamp(x: i32) -> i16 {
+unsafe fn clamp(x: i32) -> i16 {
     cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
 }
 

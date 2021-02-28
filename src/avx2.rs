@@ -175,8 +175,9 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { _mm_store_si128(
 #[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
 
+#[target_feature(enable = "avx2")]
 #[inline]
-pub fn halfsimd_get_idx(i: usize) -> usize { i }
+pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i }
 
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:literal) => {
