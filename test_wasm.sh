@@ -1,6 +1,1 @@
-cargo clean
-RUSTFLAGS="--target=wasm32-wasi -C target-feature=+simd128" cargo build --tests
-
-for f in target/*/deps/*.wasm; do
-    wasmtime --enable-simd -- $f --nocapture
-done
+RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime --enable-simd --" cargo test --target=wasm32-wasi

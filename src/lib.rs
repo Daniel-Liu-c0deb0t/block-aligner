@@ -1,6 +1,11 @@
 #![cfg_attr(target_arch = "wasm32", feature(wasm_simd))]
 #![cfg_attr(target_arch = "wasm32", feature(wasm_target_feature))]
 
+use wee_alloc::WeeAlloc;
+
+#[global_allocator]
+static ALLOC: WeeAlloc = WeeAlloc::INIT;
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[macro_use]
 pub mod avx2;

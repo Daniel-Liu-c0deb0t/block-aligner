@@ -4,16 +4,22 @@ version = "0.1.0"
 authors = ["c0deb0t <daniel.liu02@gmail.com>"]
 edition = "2018"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [profile.release]
 codegen-units = 1
 panic = "abort"
 debug-assertions = false
+lto = true
 
 [profile.bench]
 codegen-units = 1
 debug-assertions = false
+lto = true
 
 [dependencies]
+wee_alloc = "^0.4"
 
 [dev-dependencies]
 rand = { version = "^0.8", default-features = false, features = ["std_rng", "alloc"] }
