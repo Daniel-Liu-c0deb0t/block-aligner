@@ -250,7 +250,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                     } else {
                         // Not the last interval; need to shift in a value from the next interval
                         let next_band_idx = band_idx + P::I;
-                        let next_last_interval = next_band_idx >= Self::CEIL_K;
+                        let next_last_interval = (next_band_idx + P::I) >= Self::CEIL_K;
                         let next_idx = next_band_idx / L + if next_last_interval {
                             self.ring_buf_idx % Self::STRIDE_LAST
                         } else {
