@@ -4,7 +4,7 @@ RUSTFLAGS="-C target-feature=+simd128" cargo build --release --benches --target 
 # binaryen wasm-opt pass
 for f in target/wasm32-wasi/*/deps/*.wasm; do
     # extreme inlining
-    wasm-opt --enable-simd -O4 --inlining-optimizing -ifwl -ocimfs 300 -fimfs 300 -aimfs 20 -o $f.opt $f
+    wasm-opt --enable-simd --enable-sign-ext -O4 --inlining-optimizing -ifwl -ocimfs 300 -fimfs 300 -aimfs 20 -o $f.opt $f
     echo $f.opt
 done
 
