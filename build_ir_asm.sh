@@ -1,3 +1,5 @@
+set -e
+
 cargo clean
 # make sure debug info is generated
 RUSTFLAGS="-g --emit llvm-ir,asm -C llvm-args=-x86-asm-syntax=intel -C target-cpu=native" cargo build --release --benches

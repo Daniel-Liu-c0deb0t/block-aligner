@@ -1,3 +1,5 @@
+set -e
+
 cargo clean
 RUSTFLAGS="-C target-feature=+simd128" cargo build --release --benches --target wasm32-wasi
 

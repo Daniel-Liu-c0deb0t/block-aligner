@@ -29,6 +29,10 @@ pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { _mm256_cmpeq_epi16(a, b
 
 #[target_feature(enable = "avx2")]
 #[inline]
+pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd { _mm256_blendv_epi8(a, b, mask) }
+
+#[target_feature(enable = "avx2")]
+#[inline]
 pub unsafe fn simd_load(ptr: *const Simd) -> Simd { _mm256_load_si256(ptr) }
 
 #[target_feature(enable = "avx2")]
@@ -108,11 +112,14 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_hmax_i16(mut v: Simd) -> i16 {
-    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 2));
-    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 4));
-    v = _mm256_max_epi16(v, _mm256_srli_si256(v, 8));
-    cmp::max(simd_extract_i16::<0>(v), simd_extract_i16::<{ L / 2 }>(v))
+pub unsafe fn simd_hmax_i16(v: Simd) -> (i16, usize) {
+    let mut v2 = _mm256_max_epi16(v, _mm256_srli_si256(v, 2));
+    v2 = _mm256_max_epi16(v2, _mm256_srli_si256(v2, 4));
+    v2 = _mm256_max_epi16(v2, _mm256_srli_si256(v2, 8));
+    let max = cmp::max(simd_extract_i16::<0>(v2), simd_extract_i16::<{ L / 2 }>(v2));
+    v2 = _mm256_cmpeq_epi16(v, _mm256_set1_epi16(max));
+    let max_idx = (simd_movemask_i8(v2).trailing_zeros() as usize) / 2;
+    (max, max_idx)
 }
 
 #[target_feature(enable = "avx2")]

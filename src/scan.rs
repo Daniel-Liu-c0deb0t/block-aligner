@@ -200,14 +200,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
             let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
             let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
             let scores2 = if M::NUC {
-                None
+                halfsimd_set1_i16(0); // unused, should be optimized out
             } else {
-                Some(halfsimd_load((matrix_ptr as *const HalfSimd).add(1)))
+                halfsimd_load((matrix_ptr as *const HalfSimd).add(1))
             };
 
             let mut band_idx = 0usize;
             let mut abs_R_interval = i16::MIN as i32;
             let mut abs_D_interval = i16::MIN as i32;
+            let mut abs_D_max = i32::MIN;
+            let mut abs_D_argmax = 0usize;
 
             while band_idx < Self::CEIL_K {
                 let last_interval = (band_idx + P::I) >= Self::CEIL_K;
@@ -291,7 +293,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                         let scores = if M::NUC {
                             halfsimd_lookup1_i16(scores1, halfsimd_load(self.query_buf_ptr.add(idx)))
                         } else {
-                            halfsimd_lookup2_i16(scores1, scores2.unwrap(), halfsimd_load(self.query_buf_ptr.add(idx)))
+                            halfsimd_lookup2_i16(scores1, scores2, halfsimd_load(self.query_buf_ptr.add(idx)))
                         };
 
                         let mut delta_D11 = simd_adds_i16(delta_D00, scores);
@@ -336,10 +338,14 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                 }
                 // End prefix scan
 
+                let mut delta_D_max = neg_inf;
+                let mut delta_D_argmax = simd_set1_i16(0);
+
                 // Begin final pass
                 {
                     let mut delta_R01 = simd_adds_i16(simd_subs_i16(delta_R_max, gap_extend), gap_open);
                     let mut delta_D01 = simd_insert_i16::<0>(neg_inf, clamp(abs_D_interval - abs_interval));
+                    let mut curr_i = simd_set1_i16(0);
 
                     for i in 0..stride {
                         let idx = {
@@ -363,6 +369,13 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                                 (prev_trace & Self::EVEN_BITS) | ((curr_trace & Self::EVEN_BITS) << 1);
                         }
 
+                        if X_DROP >= 0 {
+                            delta_D_max = simd_max_i16(delta_D_max, delta_D11);
+                            let mask = simd_cmpeq_i16(delta_D_max, delta_D11);
+                            delta_D_argmax = simd_blend_i8(delta_D_argmax, curr_i, mask);
+                            curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+                        }
+
                         simd_store(self.delta_Dx0_ptr.add(idx), delta_D11);
 
                         delta_D01 = delta_D11;
@@ -373,9 +386,31 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                 }
                 // End final pass
 
+                if X_DROP >= 0 {
+                    let (max, lane_idx) = simd_hmax_i16(delta_D_max);
+                    let max = (max as i32).saturating_add(abs_interval);
+                    let stride_idx = simd_slow_extract_i16(delta_D_argmax, lane_idx) as u16 as usize;
+                    let max_idx = stride_idx + lane_idx * stride + band_idx;
+
+                    if max > abs_D_max {
+                        abs_D_max = max;
+                        abs_D_argmax = max_idx;
+                    }
+                }
+
                 debug_assert!(band_idx / P::I < Self::NUM_INTERVALS);
                 *self.abs_Ax0_ptr.add(band_idx / P::I) = abs_interval;
                 band_idx += P::I;
+            }
+
+            if X_DROP >= 0 {
+                if abs_D_max < self.best_max - X_DROP {
+                    break;
+                } else if abs_D_max > self.best_max {
+                    self.best_max = abs_D_max;
+                    self.best_argmax_i = abs_D_argmax;
+                    self.best_argmax_j = j;
+                }
             }
 
             self.ring_buf_idx += 1;

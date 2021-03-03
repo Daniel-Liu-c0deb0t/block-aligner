@@ -29,6 +29,10 @@ pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { i16x8_eq(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
+pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd { v128_bitselect(b, a, mask) }
+
+#[target_feature(enable = "simd128")]
+#[inline]
 pub unsafe fn simd_load(ptr: *const Simd) -> Simd { v128_load(ptr) }
 
 #[target_feature(enable = "simd128")]
@@ -114,11 +118,14 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_hmax_i16(mut v: Simd) -> i16 {
-    v = i16x8_max_s(v, simd_sr_i16!(v, v, 1));
-    v = i16x8_max_s(v, simd_sr_i16!(v, v, 2));
-    v = i16x8_max_s(v, simd_sr_i16!(v, v, 4));
-    cmp::max(simd_extract_i16::<0>(v), simd_extract_i16::<{ L / 2 }>(v))
+pub unsafe fn simd_hmax_i16(v: Simd) -> (i16, usize) {
+    let mut v2 = i16x8_max_s(v, simd_sr_i16!(v, v, 1));
+    v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 2));
+    v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 4));
+    let max = simd_extract_i16::<0>(v2);
+    v2 = i16x8_eq(v, i16x8_const(max));
+    let max_idx = (simd_movemask_i8(v2).trailing_zeros() as usize) / 2;
+    (max, max_idx)
 }
 
 #[target_feature(enable = "simd128")]
