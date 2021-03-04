@@ -230,6 +230,7 @@ pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
 }
 
 #[target_feature(enable = "avx2")]
+#[allow(dead_code)]
 pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
     #[repr(align(32))]
     struct A([i16; L]);
@@ -240,6 +241,7 @@ pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
 }
 
 #[target_feature(enable = "avx2")]
+#[allow(dead_code)]
 pub unsafe fn halfsimd_assert_vec_eq(a: HalfSimd, b: [i8; L]) {
     #[repr(align(32))]
     struct A([i8; L]);

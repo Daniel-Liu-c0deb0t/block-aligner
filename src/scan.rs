@@ -11,19 +11,20 @@ use std::marker::PhantomData;
 
 const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
 
-#[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 #[inline]
 unsafe fn convert_char(c: u8, nuc: bool) -> u8 {
     debug_assert!(c >= b'A' && c <= NULL);
     if nuc { c } else { c - b'A' }
 }
 
-#[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 #[inline]
 unsafe fn clamp(x: i32) -> i16 {
     cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
+}
+
+pub struct EndIndex {
+    pub query_idx: usize,
+    pub ref_idx: usize
 }
 
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11 (includes extension), gap extend = -1
@@ -40,11 +41,10 @@ unsafe fn clamp(x: i32) -> i16 {
 //
 // A band consists of multiple intervals. Each interval is made up of strided vectors.
 //
-// TODO: x drop and early exit
 // TODO: adaptive banding
 
 #[allow(non_snake_case)]
-pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> {
+pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> {
     query_buf_layout: alloc::Layout,
     query_buf_ptr: *mut HalfSimd,
     delta_Dx0_layout: alloc::Layout,
@@ -59,6 +59,11 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
     query_idx: usize,
     shift_idx: isize,
     ring_buf_idx: usize,
+    ref_idx: usize,
+
+    best_max: i32,
+    best_argmax_i: usize,
+    best_argmax_j: usize,
 
     query: &'a [u8],
     matrix: &'a M,
@@ -66,7 +71,7 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
     _phantom: PhantomData<P>
 }
 
-impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> ScanAligner<'a, P, M, { K_HALF }, { TRACE }> {
+impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> ScanAligner<'a, P, M, { K_HALF }, { TRACE }, { X_DROP }> {
     const K: usize = K_HALF * 2 + 1;
     const CEIL_K: usize = ((Self::K + L - 1) / L) * L; // round up to multiple of L
     const NUM_INTERVALS: usize = (Self::CEIL_K + P::I - 1) / P::I;
@@ -154,6 +159,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
             query_idx: Self::CEIL_K - K_HALF - 1,
             shift_idx: -(K_HALF as isize),
             ring_buf_idx: 0,
+            ref_idx: 0,
+
+            best_max: 0, // max of first column
+            best_argmax_i: 0,
+            best_argmax_j: 0,
 
             query,
             matrix,
@@ -168,11 +178,15 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
     /// 1. Requires x86 AVX2 or WASM SIMD support.
     /// 2. The reference and the query can only contain uppercase alphabetical characters.
     /// 3. The actual size of the band is K_HALF * 2 + 1 rounded up to the next multiple of the
-    ///    vector length of 16.
+    ///    vector length of 16 (for x86 AVX2) or 8 (for WASM SIMD).
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    pub unsafe fn align(&mut self, reference: &[u8]) {
+    pub unsafe fn align(&mut self, reference: &[u8], x_drop: i32) {
+        if X_DROP {
+            assert!(x_drop >= 0);
+        }
+
         // optional 32-bit traceback
         // 0b00 = up and left, 0b10 or 0b11 = up, 0b01 = left
         if TRACE {
@@ -200,7 +214,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
             let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
             let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
             let scores2 = if M::NUC {
-                halfsimd_set1_i16(0); // unused, should be optimized out
+                halfsimd_set1_i8(0) // unused, should be optimized out
             } else {
                 halfsimd_load((matrix_ptr as *const HalfSimd).add(1))
             };
@@ -369,7 +383,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                                 (prev_trace & Self::EVEN_BITS) | ((curr_trace & Self::EVEN_BITS) << 1);
                         }
 
-                        if X_DROP >= 0 {
+                        if X_DROP {
                             delta_D_max = simd_max_i16(delta_D_max, delta_D11);
                             let mask = simd_cmpeq_i16(delta_D_max, delta_D11);
                             delta_D_argmax = simd_blend_i8(delta_D_argmax, curr_i, mask);
@@ -386,7 +400,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                 }
                 // End final pass
 
-                if X_DROP >= 0 {
+                if X_DROP {
                     let (max, lane_idx) = simd_hmax_i16(delta_D_max);
                     let max = (max as i32).saturating_add(abs_interval);
                     let stride_idx = simd_slow_extract_i16(delta_D_argmax, lane_idx) as u16 as usize;
@@ -403,13 +417,13 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
                 band_idx += P::I;
             }
 
-            if X_DROP >= 0 {
-                if abs_D_max < self.best_max - X_DROP {
+            if X_DROP {
+                if abs_D_max < self.best_max - x_drop {
                     break;
                 } else if abs_D_max > self.best_max {
                     self.best_max = abs_D_max;
                     self.best_argmax_i = abs_D_argmax;
-                    self.best_argmax_j = j;
+                    self.best_argmax_j = j + self.ref_idx + 1;
                 }
             }
 
@@ -417,22 +431,44 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
             self.query_idx += 1;
             self.shift_idx += 1;
         }
+
+        self.ref_idx += reference.len();
     }
 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     pub unsafe fn score(&self) -> i32 {
-        // Extract the score from the last band
-        let res_i = ((self.query.len() as isize) - self.shift_idx) as usize;
-        let band_idx = (res_i / P::I) * P::I;
-        let stride = cmp::min(P::I, Self::CEIL_K - band_idx) / L;
-        let idx = band_idx / L + (self.ring_buf_idx + (res_i % P::I)) % stride;
-        debug_assert!(idx < Self::CEIL_K / L);
+        if X_DROP {
+            self.best_max
+        } else {
+            // Extract the score from the last band
+            assert!((self.query.len() as isize) - self.shift_idx >= 0);
+            let res_i = ((self.query.len() as isize) - self.shift_idx) as usize;
+            let band_idx = (res_i / P::I) * P::I;
+            let stride = cmp::min(P::I, Self::CEIL_K - band_idx) / L;
+            let idx = band_idx / L + (self.ring_buf_idx + (res_i % P::I)) % stride;
+            debug_assert!(idx < Self::CEIL_K / L);
 
-        let delta = simd_slow_extract_i16(simd_load(self.delta_Dx0_ptr.add(idx)), (res_i % P::I) / stride) as i32;
-        let abs = *self.abs_Ax0_ptr.add(res_i / P::I);
+            let delta = simd_slow_extract_i16(simd_load(self.delta_Dx0_ptr.add(idx)), (res_i % P::I) / stride) as i32;
+            let abs = *self.abs_Ax0_ptr.add(res_i / P::I);
 
-        delta + abs
+            delta + abs
+        }
+    }
+
+    pub unsafe fn end_idx(&self) -> EndIndex {
+        if X_DROP {
+            assert!((self.best_argmax_i as isize) + self.shift_idx >= 0);
+            EndIndex {
+                query_idx: ((self.best_argmax_i as isize) + self.shift_idx) as usize,
+                ref_idx: self.best_argmax_j
+            }
+        } else {
+            EndIndex {
+                query_idx: self.query.len(),
+                ref_idx: self.ref_idx
+            }
+        }
     }
 
     pub fn raw_trace(&self) -> &[u32] {
@@ -441,7 +477,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool>
     }
 }
 
-impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool> Drop for ScanAligner<'a, P, M, { K_HALF }, { TRACE }> {
+impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> Drop for ScanAligner<'a, P, M, { K_HALF }, { TRACE }, { X_DROP }> {
     fn drop(&mut self) {
         unsafe {
             alloc::dealloc(self.query_buf_ptr as *mut u8, self.query_buf_layout);
@@ -465,55 +501,55 @@ mod tests {
         unsafe {
             let r = b"AAAA";
             let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 1, false>::new(q, &BLOSUM62);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
+            a.align(r, 0);
             assert_eq!(a.score(), 11);
 
             let r = b"AAAA";
             let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 3, false>::new(q, &BLOSUM62);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams, _, 3, false, false>::new(q, &BLOSUM62);
+            a.align(r, 0);
             assert_eq!(a.score(), 11);
 
             let r = b"AAAA";
             let q = b"AAAA";
-            let mut a = ScanAligner::<TestParams, _, 1, false>::new(q, &BLOSUM62);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
+            a.align(r, 0);
             assert_eq!(a.score(), 16);
 
             let r = b"AAAA";
             let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 0, false>::new(q, &BLOSUM62);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams, _, 0, false, false>::new(q, &BLOSUM62);
+            a.align(r, 0);
             assert_eq!(a.score(), 11);
 
             let r = b"AAAA";
             let q = b"RRRR";
-            let mut a = ScanAligner::<TestParams, _, 4, false>::new(q, &BLOSUM62);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams, _, 4, false, false>::new(q, &BLOSUM62);
+            a.align(r, 0);
             assert_eq!(a.score(), -4);
 
             let r = b"AAAA";
             let q = b"AAA";
-            let mut a = ScanAligner::<TestParams, _, 1, false>::new(q, &BLOSUM62);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
+            a.align(r, 0);
             assert_eq!(a.score(), 1);
 
             type TestParams2 = Params<-1, -1, 2048>;
 
             let r = b"AAAN";
             let q = b"ATAA";
-            let mut a = ScanAligner::<TestParams2, _, 2, false>::new(q, &NW1);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams2, _, 2, false, false>::new(q, &NW1);
+            a.align(r, 0);
             assert_eq!(a.score(), 1);
 
             let r = b"AAAA";
             let q = b"C";
-            let mut a = ScanAligner::<TestParams2, _, 4, false>::new(q, &NW1);
-            a.align(r);
+            let mut a = ScanAligner::<TestParams2, _, 4, false, false>::new(q, &NW1);
+            a.align(r, 0);
             assert_eq!(a.score(), -4);
-            let mut a = ScanAligner::<TestParams2, _, 4, false>::new(r, &NW1);
-            a.align(q);
+            let mut a = ScanAligner::<TestParams2, _, 4, false, false>::new(r, &NW1);
+            a.align(q, 0);
             assert_eq!(a.score(), -4);
         }
     }

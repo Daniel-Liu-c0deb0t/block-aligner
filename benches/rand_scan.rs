@@ -25,8 +25,8 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
 
     b.iter(|| {
         unsafe {
-            let mut a = ScanAligner::<BenchParams, _, K, false>::new(&q, &BLOSUM62);
-            a.align(&r);
+            let mut a = ScanAligner::<BenchParams, _, K, false, false>::new(&q, &BLOSUM62);
+            a.align(&r, 0);
             a.score()
         }
     });
@@ -40,8 +40,8 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
 
     b.iter(|| {
         unsafe {
-            let mut a = ScanAligner::<BenchParams, _, K, false>::new(&q, &NW1);
-            a.align(&r);
+            let mut a = ScanAligner::<BenchParams, _, K, false, false>::new(&q, &NW1);
+            a.align(&r, 0);
             a.score()
         }
     });
