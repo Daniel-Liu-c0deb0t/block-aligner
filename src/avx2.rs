@@ -129,27 +129,31 @@ pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_g
     // Optimized prefix add and max for every four elements
     let mut shift1 = simd_sl_i16!(delta_R_max, neg_inf, 1);
     shift1 = _mm256_adds_epi16(shift1, stride_gap);
-    shift1 = _mm256_max_epi16(shift1, delta_R_max);
+    shift1 = _mm256_max_epi16(delta_R_max, shift1);
     let mut shift2 = simd_sl_i16!(shift1, neg_inf, 2);
     shift2 = _mm256_adds_epi16(shift2, _mm256_slli_epi16(stride_gap, 1));
     shift2 = _mm256_max_epi16(shift1, shift2);
 
-    // Optimized prefix add and max for every group of four elements
-    let mut shift4 = simd_sl_i16!(shift2, neg_inf, 4);
-    shift4 = _mm256_adds_epi16(shift4, _mm256_slli_epi16(stride_gap, 2));
-    shift4 = _mm256_max_epi16(shift2, shift4);
-    let mut shift8 = simd_sl_i128(shift4, neg_inf);
-    shift8 = _mm256_adds_epi16(shift8, _mm256_slli_epi16(stride_gap, 3));
-    let temp = _mm256_max_epi16(shift4, shift8);
+    // Correct each group using an element from the previous group
+    let mut correct1 = simd_sl_i16!(shift2, neg_inf, 1);
+    let mask = _mm256_set_epi8(
+        9, 8, 9, 8, 9, 8, 9, 8, 1, 0, 1, 0, 1, 0, 1, 0,
+        9, 8, 9, 8, 9, 8, 9, 8, 1, 0, 1, 0, 1, 0, 1, 0
+    );
+    correct1 = _mm256_shuffle_epi8(correct1, mask);
+    correct1 = _mm256_adds_epi16(correct1, stride_gap1234);
+    correct1 = _mm256_max_epi16(shift2, correct1);
 
-    // Almost there: correct each group using an element from the previous group
-    let mut correct = simd_sl_i16!(temp, neg_inf, 1);
+    let mut correct2 = simd_sl_i128(correct1, neg_inf);
+    let mask = _mm256_set_epi8(
+        15, 14, 15, 14, 15, 14, 15, 14, 7, 6, 7, 6, 7, 6, 7, 6,
+        15, 14, 15, 14, 15, 14, 15, 14, 7, 6, 7, 6, 7, 6, 7, 6
+    );
+    correct2 = _mm256_shuffle_epi8(correct2, mask);
+    correct2 = _mm256_adds_epi16(correct2, _mm256_adds_epi16(stride_gap1234, _mm256_slli_epi16(stride_gap, 2)));
+    correct2 = _mm256_max_epi16(correct1, correct2);
 
-    correct = _mm256_shufflelo_epi16(correct, 0);
-    correct = _mm256_shufflehi_epi16(correct, 0);
-    correct = _mm256_adds_epi16(correct, stride_gap1234);
-
-    _mm256_max_epi16(temp, correct)
+    correct2
 }
 
 // use avx2 target feature to prevent legacy SSE mode penalty
