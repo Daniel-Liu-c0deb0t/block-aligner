@@ -1,7 +1,5 @@
 use std::arch::wasm32::*;
 
-use std::cmp;
-
 pub type Simd = v128;
 // no v64 type, so HalfSimd is just v128 with upper half ignored
 pub type HalfSimd = v128;
@@ -123,7 +121,7 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> (i16, usize) {
     v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 2));
     v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 4));
     let max = simd_extract_i16::<0>(v2);
-    v2 = i16x8_eq(v, i16x8_const(max));
+    v2 = i16x8_eq(v, i16x8_splat(max));
     let max_idx = (simd_movemask_i8(v2).trailing_zeros() as usize) / 2;
     (max, max_idx)
 }
@@ -302,6 +300,10 @@ mod tests {
 
         let vec = simd_set4_i16(4, 3, 2, 1);
         simd_assert_vec_eq(vec, [1, 2, 3, 4, 1, 2, 3, 4]);
+
+        simd_assert_vec_eq(simd_adds_i16(simd_set1_i16(i16::MIN), simd_set1_i16(i16::MIN)), [i16::MIN; 8]);
+        simd_assert_vec_eq(simd_adds_i16(simd_set1_i16(i16::MAX), simd_set1_i16(i16::MIN)), [-1; 8]);
+        simd_assert_vec_eq(simd_subs_i16(simd_set1_i16(i16::MAX), simd_set1_i16(i16::MIN)), [i16::MAX; 8]);
     }
 
     #[test]
