@@ -10,4 +10,6 @@ You will probably need these programs on your `$PATH`:
 * [ ] Use bitmask instruction instead of workaround
 * [ ] Make sure functions without target feature attribute are inlined correctly.
 Easy fix: run binaryen wasm-opt pass with lots of inlining.
+* [ ] Too many `locals.get` and `locals.set` in generated output that is slowing it down.
+Hopefully, better compiler output in the future will fix this.
 * [x] Try wasmer and wavm. They don't offer much performance improvement over wasmtime.
