@@ -1,1 +1,1 @@
-RUSTFLAGS="-C target-cpu=native" cargo bench
+RUSTFLAGS="-C target-cpu=native" cargo bench -- "$@"

@@ -11,11 +11,11 @@ static ALLOC: WeeAlloc = WeeAlloc::INIT;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[macro_use]
-mod avx2;
+pub mod avx2;
 
 #[cfg(target_arch = "wasm32")]
 #[macro_use]
-mod simd128;
+pub mod simd128;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
 pub mod scan;

@@ -5,7 +5,7 @@ pub trait Matrix {
 }
 
 #[repr(align(32))]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct AAMatrix {
     pub scores: [i8; 27 * 32]
 }
@@ -21,7 +21,7 @@ impl Matrix for AAMatrix {
 }
 
 #[repr(align(32))]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct NucMatrix {
     pub scores: [i8; 8 * 16]
 }

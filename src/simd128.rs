@@ -131,6 +131,23 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> (i16, usize) {
 #[target_feature(enable = "simd128")]
 #[inline]
 #[allow(non_snake_case)]
+#[allow(dead_code)]
+pub unsafe fn simd_naive_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf: Simd) -> Simd {
+    let mut curr = delta_R_max;
+
+    for _i in 0..(L - 1) {
+        let prev = curr;
+        curr = simd_sl_i16!(curr, neg_inf, 1);
+        curr = i16x8_add_saturate_s(curr, stride_gap);
+        curr = i16x8_max_s(curr, prev);
+    }
+
+    curr
+}
+
+#[target_feature(enable = "simd128")]
+#[inline]
+#[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_gap1234: Simd, neg_inf: Simd) -> Simd {
     // Optimized prefix add and max for every four elements
     let mut shift1 = simd_sl_i16!(delta_R_max, neg_inf, 1);

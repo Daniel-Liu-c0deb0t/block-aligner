@@ -22,6 +22,7 @@ unsafe fn clamp(x: i32) -> i16 {
     cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct EndIndex {
     pub query_idx: usize,
     pub ref_idx: usize
@@ -62,7 +63,7 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
     ref_idx: usize,
 
     best_max: i32,
-    best_argmax_i: usize,
+    best_argmax_i: isize,
     best_argmax_j: usize,
 
     query: &'a [u8],
@@ -223,7 +224,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
             let mut abs_R_interval = i16::MIN as i32;
             let mut abs_D_interval = i16::MIN as i32;
             let mut abs_D_max = i32::MIN;
-            let mut abs_D_argmax = 0usize;
+            let mut abs_D_argmax = 0isize;
 
             while band_idx < Self::CEIL_K {
                 let last_interval = (band_idx + P::I) >= Self::CEIL_K;
@@ -408,7 +409,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
 
                     if max > abs_D_max {
                         abs_D_max = max;
-                        abs_D_argmax = max_idx;
+                        abs_D_argmax = max_idx as isize;
                     }
                 }
 
@@ -417,19 +418,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                 band_idx += P::I;
             }
 
+            self.ring_buf_idx += 1;
+            self.query_idx += 1;
+            self.shift_idx += 1;
+
             if X_DROP {
                 if abs_D_max < self.best_max - x_drop {
                     break;
                 } else if abs_D_max > self.best_max {
                     self.best_max = abs_D_max;
-                    self.best_argmax_i = abs_D_argmax;
+                    self.best_argmax_i = abs_D_argmax + self.shift_idx;
                     self.best_argmax_j = j + self.ref_idx + 1;
                 }
             }
-
-            self.ring_buf_idx += 1;
-            self.query_idx += 1;
-            self.shift_idx += 1;
         }
 
         self.ref_idx += reference.len();
@@ -458,9 +459,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
 
     pub unsafe fn end_idx(&self) -> EndIndex {
         if X_DROP {
-            assert!((self.best_argmax_i as isize) + self.shift_idx >= 0);
+            assert!(self.best_argmax_i >= 0);
             EndIndex {
-                query_idx: ((self.best_argmax_i as isize) + self.shift_idx) as usize,
+                query_idx: self.best_argmax_i as usize,
                 ref_idx: self.best_argmax_j
             }
         } else {
@@ -551,6 +552,27 @@ mod tests {
             let mut a = ScanAligner::<TestParams2, _, 4, false, false>::new(r, &NW1);
             a.align(q, 0);
             assert_eq!(a.score(), -4);
+        }
+    }
+
+    #[test]
+    fn test_x_drop() {
+        type TestParams = Params<-11, -1, 1024>;
+
+        unsafe {
+            let r = b"AAARRA";
+            let q = b"AAAAAA";
+            let mut a = ScanAligner::<TestParams, _, 1, false, true>::new(q, &BLOSUM62);
+            a.align(r, 1);
+            assert_eq!(a.score(), 12);
+            assert_eq!(a.end_idx(), EndIndex { query_idx: 3, ref_idx: 3 });
+
+            let r = b"AAARRA";
+            let q = b"AAAAAA";
+            let mut a = ScanAligner::<TestParams, _, 10, false, true>::new(q, &BLOSUM62);
+            a.align(r, 1);
+            assert_eq!(a.score(), 12);
+            assert_eq!(a.end_idx(), EndIndex { query_idx: 3, ref_idx: 3 });
         }
     }
 }

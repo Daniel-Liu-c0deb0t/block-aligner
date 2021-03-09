@@ -15,5 +15,5 @@ for f in target/wasm32-wasi/*/deps/*.wasm; do
 done
 
 for f in target/wasm32-wasi/*/deps/*.wasm.opt; do
-    $CARGO_TARGET_WASM32_WASI_RUNNER $f --bench
+    $CARGO_TARGET_WASM32_WASI_RUNNER $f --bench "$@"
 done
