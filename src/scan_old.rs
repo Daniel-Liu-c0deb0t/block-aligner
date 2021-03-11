@@ -47,6 +47,8 @@ pub enum Direction {
 // 1x | 10   11
 //
 // A band consists of multiple intervals. Each interval is made up of strided vectors.
+//
+// TODO: adaptive banding
 
 #[allow(non_snake_case)]
 pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> {
@@ -296,14 +298,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                     }
                 }
 
-                // TODO: adaptive banding
-                // TODO: deal with delta_D00 (shift in neg_inf)
-                // TODO: deal with abs_Ax0 when shifting down
-                // TODO: deal with trace when shifting down
-                // TODO: how to shift down? how much to shift? (first shift down a few then shift
-                // right? shift until max is in the center!)
-                // TODO: use center for xdrop instead of max
-
                 // Vector for prefix scan calculations
                 let mut delta_R_max = neg_inf;
                 let abs_offset = simd_set1_i16(clamp(*self.abs_Ax0_ptr.add(band_idx / P::I) - abs_interval));
@@ -315,7 +309,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
 
                     for i in 0..stride {
                         let idx = {
-                            let mut idx = self.ring_buf_idx + i;
+                            let mut idx = self.ring_buf_idx + 1 + i;
                             idx = if last_interval { idx % Self::STRIDE_LAST } else { idx % Self::STRIDE_I };
                             band_idx / L + idx
                         };
@@ -380,7 +374,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
 
                     for i in 0..stride {
                         let idx = {
-                            let mut idx = self.ring_buf_idx + i;
+                            let mut idx = self.ring_buf_idx + 1 + i;
                             idx = if last_interval { idx % Self::STRIDE_LAST } else { idx % Self::STRIDE_I };
                             band_idx / L + idx
                         };
