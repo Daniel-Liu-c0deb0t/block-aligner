@@ -56,8 +56,7 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
     delta_Dx0_ptr: *mut Simd,
     delta_Cx0_layout: alloc::Layout,
     delta_Cx0_ptr: *mut Simd,
-    abs_Ax0_layout: alloc::Layout,
-    abs_Ax0_ptr: *mut i32,
+    abs_A00: i32,
 
     trace: Vec<u32>,
 
@@ -81,11 +80,7 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
 impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> ScanAligner<'a, P, M, { K_HALF }, { TRACE }, { X_DROP }> {
     const K: usize = K_HALF * 2 + 2; // normally K_HALF * 2 + 1, but add one auxiliary
     const CEIL_K: usize = ((Self::K + L - 1) / L) * L; // round up to multiple of L
-    const NUM_INTERVALS: usize = (Self::CEIL_K + P::I - 1) / P::I;
-
-    // Use precomputed strides so compiler can avoid division/modulo instructions
-    const STRIDE_I: usize = P::I / L;
-    const STRIDE_LAST: usize = (Self::CEIL_K - ((Self::CEIL_K - 1) / P::I) * P::I) / L;
+    const STRIDE: usize = Self::CEIL_K / L;
 
     const EVEN_BITS: u32 = 0x55555555u32;
 
@@ -93,6 +88,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     pub unsafe fn new(query: &'a [u8], matrix: &'a M) -> Self {
+        assert!(Self::CEIL_K <= P::I);
         assert!(P::GAP_OPEN <= P::GAP_EXTEND);
         assert!(P::I % L == 0);
 
@@ -106,20 +102,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
         let delta_Cx0_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * 2, L_BYTES);
         let delta_Cx0_ptr = alloc::alloc(delta_Cx0_layout) as *mut i16;
 
-        // 32-bit absolute values
-        let abs_Ax0_layout = alloc::Layout::array::<i32>(Self::NUM_INTERVALS).unwrap();
-        let abs_Ax0_ptr = alloc::alloc(abs_Ax0_layout) as *mut i32;
-
         // Initialize DP columns
         // Not extremely optimized, since it only runs once
         {
-            let mut abs_prev = 0;
-
             for idx in 0..Self::CEIL_K {
                 let i = (idx as isize) - (K_HALF as isize);
-                let interval_idx = idx / P::I;
-                let stride = cmp::min(P::I, Self::CEIL_K - interval_idx * P::I) / L;
-                let buf_idx = interval_idx * P::I + (((idx % P::I) % stride) * L + (idx % P::I) / stride);
+                let buf_idx = (idx % Self::STRIDE) * L + idx / Self::STRIDE;
                 debug_assert!(buf_idx < Self::CEIL_K);
 
                 if i >= 0 && i <= query.len() as isize {
@@ -132,17 +120,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                         0
                     };
 
-                    if idx % P::I == 0 {
-                        ptr::write(abs_Ax0_ptr.add(interval_idx), val);
-                        abs_prev = val;
-                    }
-
-                    ptr::write(delta_Dx0_ptr.add(buf_idx), (val - abs_prev) as i16);
+                    ptr::write(delta_Dx0_ptr.add(buf_idx), val as i16);
                 } else {
-                    if idx % P::I == 0 {
-                        ptr::write(abs_Ax0_ptr.add(interval_idx), 0);
-                    }
-
                     ptr::write(query_buf_ptr.add(halfsimd_get_idx(buf_idx)), convert_char(NULL, M::NUC));
                     ptr::write(delta_Dx0_ptr.add(buf_idx), i16::MIN);
                 }
@@ -158,8 +137,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
             delta_Dx0_ptr: delta_Dx0_ptr as *mut Simd,
             delta_Cx0_layout,
             delta_Cx0_ptr: delta_Cx0_ptr as *mut Simd,
-            abs_Ax0_layout,
-            abs_Ax0_ptr,
+            abs_A00: 0i32,
 
             trace: vec![],
 
@@ -181,7 +159,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
         }
     }
 
+    // TODO: evaluate greedy extension method
     // TODO: adaptive banding
+    // TODO: different thresholds for how much to shift and when to switch
     // TODO: deal with delta_D00 (shift in neg_inf)
     // TODO: deal with abs_Ax0 when shifting down
     // TODO: deal with trace when shifting down
@@ -217,18 +197,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
         let gap_extend = simd_set1_i16(P::GAP_EXTEND as i16);
         let neg_inf = simd_set1_i16(i16::MIN);
 
-        let stride_gap_I_scalar = (Self::STRIDE_I as i16) * (P::GAP_EXTEND as i16);
-        let stride_gap_I = simd_set1_i16(stride_gap_I_scalar);
-        let stride_gap_last_scalar = (Self::STRIDE_LAST as i16) * (P::GAP_EXTEND as i16);
-        let stride_gap_last = simd_set1_i16(stride_gap_last_scalar);
-        let stride_gap1234_I = simd_set4_i16(stride_gap_I_scalar * 4,
-                                             stride_gap_I_scalar * 3,
-                                             stride_gap_I_scalar * 2,
-                                             stride_gap_I_scalar * 1);
-        let stride_gap1234_last = simd_set4_i16(stride_gap_last_scalar * 4,
-                                                stride_gap_last_scalar * 3,
-                                                stride_gap_last_scalar * 2,
-                                                stride_gap_last_scalar * 1);
+        let stride_gap_scalar = (Self::STRIDE as i16) * (P::GAP_EXTEND as i16);
+        let stride_gap = simd_set1_i16(stride_gap_scalar);
+        let stride_gap1234 = simd_set4_i16(stride_gap_scalar * 4,
+                                           stride_gap_scalar * 3,
+                                           stride_gap_scalar * 2,
+                                           stride_gap_scalar * 1);
 
         let mut delta_D00 = neg_inf;
         let mut j = 0usize;
@@ -247,269 +221,179 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
 
             match self.shift_dir {
                 Direction::Down(shift_iter) => {
-                    'shift_loop: for chunk in (0..shift_iter).chunk(P::I) {
-                        for &i in chunk {
-                            // Don't go past the end of the query
-                            if self.shift_idx >= self.query.len() {
-                                break 'shift_loop;
-                            }
-
-                            let mut band_idx = 0usize;
-                            let mut last_interval = P::I >= Self::CEIL_K;
-                            let mut stride_gap = if last_interval { stride_gap_last } else { stride_gap_I };
-                            let mut shift_vec_idx = if last_interval {
-                                self.ring_buf_idx % Self::STRIDE_LAST
-                            } else {
-                                self.ring_buf_idx % Self::STRIDE_I
-                            };
-                            let mut abs_interval = *self.abs_Ax0_ptr;
-                            debug_assert!(shift_vec_idx < Self::CEIL_K / L);
-
-                            while band_idx < Self::CEIL_K {
-                                // Update ring buffers to slide current band down
-                                let shift_D_ptr = self.delta_Dx0_ptr.add(shift_vec_idx);
-                                let shift_query_ptr = self.query_buf_ptr.add(shift_vec_idx);
-                                let shift_C_ptr = self.delta_Cx0_ptr.add(shift_vec_idx);
-                                band_idx += P::I;
-
-                                if last_interval {
-                                    // This must be the last interval
-                                    let c = if self.query_idx < self.query.len() {
-                                        *self.query.get_unchecked(self.query_idx)
-                                    } else {
-                                        NULL
-                                    };
-                                    let query_insert = halfsimd_set1_i8(convert_char(c, M::NUC) as i8);
-
-                                    abs_D_interval = if i == 0 {
-                                        cmp::max(abs_D_interval + P::GAP_OPEN as i32, abs_R_interval + P::GAP_EXTEND as i32)
-                                    } else {
-                                        abs_D_interval + P::GAP_EXTEND as i32;
-                                    };
-                                    let delta_Dx0_insert = simd_set1_i16(clamp(abs_D10 - abs_interval));
-
-                                    // Now shift in new values for each interval
-                                    halfsimd_store(shift_query_ptr, halfsimd_sr_i8!(query_insert, halfsimd_load(shift_query_ptr), 1));
-                                    simd_store(shift_D_ptr, simd_sr_i16!(delta_Dx0_insert, simd_load(shift_D_ptr), 1));
-                                    simd_store(shift_C_ptr, simd_sr_i16!(neg_inf, simd_load(shift_C_ptr), 1));
-                                } else {
-                                    // Not the last interval; need to shift in a value from the next interval
-                                    last_interval = (band_idx + P::I) >= Self::CEIL_K;
-                                    shift_vec_idx = band_idx / L + if last_interval {
-                                        self.ring_buf_idx % Self::STRIDE_LAST
-                                    } else {
-                                        self.ring_buf_idx % Self::STRIDE_I
-                                    };
-                                    let next_abs_interval = *self.abs_Ax0_ptr.add(band_idx / P::I);
-                                    let abs_offset = simd_set1_i16(clamp(next_abs_interval - abs_interval));
-                                    abs_interval = next_abs_interval;
-                                    debug_assert!(shift_vec_idx < Self::CEIL_K / L);
-
-                                    let query_insert = halfsimd_load(self.query_buf_ptr.add(shift_vec_idx));
-                                    let delta_Dx0_insert = simd_adds_i16(simd_load(self.delta_Dx0_ptr.add(shift_vec_idx)), abs_offset);
-                                    let delta_Cx0_insert = simd_adds_i16(simd_load(self.delta_Cx0_ptr.add(shift_vec_idx)), abs_offset);
-
-                                    // Now shift in new values for each interval
-                                    halfsimd_store(shift_query_ptr, halfsimd_sr_i8!(query_insert, halfsimd_load(shift_query_ptr), 1));
-                                    simd_store(shift_D_ptr, simd_sr_i16!(delta_Dx0_insert, simd_load(shift_D_ptr), 1));
-                                    simd_store(shift_C_ptr, simd_sr_i16!(delta_Cx0_insert, simd_load(shift_C_ptr), 1));
-                                }
-                            }
-
-                            self.ring_buf_idx += 1;
-                            self.query_idx += 1;
-                            self.shift_idx += 1; // TODO: eliminate one of these
+                    for i in (0..shift_iter) {
+                        // Don't go past the end of the query
+                        if self.shift_idx >= self.query.len() {
+                            break;
                         }
 
-                        if P::I > Self::CEIL_K / 2 + 1 // compile time check
-                            || chunk[0] == 0 { // runtime check
-                            // skip the recalculation because its result won't be necessary
-                            continue;
-                        }
+                        let mut shift_vec_idx = self.ring_buf_idx % Self::STRIDE;
+                        debug_assert!(shift_vec_idx < Self::CEIL_K / L);
 
-                        // recalculate abs_Ax0 to prevent overflow
-                        // TODO: fold into upper loop?
-                        for band_idx in (0..Self::CEIL_K).step_by(P::I) {
-                            let last_interval = band_idx + P::I >= Self::CEIL_K;
-                            let first_vec_idx = band_idx / L + if last_interval {
-                                self.ring_buf_idx % Self::STRIDE_LAST
-                            } else {
-                                self.ring_buf_idx % Self::STRIDE_I
-                            };
-                            debug_assert!(first_vec_idx < Self::CEIL_K / L);
-                            let prev_abs = *self.abs_Ax0_ptr.add(band_idx / P::I);
-                            let curr_abs = if self.shift_idx + (band_idx as isize) >= 0 {
-                                simd_extract_i16::<0>(first_vec_idx) + prev_abs
-                            } else {
-                                prev_abs
-                            };
-                            let abs_offset = simd_set1_i16(clamp(curr_abs - prev_abs));
-                            let stride = if last_interval { Self::STRIDE_LAST } else { Self::STRIDE_I };
-                            for k in (band_idx / L)..(band_idx / L + stride) {
-                                simd_store(delta_Dx0_ptr.add(k), simd_adds_i16(simd_load(delta_Dx0_ptr.add(k)), abs_offset));
-                                simd_store(delta_Cx0_ptr.add(k), simd_adds_i16(simd_load(delta_Cx0_ptr.add(k)), abs_offset));
-                            }
-                            *self.abs_Ax0_ptr.add(band_idx / P::I) = abs;
-                        }
+                        // Update ring buffers to slide current band down
+                        let shift_D_ptr = self.delta_Dx0_ptr.add(shift_vec_idx);
+                        let shift_query_ptr = self.query_buf_ptr.add(shift_vec_idx);
+                        let shift_C_ptr = self.delta_Cx0_ptr.add(shift_vec_idx);
+                        band_idx += P::I;
+
+                        let c = if self.query_idx < self.query.len() {
+                            *self.query.get_unchecked(self.query_idx)
+                        } else {
+                            NULL
+                        };
+                        let query_insert = halfsimd_set1_i8(convert_char(c, M::NUC) as i8);
+
+                        abs_D_interval = if i == 0 {
+                            cmp::max(abs_D_interval + P::GAP_OPEN as i32, abs_R_interval + P::GAP_EXTEND as i32)
+                        } else {
+                            abs_D_interval + P::GAP_EXTEND as i32;
+                        };
+                        let delta_Dx0_insert = simd_set1_i16(clamp(abs_D_interval - abs_A00));
+
+                        // Now shift in new values for each interval
+                        halfsimd_store(shift_query_ptr, halfsimd_sr_i8!(query_insert, halfsimd_load(shift_query_ptr), 1));
+                        delta_D00 = simd_load(shift_D_ptr);
+                        simd_store(shift_D_ptr, simd_sr_i16!(delta_Dx0_insert, delta_D00, 1));
+                        simd_store(shift_C_ptr, simd_sr_i16!(neg_inf, simd_load(shift_C_ptr), 1));
+
+                        self.ring_buf_idx += 1;
+                        self.query_idx += 1;
+                        self.shift_idx += 1; // TODO: eliminate one of these
                     }
 
                     self.shift_dir = Direction::Right;
                 },
                 Direction::Right => {
-                    let mut abs_D_max = i32::MIN;
                     let mut abs_D_argmax = 0isize;
-                    abs_R_interval = i16::MIN as i32;
-                    abs_D_interval = i16::MIN as i32;
 
-                    for band_idx in (0..Self::CEIL_K).step_by(P::I) {
-                        let last_interval = (band_idx + P::I) >= Self::CEIL_K;
-                        let stride = if last_interval { Self::STRIDE_LAST } else { Self::STRIDE_I };
-                        let stride_gap = if last_interval { stride_gap_last } else { stride_gap_I };
-                        let mut abs_interval = *self.abs_Ax0_ptr.add(band_idx / P::I);
+                    // Vector for prefix scan calculations
+                    let mut delta_R_max = neg_inf;
+                    let abs_interval = abs_A00.saturating_add(if self.shift_idx < 0 {
+                        0
+                    } else {
+                        simd_extract_i16::<0>(delta_D00) as i32
+                    });
+                    let abs_offset = simd_set1_i16(clamp(abs_A00 - abs_interval));
 
-                        // Vector for prefix scan calculations
-                        let mut delta_R_max = neg_inf;
-                        let abs_offset = simd_set1_i16(clamp(*self.abs_Ax0_ptr.add(band_idx / P::I) - abs_interval));
-                        let stride_last_ptr = {
-                            let mut idx = self.ring_buf_idx + stride - 1;
-                            idx = if last_interval { idx % Self::STRIDE_LAST } else { idx % Self::STRIDE_I };
-                            self.delta_Dx0_ptr.add(band_idx / L + idx)
-                        };
-                        // TODO: delta_D00
-                        delta_D00 = simd_adds_i16(simd_sl_i16!(simd_load(stride_last_ptr), neg_inf, 1), abs_offset);
+                    // Begin initial pass
+                    {
+                        let mut extend_to_end = stride_gap;
 
-                        // Begin initial pass
-                        {
-                            let mut extend_to_end = stride_gap;
+                        for i in 0..stride {
+                            let idx = (self.ring_buf_idx + i) % Self::STRIDE;
+                            debug_assert!(idx < Self::CEIL_K / L);
 
-                            for i in 0..stride {
-                                let idx = {
-                                    let mut idx = self.ring_buf_idx + i;
-                                    idx = if last_interval { idx % Self::STRIDE_LAST } else { idx % Self::STRIDE_I };
-                                    band_idx / L + idx
-                                };
-                                debug_assert!(idx < Self::CEIL_K / L);
+                            let scores = if M::NUC {
+                                halfsimd_lookup1_i16(scores1, halfsimd_load(self.query_buf_ptr.add(idx)))
+                            } else {
+                                halfsimd_lookup2_i16(scores1, scores2, halfsimd_load(self.query_buf_ptr.add(idx)))
+                            };
 
-                                let scores = if M::NUC {
-                                    halfsimd_lookup1_i16(scores1, halfsimd_load(self.query_buf_ptr.add(idx)))
-                                } else {
-                                    halfsimd_lookup2_i16(scores1, scores2, halfsimd_load(self.query_buf_ptr.add(idx)))
-                                };
+                            let mut delta_D11 = simd_adds_i16(delta_D00, scores);
 
-                                let mut delta_D11 = simd_adds_i16(delta_D00, scores);
+                            let delta_D10 = simd_adds_i16(simd_load(self.delta_Dx0_ptr.add(idx)), abs_offset);
+                            let delta_C10 = simd_adds_i16(simd_load(self.delta_Cx0_ptr.add(idx)), abs_offset);
+                            let delta_C11 = simd_max_i16(
+                                simd_adds_i16(delta_C10, gap_extend), simd_adds_i16(delta_D10, gap_open));
 
-                                let delta_D10 = simd_adds_i16(simd_load(self.delta_Dx0_ptr.add(idx)), abs_offset);
-                                let delta_C10 = simd_adds_i16(simd_load(self.delta_Cx0_ptr.add(idx)), abs_offset);
-                                let delta_C11 = simd_max_i16(
-                                    simd_adds_i16(delta_C10, gap_extend), simd_adds_i16(delta_D10, gap_open));
+                            delta_D11 = simd_max_i16(delta_D11, delta_C11);
 
-                                delta_D11 = simd_max_i16(delta_D11, delta_C11);
-
-                                if TRACE {
-                                    let trace_idx = (Self::CEIL_K / L) * (j + 1) + band_idx / L + i;
-                                    debug_assert!(trace_idx < self.trace.len());
-                                    *self.trace.get_unchecked_mut(trace_idx) =
-                                        simd_movemask_i8(simd_cmpeq_i16(delta_C11, delta_D11));
-                                }
-
-                                extend_to_end = simd_subs_i16(extend_to_end, gap_extend);
-                                delta_R_max = simd_max_i16(delta_R_max, simd_adds_i16(delta_D11, extend_to_end));
-
-                                // Slide band right by directly overwriting the previous band
-                                simd_store(self.delta_Dx0_ptr.add(idx), delta_D11);
-                                simd_store(self.delta_Cx0_ptr.add(idx), delta_C11);
-
-                                delta_D00 = delta_D10;
-                            }
-                        }
-                        // End initial pass
-
-                        // Begin prefix scan
-                        {
-                            let prev_delta_R_max_last = simd_extract_i16::<{ L - 1 }>(delta_R_max) as i32;
-                            delta_R_max = simd_sl_i16!(delta_R_max, neg_inf, 1);
-                            delta_R_max = simd_insert_i16::<0>(delta_R_max, clamp(abs_R_interval - abs_interval));
-
-                            let stride_gap1234 = if last_interval { stride_gap1234_last } else { stride_gap1234_I };
-                            delta_R_max = simd_prefix_scan_i16(delta_R_max, stride_gap, stride_gap1234, neg_inf);
-
-                            let curr_delta_R_max_last = simd_extract_i16::<{ L - 1 }>(simd_adds_i16(delta_R_max, stride_gap)) as i32;
-                            abs_R_interval = abs_interval.saturating_add(cmp::max(prev_delta_R_max_last, curr_delta_R_max_last));
-                        }
-                        // End prefix scan
-
-                        let mut delta_D_max = neg_inf;
-                        let mut delta_D_argmax = simd_set1_i16(0);
-
-                        // Begin final pass
-                        {
-                            let mut delta_R01 = simd_adds_i16(simd_subs_i16(delta_R_max, gap_extend), gap_open);
-                            let mut delta_D01 = simd_insert_i16::<0>(neg_inf, clamp(abs_D_interval - abs_interval));
-                            let mut curr_i = simd_set1_i16(0);
-
-                            for i in 0..stride {
-                                let idx = {
-                                    let mut idx = self.ring_buf_idx + i;
-                                    idx = if last_interval { idx % Self::STRIDE_LAST } else { idx % Self::STRIDE_I };
-                                    band_idx / L + idx
-                                };
-                                debug_assert!(idx < Self::CEIL_K / L);
-
-                                let delta_R11 = simd_max_i16(
-                                    simd_adds_i16(delta_R01, gap_extend), simd_adds_i16(delta_D01, gap_open));
-                                let mut delta_D11 = simd_load(self.delta_Dx0_ptr.add(idx));
-                                delta_D11 = simd_max_i16(delta_D11, delta_R11);
-
-                                if TRACE {
-                                    let trace_idx = (Self::CEIL_K / L) * (j + 1) + band_idx / L + i;
-                                    debug_assert!(trace_idx < self.trace.len());
-                                    let prev_trace = *self.trace.get_unchecked(trace_idx);
-                                    let curr_trace = simd_movemask_i8(simd_cmpeq_i16(delta_R11, delta_D11));
-                                    *self.trace.get_unchecked_mut(trace_idx) =
-                                        (prev_trace & Self::EVEN_BITS) | ((curr_trace & Self::EVEN_BITS) << 1);
-                                }
-
-                                delta_D_max = simd_max_i16(delta_D_max, delta_D11);
-                                let mask = simd_cmpeq_i16(delta_D_max, delta_D11);
-                                delta_D_argmax = simd_blend_i8(delta_D_argmax, curr_i, mask);
-                                curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
-
-                                simd_store(self.delta_Dx0_ptr.add(idx), delta_D11);
-
-                                delta_D01 = delta_D11;
-                                delta_R01 = delta_R11;
+                            if TRACE {
+                                let trace_idx = (Self::CEIL_K / L) * (j + 1) + i;
+                                debug_assert!(trace_idx < self.trace.len());
+                                *self.trace.get_unchecked_mut(trace_idx) =
+                                    simd_movemask_i8(simd_cmpeq_i16(delta_C11, delta_D11));
                             }
 
-                            abs_D_interval = abs_interval.saturating_add(simd_extract_i16::<{ L - 1 }>(delta_D01) as i32);
+                            extend_to_end = simd_subs_i16(extend_to_end, gap_extend);
+                            delta_R_max = simd_max_i16(delta_R_max, simd_adds_i16(delta_D11, extend_to_end));
+
+                            // Slide band right by directly overwriting the previous band
+                            simd_store(self.delta_Dx0_ptr.add(idx), delta_D11);
+                            simd_store(self.delta_Cx0_ptr.add(idx), delta_C11);
+
+                            delta_D00 = delta_D10;
                         }
-                        // End final pass
-
-                        let (max, lane_idx) = simd_hmax_i16(delta_D_max);
-                        let max = (max as i32).saturating_add(abs_interval);
-                        let stride_idx = simd_slow_extract_i16(delta_D_argmax, lane_idx) as u16 as usize;
-                        let max_idx = stride_idx + lane_idx * stride + band_idx;
-
-                        let cond = max > abs_D_max;
-                        abs_D_argmax = if cond { max_idx as isize } else { abs_D_argmax };
-                        abs_D_max = if cond { max } else { abs_D_max };
-
-                        debug_assert!(band_idx / P::I < Self::NUM_INTERVALS);
-                        *self.abs_Ax0_ptr.add(band_idx / P::I) = abs_interval;
                     }
+                    // End initial pass
+
+                    // Begin prefix scan
+                    {
+                        let prev_delta_R_max_last = simd_extract_i16::<{ L - 1 }>(delta_R_max) as i32;
+
+                        delta_R_max = simd_sl_i16!(delta_R_max, neg_inf, 1);
+                        delta_R_max = simd_prefix_scan_i16(delta_R_max, stride_gap, stride_gap1234, neg_inf);
+
+                        let curr_delta_R_max_last = simd_extract_i16::<{ L - 1 }>(simd_adds_i16(delta_R_max, stride_gap)) as i32;
+                        abs_R_interval = abs_interval.saturating_add(
+                            cmp::max(prev_delta_R_max_last, curr_delta_R_max_last) + (P::GAP_OPEN as i32) - (P::GAP_EXTEND as i32));
+                    }
+                    // End prefix scan
+
+                    let mut delta_D_max = neg_inf;
+                    let mut delta_D_argmax = simd_set1_i16(0);
+
+                    // Begin final pass
+                    {
+                        let mut delta_R01 = simd_adds_i16(simd_subs_i16(delta_R_max, gap_extend), gap_open);
+                        let mut delta_D01 = neg_inf;
+                        let mut curr_i = simd_set1_i16(0);
+
+                        for i in 0..stride {
+                            let idx = (self.ring_buf_idx + i) % Self::STRIDE;
+                            debug_assert!(idx < Self::CEIL_K / L);
+
+                            let delta_R11 = simd_max_i16(
+                                simd_adds_i16(delta_R01, gap_extend), simd_adds_i16(delta_D01, gap_open));
+                            let mut delta_D11 = simd_load(self.delta_Dx0_ptr.add(idx));
+                            delta_D11 = simd_max_i16(delta_D11, delta_R11);
+
+                            if TRACE {
+                                let trace_idx = (Self::CEIL_K / L) * (j + 1) + i;
+                                debug_assert!(trace_idx < self.trace.len());
+                                let prev_trace = *self.trace.get_unchecked(trace_idx);
+                                let curr_trace = simd_movemask_i8(simd_cmpeq_i16(delta_R11, delta_D11));
+                                *self.trace.get_unchecked_mut(trace_idx) =
+                                    (prev_trace & Self::EVEN_BITS) | ((curr_trace & Self::EVEN_BITS) << 1);
+                            }
+
+                            delta_D_max = simd_max_i16(delta_D_max, delta_D11);
+                            let mask = simd_cmpeq_i16(delta_D_max, delta_D11);
+                            delta_D_argmax = simd_blend_i8(delta_D_argmax, curr_i, mask);
+                            curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+
+                            simd_store(self.delta_Dx0_ptr.add(idx), delta_D11);
+
+                            delta_D01 = delta_D11;
+                            delta_R01 = delta_R11;
+                        }
+
+                        abs_D_interval = abs_interval.saturating_add(simd_extract_i16::<{ L - 1 }>(delta_D01) as i32);
+
+                        delta_D00 = simd_adds_i16(simd_sl_i16!(delta_D01, neg_inf, 1), abs_offset);
+                    }
+                    // End final pass
+
+                    let (max, lane_idx) = simd_hmax_i16(delta_D_max);
+                    let max = (max as i32).saturating_add(abs_interval);
+                    let stride_idx = simd_slow_extract_i16(delta_D_argmax, lane_idx) as u16 as usize;
+                    let argmax = stride_idx + lane_idx * stride;
+
+                    abs_A00 = abs_interval;
 
                     if X_DROP {
-                        if abs_D_max < self.best_max - x_drop {
+                        if max < self.best_max - x_drop {
                             break;
                         }
 
-                        let cond = abs_D_max > self.best_max;
-                        self.best_argmax_i = if cond { abs_D_argmax + self.shift_idx } else { self.best_argmax_i };
+                        let cond = max > self.best_max;
+                        self.best_argmax_i = if cond { argmax as isize + self.shift_idx } else { self.best_argmax_i };
                         self.best_argmax_j = if cond { j + self.ref_idx + 1 } else { self.best_argmax_j };
-                        self.best_max = if cond { abs_D_max } else { self.best_max };
+                        self.best_max = if cond { max } else { self.best_max };
                     }
 
-                    self.shift_dir = if abs_D_argmax > K_HALF {
-                        Direction::Down(abs_D_argmax - K_HALF)
+                    self.shift_dir = if argmax > K_HALF {
+                        Direction::Down(argmax - K_HALF)
                     } else {
                         Direction::Right
                     };
@@ -531,15 +415,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
             // Extract the score from the last band
             assert!((self.query.len() as isize) - self.shift_idx >= 0);
             let res_i = ((self.query.len() as isize) - self.shift_idx) as usize;
-            let band_idx = (res_i / P::I) * P::I;
-            let stride = cmp::min(P::I, Self::CEIL_K - band_idx) / L;
-            let idx = band_idx / L + (self.ring_buf_idx + (res_i % P::I)) % stride;
+            let idx = (self.ring_buf_idx + res_i) % Self::STRIDE;
             debug_assert!(idx < Self::CEIL_K / L);
 
-            let delta = simd_slow_extract_i16(simd_load(self.delta_Dx0_ptr.add(idx)), (res_i % P::I) / stride) as i32;
-            let abs = *self.abs_Ax0_ptr.add(res_i / P::I);
+            let delta = simd_slow_extract_i16(simd_load(self.delta_Dx0_ptr.add(idx)), res_i / Self::STRIDE) as i32;
 
-            delta + abs
+            delta + abs_A00
         }
     }
 
@@ -570,7 +451,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
             alloc::dealloc(self.query_buf_ptr as *mut u8, self.query_buf_layout);
             alloc::dealloc(self.delta_Dx0_ptr as *mut u8, self.delta_Dx0_layout);
             alloc::dealloc(self.delta_Cx0_ptr as *mut u8, self.delta_Cx0_layout);
-            alloc::dealloc(self.abs_Ax0_ptr as *mut u8, self.abs_Ax0_layout);
         }
     }
 }
