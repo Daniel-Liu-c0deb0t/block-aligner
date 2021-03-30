@@ -11,14 +11,14 @@ use std::marker::PhantomData;
 
 const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
 
-#[inline]
-unsafe fn convert_char(c: u8, nuc: bool) -> u8 {
+#[inline(always)]
+fn convert_char(c: u8, nuc: bool) -> u8 {
     debug_assert!(c >= b'A' && c <= NULL);
     if nuc { c } else { c - b'A' }
 }
 
-#[inline]
-unsafe fn clamp(x: i32) -> i16 {
+#[inline(always)]
+fn clamp(x: i32) -> i16 {
     cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
 }
 
@@ -34,6 +34,8 @@ enum Direction {
     Down(usize)
 }
 
+// Notes:
+//
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11 (includes extension), gap extend = -1
 //
 // R[i][j] = max(R[i - 1][j] + gap_extend, D[i - 1][j] + gap_open)
@@ -46,10 +48,12 @@ enum Direction {
 // 0x | 00   01
 // 1x | 10   11
 //
-// A band consists of multiple intervals. Each interval is made up of strided vectors.
+// note that 'x' represents any bit
+//
+// Each band is made up of strided SIMD vectors of length 8 or 16 16-bit integers.
 
 #[allow(non_snake_case)]
-pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> {
+pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, const X_DROP: bool> {
     query_buf_layout: alloc::Layout,
     query_buf_ptr: *mut HalfSimd,
     delta_Dx0_layout: alloc::Layout,
@@ -60,13 +64,11 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
 
     trace: Vec<u32>,
 
-    query_idx: usize,
-    shift_idx: isize,
     ring_buf_idx: usize,
     ref_idx: usize,
 
     best_max: i32,
-    best_argmax_i: isize,
+    best_argmax_i: usize,
     best_argmax_j: usize,
 
     shift_dir: Direction,
@@ -77,9 +79,8 @@ pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, 
     _phantom: PhantomData<P>
 }
 
-impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> ScanAligner<'a, P, M, { K_HALF }, { TRACE }, { X_DROP }> {
-    const K: usize = K_HALF * 2 + 2; // normally K_HALF * 2 + 1, but add one auxiliary
-    const CEIL_K: usize = ((Self::K + L - 1) / L) * L; // round up to multiple of L
+impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, const X_DROP: bool> ScanAligner<'a, P, M, { K }, { TRACE }, { X_DROP }> {
+    const CEIL_K: usize = ((K + 1 + L - 1) / L) * L; // add one for auxiliary; round up to multiple of L
     const STRIDE: usize = Self::CEIL_K / L;
 
     const EVEN_BITS: u32 = 0x55555555u32;
@@ -92,7 +93,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
         assert!(P::GAP_OPEN <= P::GAP_EXTEND);
         assert!(P::I % L == 0);
 
-        // These chunks of memory are contiguous ring buffers that represent every interval in the current band
+        // These chunks of memory are contiguous ring buffers that represent the current band
         let query_buf_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * HALFSIMD_MUL, L_BYTES);
         let query_buf_ptr = alloc::alloc(query_buf_layout) as *mut u8;
 
@@ -102,17 +103,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
         let delta_Cx0_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * 2, L_BYTES);
         let delta_Cx0_ptr = alloc::alloc(delta_Cx0_layout) as *mut i16;
 
-        // Initialize DP columns
+        // Initialize DP columns (the first band)
         // Not extremely optimized, since it only runs once
         {
-            for idx in 0..Self::CEIL_K {
-                let i = (idx as isize) - (K_HALF as isize);
-                let buf_idx = (idx % Self::STRIDE) * L + idx / Self::STRIDE;
+            for i in 0..Self::CEIL_K {
+                let buf_idx = (i % Self::STRIDE) * L + i / Self::STRIDE;
                 debug_assert!(buf_idx < Self::CEIL_K);
 
-                if i >= 0 && i <= query.len() as isize {
+                if i <= query.len() {
                     ptr::write(query_buf_ptr.add(halfsimd_get_idx(buf_idx)), convert_char(if i > 0 {
-                        *query.get_unchecked(i as usize - 1) } else { NULL }, M::NUC));
+                        *query.get_unchecked(i - 1) } else { NULL }, M::NUC));
 
                     let val = if i > 0 {
                         (P::GAP_OPEN as i32) + ((i as i32) - 1) * (P::GAP_EXTEND as i32)
@@ -141,8 +141,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
 
             trace: vec![],
 
-            query_idx: Self::CEIL_K - K_HALF - 1,
-            shift_idx: -(K_HALF as isize),
             ring_buf_idx: 0,
             ref_idx: 0,
 
@@ -160,24 +158,31 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
     }
 
     // TODO: evaluate greedy extension method
-    // TODO: adaptive banding
     // TODO: different thresholds for how much to shift and when to switch
-    // TODO: deal with delta_D00 (shift in neg_inf)
-    // TODO: deal with abs_Ax0 when shifting down
     // TODO: deal with trace when shifting down
-    // TODO: how to shift down? how much to shift? (first shift down a few then shift
-    // right? shift until max is in the center!)
-    // TODO: use center for xdrop instead of max
-    // make circular buffered memory abstraction
-    // make first interval smaller than others?
-    // start at origin instead of negative i
+    // TODO: fix shift down insert value?
 
-    /// Banded alignment.
+    #[inline(always)]
+    fn shift_idx(&self) -> usize {
+        self.ring_buf_idx
+    }
+
+    #[inline(always)]
+    fn query_idx(&self) -> usize {
+        self.ring_buf_idx + Self::CEIL_K - 1
+    }
+
+    /// Adaptive banded alignment.
+    ///
+    /// The x drop option indicates whether to terminate the alignment process early when
+    /// the max score in the current band drops below the max score encountered so far. If
+    /// x drop is not enabled, then the band will keep shifting until the end of the reference
+    /// string is reached.
     ///
     /// Limitations:
     /// 1. Requires x86 AVX2 or WASM SIMD support.
     /// 2. The reference and the query can only contain uppercase alphabetical characters.
-    /// 3. The actual size of the band is K_HALF * 2 + 1 rounded up to the next multiple of the
+    /// 3. The actual size of the band is K + 1 rounded up to the next multiple of the
     ///    vector length of 16 (for x86 AVX2) or 8 (for WASM SIMD).
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
@@ -204,85 +209,95 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                                            stride_gap_scalar * 2,
                                            stride_gap_scalar * 1);
 
-        let mut delta_D00 = neg_inf;
+        // values that are "shared" between the code for shifting down and shifting right
+        let mut delta_D00 = simd_sl_i16!(simd_load({
+            // get last stride vector and shift it
+            let idx = (self.ring_buf_idx + Self::STRIDE - 1) % Self::STRIDE;
+            self.delta_Dx0_ptr.add(idx)
+        }), neg_inf, 1);
+        let mut abs_R_band = i16::MIN as i32;
+        let mut abs_D_band = i16::MIN as i32;
         let mut j = 0usize;
-        let mut abs_R_interval = i16::MIN as i32;
-        let mut abs_D_interval = i16::MIN as i32;
 
         while j < reference.len() {
-            // Load scores for the current reference character
-            let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
-            let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
-            let scores2 = if M::NUC {
-                halfsimd_set1_i8(0) // unused, should be optimized out
-            } else {
-                halfsimd_load((matrix_ptr as *const HalfSimd).add(1))
-            };
-
             match self.shift_dir {
                 Direction::Down(shift_iter) => {
-                    for i in (0..shift_iter) {
+                    // fixed number of shift iterations because newly calculated D values are
+                    // decreasing due to gap penalties
+                    for i in 0..shift_iter {
                         // Don't go past the end of the query
-                        if self.shift_idx >= self.query.len() {
+                        if self.shift_idx() >= self.query.len() {
                             break;
                         }
 
-                        let mut shift_vec_idx = self.ring_buf_idx % Self::STRIDE;
+                        let shift_vec_idx = self.ring_buf_idx % Self::STRIDE;
                         debug_assert!(shift_vec_idx < Self::CEIL_K / L);
 
                         // Update ring buffers to slide current band down
+                        // the benefit of using ring buffers is apparent here: shifting down
+                        // only requires shifting one simd vector and incrementing an index
                         let shift_D_ptr = self.delta_Dx0_ptr.add(shift_vec_idx);
                         let shift_query_ptr = self.query_buf_ptr.add(shift_vec_idx);
                         let shift_C_ptr = self.delta_Cx0_ptr.add(shift_vec_idx);
-                        band_idx += P::I;
 
-                        let c = if self.query_idx < self.query.len() {
-                            *self.query.get_unchecked(self.query_idx)
+                        let c = if self.query_idx() < self.query.len() {
+                            *self.query.get_unchecked(self.query_idx())
                         } else {
                             NULL
                         };
                         let query_insert = halfsimd_set1_i8(convert_char(c, M::NUC) as i8);
 
-                        abs_D_interval = if i == 0 {
-                            cmp::max(abs_D_interval + P::GAP_OPEN as i32, abs_R_interval + P::GAP_EXTEND as i32)
+                        abs_D_band = if i == 0 {
+                            cmp::max(abs_D_band + P::GAP_OPEN as i32, abs_R_band + P::GAP_EXTEND as i32)
                         } else {
-                            abs_D_interval + P::GAP_EXTEND as i32;
+                            abs_D_band + P::GAP_EXTEND as i32
                         };
-                        let delta_Dx0_insert = simd_set1_i16(clamp(abs_D_interval - abs_A00));
+                        let delta_Dx0_insert = simd_set1_i16(clamp(abs_D_band - self.abs_A00));
 
-                        // Now shift in new values for each interval
+                        // Now shift in new values for each band
                         halfsimd_store(shift_query_ptr, halfsimd_sr_i8!(query_insert, halfsimd_load(shift_query_ptr), 1));
                         delta_D00 = simd_load(shift_D_ptr);
                         simd_store(shift_D_ptr, simd_sr_i16!(delta_Dx0_insert, delta_D00, 1));
                         simd_store(shift_C_ptr, simd_sr_i16!(neg_inf, simd_load(shift_C_ptr), 1));
 
                         self.ring_buf_idx += 1;
-                        self.query_idx += 1;
-                        self.shift_idx += 1; // TODO: eliminate one of these
                     }
 
+                    // done shifting down, so start shifting right in the next iteration
                     self.shift_dir = Direction::Right;
                 },
                 Direction::Right => {
-                    let mut abs_D_argmax = 0isize;
+                    // Load scores for the current reference character
+                    let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
+                    let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
+                    let scores2 = if M::NUC {
+                        halfsimd_set1_i8(0) // unused, should be optimized out
+                    } else {
+                        halfsimd_load((matrix_ptr as *const HalfSimd).add(1))
+                    };
 
                     // Vector for prefix scan calculations
                     let mut delta_R_max = neg_inf;
-                    let abs_interval = abs_A00.saturating_add(if self.shift_idx < 0 {
-                        0
-                    } else {
-                        simd_extract_i16::<0>(delta_D00) as i32
+                    // add the first D value of the previous band to the absolute A value of the
+                    // previous band to get the absolute A value of the current band
+                    let abs_band = self.abs_A00.saturating_add({
+                        let ptr = self.delta_Dx0_ptr.add(self.ring_buf_idx % Self::STRIDE);
+                        simd_extract_i16::<0>(simd_load(ptr)) as i32
                     });
-                    let abs_offset = simd_set1_i16(clamp(abs_A00 - abs_interval));
+                    // need to offset the values from the previous band
+                    let abs_offset = simd_set1_i16(clamp(self.abs_A00 - abs_band));
+
+                    delta_D00 = simd_adds_i16(delta_D00, abs_offset);
 
                     // Begin initial pass
                     {
                         let mut extend_to_end = stride_gap;
 
-                        for i in 0..stride {
+                        for i in 0..Self::STRIDE {
                             let idx = (self.ring_buf_idx + i) % Self::STRIDE;
                             debug_assert!(idx < Self::CEIL_K / L);
 
+                            // efficiently lookup scores for each query character
                             let scores = if M::NUC {
                                 halfsimd_lookup1_i16(scores1, halfsimd_load(self.query_buf_ptr.add(idx)))
                             } else {
@@ -325,7 +340,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                         delta_R_max = simd_prefix_scan_i16(delta_R_max, stride_gap, stride_gap1234, neg_inf);
 
                         let curr_delta_R_max_last = simd_extract_i16::<{ L - 1 }>(simd_adds_i16(delta_R_max, stride_gap)) as i32;
-                        abs_R_interval = abs_interval.saturating_add(
+                        // this is the absolute R value for the last cell of the band
+                        abs_R_band = abs_band.saturating_add(
                             cmp::max(prev_delta_R_max_last, curr_delta_R_max_last) + (P::GAP_OPEN as i32) - (P::GAP_EXTEND as i32));
                     }
                     // End prefix scan
@@ -339,7 +355,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                         let mut delta_D01 = neg_inf;
                         let mut curr_i = simd_set1_i16(0);
 
-                        for i in 0..stride {
+                        for i in 0..Self::STRIDE {
                             let idx = (self.ring_buf_idx + i) % Self::STRIDE;
                             debug_assert!(idx < Self::CEIL_K / L);
 
@@ -357,6 +373,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                                     (prev_trace & Self::EVEN_BITS) | ((curr_trace & Self::EVEN_BITS) << 1);
                             }
 
+                            // consistently update the max D value for each stride vector
                             delta_D_max = simd_max_i16(delta_D_max, delta_D11);
                             let mask = simd_cmpeq_i16(delta_D_max, delta_D11);
                             delta_D_argmax = simd_blend_i8(delta_D_argmax, curr_i, mask);
@@ -368,32 +385,34 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
                             delta_R01 = delta_R11;
                         }
 
-                        abs_D_interval = abs_interval.saturating_add(simd_extract_i16::<{ L - 1 }>(delta_D01) as i32);
+                        // this is the absolute D value for the last cell of the band
+                        abs_D_band = abs_band.saturating_add(simd_extract_i16::<{ L - 1 }>(delta_D01) as i32);
 
-                        delta_D00 = simd_adds_i16(simd_sl_i16!(delta_D01, neg_inf, 1), abs_offset);
+                        // updating delta_D00 is important if the band shifts right
+                        delta_D00 = simd_sl_i16!(delta_D01, neg_inf, 1);
                     }
                     // End final pass
 
                     let (max, lane_idx) = simd_hmax_i16(delta_D_max);
-                    let max = (max as i32).saturating_add(abs_interval);
+                    let max = (max as i32).saturating_add(abs_band);
+                    // "slow" because it allows an index only known at run time
                     let stride_idx = simd_slow_extract_i16(delta_D_argmax, lane_idx) as u16 as usize;
-                    let argmax = stride_idx + lane_idx * stride;
+                    let argmax = stride_idx + lane_idx * Self::STRIDE;
 
-                    abs_A00 = abs_interval;
+                    self.abs_A00 = abs_band;
 
-                    if X_DROP {
-                        if max < self.best_max - x_drop {
-                            break;
-                        }
-
-                        let cond = max > self.best_max;
-                        self.best_argmax_i = if cond { argmax as isize + self.shift_idx } else { self.best_argmax_i };
-                        self.best_argmax_j = if cond { j + self.ref_idx + 1 } else { self.best_argmax_j };
-                        self.best_max = if cond { max } else { self.best_max };
+                    if X_DROP && max < self.best_max - x_drop {
+                        break;
                     }
 
-                    self.shift_dir = if argmax > K_HALF {
-                        Direction::Down(argmax - K_HALF)
+                    // if not x drop, then keep track of values only for the current band
+                    let cond = !X_DROP || max > self.best_max;
+                    self.best_argmax_i = if cond { argmax + self.shift_idx() } else { self.best_argmax_i };
+                    self.best_argmax_j = if cond { j + self.ref_idx + 1 } else { self.best_argmax_j };
+                    self.best_max = if cond { max } else { self.best_max };
+
+                    self.shift_dir = if argmax > Self::CEIL_K / 2 {
+                        Direction::Down(argmax - Self::CEIL_K / 2)
                     } else {
                         Direction::Right
                     };
@@ -406,36 +425,14 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
         self.ref_idx += reference.len();
     }
 
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-    pub unsafe fn score(&self) -> i32 {
-        if X_DROP {
-            self.best_max
-        } else {
-            // Extract the score from the last band
-            assert!((self.query.len() as isize) - self.shift_idx >= 0);
-            let res_i = ((self.query.len() as isize) - self.shift_idx) as usize;
-            let idx = (self.ring_buf_idx + res_i) % Self::STRIDE;
-            debug_assert!(idx < Self::CEIL_K / L);
-
-            let delta = simd_slow_extract_i16(simd_load(self.delta_Dx0_ptr.add(idx)), res_i / Self::STRIDE) as i32;
-
-            delta + abs_A00
-        }
+    pub fn score(&self) -> i32 {
+        self.best_max
     }
 
-    pub unsafe fn end_idx(&self) -> EndIndex {
-        if X_DROP {
-            assert!(self.best_argmax_i >= 0);
-            EndIndex {
-                query_idx: self.best_argmax_i as usize,
-                ref_idx: self.best_argmax_j
-            }
-        } else {
-            EndIndex {
-                query_idx: self.query.len(),
-                ref_idx: self.ref_idx
-            }
+    pub fn end_idx(&self) -> EndIndex {
+        EndIndex {
+            query_idx: self.best_argmax_i,
+            ref_idx: self.best_argmax_j
         }
     }
 
@@ -445,7 +442,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool,
     }
 }
 
-impl<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> Drop for ScanAligner<'a, P, M, { K_HALF }, { TRACE }, { X_DROP }> {
+impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, const X_DROP: bool> Drop for ScanAligner<'a, P, M, { K }, { TRACE }, { X_DROP }> {
     fn drop(&mut self) {
         unsafe {
             alloc::dealloc(self.query_buf_ptr as *mut u8, self.query_buf_layout);
@@ -468,37 +465,37 @@ mod tests {
         unsafe {
             let r = b"AAAA";
             let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 2, false, false>::new(q, &BLOSUM62);
             a.align(r, 0);
             assert_eq!(a.score(), 11);
 
             let r = b"AAAA";
             let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 3, false, false>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 6, false, false>::new(q, &BLOSUM62);
             a.align(r, 0);
             assert_eq!(a.score(), 11);
 
             let r = b"AAAA";
             let q = b"AAAA";
-            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 2, false, false>::new(q, &BLOSUM62);
             a.align(r, 0);
             assert_eq!(a.score(), 16);
 
             let r = b"AAAA";
             let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 0, false, false>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
             a.align(r, 0);
             assert_eq!(a.score(), 11);
 
             let r = b"AAAA";
             let q = b"RRRR";
-            let mut a = ScanAligner::<TestParams, _, 4, false, false>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 8, false, false>::new(q, &BLOSUM62);
             a.align(r, 0);
             assert_eq!(a.score(), -4);
 
             let r = b"AAAA";
             let q = b"AAA";
-            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 2, false, false>::new(q, &BLOSUM62);
             a.align(r, 0);
             assert_eq!(a.score(), 1);
 
@@ -506,18 +503,18 @@ mod tests {
 
             let r = b"AAAN";
             let q = b"ATAA";
-            let mut a = ScanAligner::<TestParams2, _, 2, false, false>::new(q, &NW1);
+            let mut a = ScanAligner::<TestParams2, _, 4, false, false>::new(q, &NW1);
             a.align(r, 0);
             assert_eq!(a.score(), 1);
 
             let r = b"AAAA";
             let q = b"C";
-            let mut a = ScanAligner::<TestParams2, _, 4, false, false>::new(q, &NW1);
+            let mut a = ScanAligner::<TestParams2, _, 8, false, false>::new(q, &NW1);
             a.align(r, 0);
             assert_eq!(a.score(), -4);
-            let mut a = ScanAligner::<TestParams2, _, 4, false, false>::new(r, &NW1);
+            let mut a = ScanAligner::<TestParams2, _, 8, false, false>::new(r, &NW1);
             a.align(q, 0);
-            assert_eq!(a.score(), -4);
+            assert_eq!(a.score(), -1);
         }
     }
 
@@ -528,14 +525,14 @@ mod tests {
         unsafe {
             let r = b"AAARRA";
             let q = b"AAAAAA";
-            let mut a = ScanAligner::<TestParams, _, 1, false, true>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 3, false, true>::new(q, &BLOSUM62);
             a.align(r, 1);
             assert_eq!(a.score(), 12);
             assert_eq!(a.end_idx(), EndIndex { query_idx: 3, ref_idx: 3 });
 
             let r = b"AAARRA";
             let q = b"AAAAAA";
-            let mut a = ScanAligner::<TestParams, _, 10, false, true>::new(q, &BLOSUM62);
+            let mut a = ScanAligner::<TestParams, _, 20, false, true>::new(q, &BLOSUM62);
             a.align(r, 1);
             assert_eq!(a.score(), 12);
             assert_eq!(a.end_idx(), EndIndex { query_idx: 3, ref_idx: 3 });
