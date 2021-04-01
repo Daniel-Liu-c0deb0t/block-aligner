@@ -116,12 +116,18 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_hmax_i16(v: Simd) -> (i16, usize) {
+pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
     let mut v2 = i16x8_max_s(v, simd_sr_i16!(v, v, 1));
     v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 2));
     v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 4));
-    let max = simd_extract_i16::<0>(v2);
-    v2 = i16x8_eq(v, i16x8_splat(max));
+    simd_extract_i16::<0>(v2)
+}
+
+#[target_feature(enable = "simd128")]
+#[inline]
+pub unsafe fn simd_hargmax_i16(v: Simd) -> (i16, usize) {
+    let max = simd_hmax_i16(v);
+    let v2 = i16x8_eq(v, i16x8_splat(max));
     let max_idx = (simd_movemask_i8(v2).trailing_zeros() as usize) / 2;
     (max, max_idx)
 }
