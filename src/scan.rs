@@ -160,9 +160,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
     }
 
     // TODO: deal with trace when shifting down
-    // TODO: profiling struct only at debug time
-    // TODO: ideas: speculate in ever right shift iter?
-    // prefix scan down count only the latest index for consecutive down dependencies
+    // TODO: count number of down/right shifts for profiling
 
     #[inline(always)]
     fn shift_idx(&self) -> usize {
@@ -266,68 +264,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
                         self.ring_buf_idx += 1;
                     }
 
-                    // skip this speculative execution step if shift is too small
-                    if shift_iter > Self::CEIL_K * 1 / 4 {
-                        // Speculatively execute a right shift, because the current band is not
-                        // enough to decide whether to shift down/right
-                        // Don't have to do worry about R and C because they won't lead to
-                        // increases to the max score of the entire band
-                        // Also update abs and values in bands so they don't overflow in future down shifts
-                        let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j + 1), M::NUC) as usize);
-                        let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
-                        let scores2 = if M::NUC {
-                            halfsimd_set1_i8(0) // unused, should be optimized out
-                        } else {
-                            halfsimd_load((matrix_ptr as *const HalfSimd).add(1))
-                        };
-                        let abs_band = self.abs_A00.saturating_add({
-                            let ptr = self.delta_Dx0_ptr.add(self.ring_buf_idx % Self::STRIDE);
-                            simd_extract_i16::<0>(simd_load(ptr)) as i32
-                        });
-                        let abs_offset = simd_set1_i16(clamp(self.abs_A00 - abs_band));
-                        let mut curr_delta_D00 = simd_adds_i16(delta_D00, abs_offset);
-                        let mut delta_D_band_max = neg_inf;
-                        let mut delta_D_spec_max = neg_inf;
-
-                        for i in 0..Self::STRIDE {
-                            let idx = (self.ring_buf_idx + i) % Self::STRIDE;
-                            debug_assert!(idx < Self::CEIL_K / L);
-
-                            let scores = if M::NUC {
-                                halfsimd_lookup1_i16(scores1, halfsimd_load(self.query_buf_ptr.add(idx)))
-                            } else {
-                                halfsimd_lookup2_i16(scores1, scores2, halfsimd_load(self.query_buf_ptr.add(idx)))
-                            };
-                            let delta_D11 = simd_adds_i16(curr_delta_D00, scores);
-                            let delta_D10 = simd_adds_i16(simd_load(self.delta_Dx0_ptr.add(idx)), abs_offset);
-                            let delta_C10 = simd_adds_i16(simd_load(self.delta_Cx0_ptr.add(idx)), abs_offset);
-                            delta_D_band_max = simd_max_i16(delta_D_band_max, delta_D10);
-                            delta_D_spec_max = simd_max_i16(delta_D_spec_max, delta_D11);
-                            simd_store(self.delta_Dx0_ptr.add(idx), delta_D10);
-                            simd_store(self.delta_Cx0_ptr.add(idx), delta_C10);
-
-                            curr_delta_D00 = delta_D10;
-                        }
-
-                        self.abs_A00 = abs_band;
-
-                        let band_max = simd_hmax_i16(delta_D_band_max);
-                        let spec_max = simd_hmax_i16(delta_D_spec_max);
-
-                        // if shifting right does not actually imply a score improvement, then don't
-                        self.shift_dir = if spec_max >= band_max {
-                            Direction::Right
-                        } else {
-                            // shift down a bit, but not too much
-                            let next_shift = cmp::min(
-                                Self::CEIL_K / 2,
-                                ((band_max as i32 - spec_max as i32) / (-P::GAP_EXTEND as i32)) as usize
-                            );
-                            Direction::Down(next_shift)
-                        };
-                    } else {
-                        self.shift_dir = Direction::Right;
-                    }
+                    self.shift_dir = Direction::Right;
                 },
                 Direction::Right => {
                     // Load scores for the current reference character
