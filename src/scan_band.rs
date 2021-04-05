@@ -48,7 +48,7 @@ pub enum Direction {
 //
 // A band consists of multiple intervals. Each interval is made up of strided vectors.
 //
-// TODO: adaptive banding
+// TODO: update stuff to match later adaptive banding code
 
 #[allow(non_snake_case)]
 pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K_HALF: usize, const TRACE: bool, const X_DROP: bool> {
