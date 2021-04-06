@@ -203,6 +203,10 @@ pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { _mm_load_si128(p
 
 #[target_feature(enable = "avx2")]
 #[inline]
+pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { _mm_loadu_si128(ptr) }
+
+#[target_feature(enable = "avx2")]
+#[inline]
 pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { _mm_store_si128(ptr, a) }
 
 #[target_feature(enable = "avx2")]

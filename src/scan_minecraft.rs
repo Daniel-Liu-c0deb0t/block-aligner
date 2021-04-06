@@ -29,15 +29,17 @@ fn div_ceil(n: usize, d: usize) -> usize {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-pub struct EndIndex {
+pub struct AlignResult {
+    pub score: i32,
     pub query_idx: usize,
-    pub ref_idx: usize
+    pub reference_idx: usize
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Direction {
     Right,
-    Down(usize)
+    Down,
+    Diagonal
 }
 
 pub struct Trace {
@@ -92,56 +94,20 @@ impl Trace {
 
 #[allow(non_snake_case)]
 pub struct ScanAligner<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, const X_DROP: bool> {
-    query_buf_layout: alloc::Layout,
-    query_buf_ptr: *mut HalfSimd,
-    delta_Dx0_layout: alloc::Layout,
-    delta_Dx0_ptr: *mut Simd,
-    delta_Cx0_layout: alloc::Layout,
-    delta_Cx0_ptr: *mut Simd,
-    abs_A00: i32,
-
-    trace: Vec<u32>,
-
-    ring_buf_idx: usize,
-    ref_idx: usize,
-
-    best_max: i32,
-    best_argmax_i: usize,
-    best_argmax_j: usize,
-
-    shift_dir: Direction,
-
+    trace: Trace,
     query: &'a [u8],
     matrix: &'a M,
-
     _phantom: PhantomData<P>
 }
 
 impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, const X_DROP: bool> ScanAligner<'a, P, M, { K }, { TRACE }, { X_DROP }> {
-    // round K up to multiple of L
-    // add one to K to make shifting down easier
-    const CEIL_K: usize = ((K + 1 + L - 1) / L) * L;
-    const STRIDE: usize = Self::CEIL_K / L;
-
     const EVEN_BITS: u32 = 0x55555555u32;
 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     pub unsafe fn new(query: &'a [u8], matrix: &'a M) -> Self {
-        assert!(Self::CEIL_K <= P::I);
         assert!(P::GAP_OPEN <= P::GAP_EXTEND);
-        assert!(P::I % L == 0);
-
-        // These chunks of memory are contiguous ring buffers that represent the current band
-        let query_buf_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * HALFSIMD_MUL, L_BYTES);
-        let query_buf_ptr = alloc::alloc(query_buf_layout) as *mut u8;
-
-        let delta_Dx0_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * 2, L_BYTES);
-        let delta_Dx0_ptr = alloc::alloc(delta_Dx0_layout) as *mut i16;
-
-        let delta_Cx0_layout = alloc::Layout::from_size_align_unchecked(Self::CEIL_K * 2, L_BYTES);
-        let delta_Cx0_ptr = alloc::alloc(delta_Cx0_layout) as *mut i16;
 
         // Initialize DP columns (the first band)
         // Not extremely optimized, since it only runs once
@@ -171,28 +137,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
         }
 
         Self {
-            query_buf_layout,
-            query_buf_ptr: query_buf_ptr as *mut HalfSimd,
-            delta_Dx0_layout,
-            delta_Dx0_ptr: delta_Dx0_ptr as *mut Simd,
-            delta_Cx0_layout,
-            delta_Cx0_ptr: delta_Cx0_ptr as *mut Simd,
-            abs_A00: 0i32,
-
-            trace: vec![],
-
-            ring_buf_idx: 0,
-            ref_idx: 0,
-
-            best_max: 0, // max of first column
-            best_argmax_i: 0,
-            best_argmax_j: 0,
-
-            shift_dir: Direction::Right,
-
+            trace: Trace::new(),
             query,
             matrix,
-
             _phantom: PhantomData
         }
     }
@@ -200,33 +147,25 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
     // TODO: deal with trace when shifting down
     // TODO: count number of down/right shifts for profiling
 
-    #[inline(always)]
-    fn shift_idx(&self) -> usize {
-        self.ring_buf_idx
-    }
-
-    #[inline(always)]
-    fn query_idx(&self) -> usize {
-        self.ring_buf_idx + Self::CEIL_K - 1
-    }
-
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn place_block_right(&mut self,
-                         query: *const __m256i,
-                         reference: *const __m256i,
-                         off: i32,
-                         corner: i16,
-                         mut D10: Simd,
-                         mut C10: Simd,
-                         D_buf: *mut i16,
-                         R_buf: *mut i16,
-                         neg_inf: Simd,
-                         gap_open: Simd,
-                         gap_extend: Simd,
-                         gap_extend1234: Simd) -> (Simd, Simd, Simd, Simd) {
+                                query: &[u8],
+                                query_idx: usize,
+                                reference: &[u8],
+                                reference_idx: usize,
+                                off: i32,
+                                corner: i16,
+                                mut D10: Simd,
+                                mut C10: Simd,
+                                D_buf: *mut i16,
+                                R_buf: *mut i16,
+                                neg_inf: Simd,
+                                gap_open: Simd,
+                                gap_extend: Simd,
+                                gap_extend1234: Simd) -> (Simd, Simd, Simd, Simd) {
         let mut D00 = simd_sl_i16!(D10, simd_set1_i16(off), 1);
         let mut D_max = neg_inf;
         let mut D_argmax = simd_set1_i16(0);
@@ -237,7 +176,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
         }
 
         for i in 0..L {
-            let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(j), M::NUC) as usize);
+            let matrix_ptr = self.matrix.as_ptr(convert_char(*reference.get_unchecked(reference_idx + i), M::NUC) as usize);
             let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
             let scores2 = if M::NUC {
                 halfsimd_set1_i8(0) // unused, should be optimized out
@@ -246,10 +185,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
             };
 
             // efficiently lookup scores for each query character
+            // TODO: query index -1
             let scores = if M::NUC {
-                halfsimd_lookup1_i16(scores1, halfsimd_load(query))
+                halfsimd_lookup1_i16(scores1, halfsimd_loadu(query.as_ptr().add(query_idx) as _))
             } else {
-                halfsimd_lookup2_i16(scores1, scores2, halfsimd_load(query))
+                halfsimd_lookup2_i16(scores1, scores2, halfsimd_loadu(query.as_ptr().add(query_idx) as _))
             };
 
             let mut D11 = simd_adds_i16(D00, scores);
@@ -287,6 +227,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
             D00 = simd_sl_i16!(D11, neg_inf, 1);
             D10 = D11;
             C10 = C11;
+
+            if !X_DROP && query_idx + L > query.len()
+                && reference_idx + i >= reference.len() {
+                break;
+            }
         }
 
         (D10, C10, D_max, D_argmax)
@@ -313,16 +258,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
         let mut dir = Direction::Diagonal;
+        let mut prev_dir = Direction::Diagonal;
         let mut off = 0i32;
-        // TODO: corner
-        let mut corner = i16::MIN as i32;
-        let mut corner = i16::MIN as i32;
+        let mut corner1 = i16::MIN as i32;
+        let mut corner2 = i16::MIN as i32;
         let mut D = simd_insert_i16::<{ L - 1 }>(neg_inf, 0i16);
         let mut C = neg_inf;
         let mut D_buf = A([i16::MIN; L]);
         let mut C_buf = A([i16::MIN; L]);
 
-        while i <= query.len() && j <= reference.len() {
+        loop {
             let (D_max, D_argmax) = match dir {
                 Direction::Diagonal => {
                     let (D, C, D_max, D_argmax) = place_block_diagonal();
@@ -331,11 +276,15 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
                     let old_off = off;
                     off += simd_extract_i16::<0>(D);
                     let off_add = simd_set1_i16((old_off - off) as i16);
+                    let corner = if prev_dir == Direction::Down { (corner1 - off) as i16 } else { i16::MIN };
+
                     let (new_D, new_C, D_max, D_argmax) = place_block_right(
-                        self.query.as_ptr().add(i) as _,
-                        self.reference.as_ptr().add(j) as _,
+                        self.query,
+                        i,
+                        reference,
+                        j,
                         off,
-                        (corner - off) as i16,
+                        corner,
                         simd_adds_i16(D, off_add),
                         simd_adds_i16(C, off_add),
                         D_buf.as_mut_ptr(),
@@ -345,6 +294,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
                         gap_extend,
                         gap_extend1234
                     );
+
                     D = new_D;
                     C = new_C;
                     (D_max, D_argmax)
@@ -357,6 +307,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
             if X_DROP {
                 let max = simd_hmax_i16(D_max);
 
+                if off + max < best_max - x_drop {
+                    break;
+                }
+
                 if off + max > best_max {
                     let lane_idx = (simd_movemask_epi8(
                             simd_cmpeq_i16(D_max, simd_set1_i16(max))).trailing_zeros() / 2) as usize;
@@ -368,11 +322,28 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
 
             let right_max = simd_hmax_i16(D);
             let down_max = simd_hmax_i16(simd_load(D_buf.as_ptr() as _));
-            let dir = match right_max.cmp(down_max) {
-                Ordering::Less => { i += L; Direction::Down },
-                Ordering::Equal => { i += L - 1; j += L - 1; Direction::Diagonal },
-                Ordering::Greater => { j += L; Direction::Right }
-            };
+            prev_dir = dir;
+
+            if i + L > query.len() && j + L > reference.len() {
+                break;
+            } else if j + L > reference.len() || down_max > right_max {
+                i += L;
+                dir = Direction::Down;
+            } else if i + L > query.len() || right_max > down_max {
+                j += L;
+                dir = Direction::Right;
+            } else if right_max == down_max && down_max == D_buf[L - 1] {
+                i += L - 1;
+                j += L - 1;
+                dir = Direction::Diagonal;
+            } else {
+                // arbitrary
+                j += L;
+                dir = Direction::Right;
+            }
+
+            corner1 = corner2;
+            corner2 = off + D_buf[L - 1];
         }
 
         if X_DROP {
@@ -383,7 +354,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
             }
         } else {
             AlignResult {
-                // TODO
+                off + simd_slow_extract_i16(D, query.len() - i) as i32,
+                query.len(),
+                reference.len()
             }
         }
     }
@@ -607,30 +580,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, cons
         self.ref_idx += reference.len();
     }
 
-    pub fn score(&self) -> i32 {
-        self.best_max
-    }
-
-    pub fn end_idx(&self) -> EndIndex {
-        EndIndex {
-            query_idx: self.best_argmax_i,
-            ref_idx: self.best_argmax_j
-        }
-    }
-
-    pub fn raw_trace(&self) -> &[u32] {
+    pub fn trace(&self) -> &Trace {
         assert!(TRACE);
         &self.trace
-    }
-}
-
-impl<'a, P: ScoreParams, M: 'a + Matrix, const K: usize, const TRACE: bool, const X_DROP: bool> Drop for ScanAligner<'a, P, M, { K }, { TRACE }, { X_DROP }> {
-    fn drop(&mut self) {
-        unsafe {
-            alloc::dealloc(self.query_buf_ptr as *mut u8, self.query_buf_layout);
-            alloc::dealloc(self.delta_Dx0_ptr as *mut u8, self.delta_Dx0_layout);
-            alloc::dealloc(self.delta_Cx0_ptr as *mut u8, self.delta_Cx0_layout);
-        }
     }
 }
 
