@@ -200,6 +200,10 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, 
 
 #[target_feature(enable = "simd128")]
 #[inline]
+pub unsafe fn halfsimd_sub_i8(a: HalfSimd, b: HalfSimd) -> HalfSimd { i8x16_sub(a, b) }
+
+#[target_feature(enable = "simd128")]
+#[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i8x16_splat(v) }
 
 // only the low 8 bytes are out of each v128 for halfsimd

@@ -211,6 +211,10 @@ pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { _mm_store_si128(
 
 #[target_feature(enable = "avx2")]
 #[inline]
+pub unsafe fn halfsimd_sub_i8(a: HalfSimd, b: HalfSimd) -> HalfSimd { _mm_sub_epi8(a, b) }
+
+#[target_feature(enable = "avx2")]
+#[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
 
 #[target_feature(enable = "avx2")]

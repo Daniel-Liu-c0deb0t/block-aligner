@@ -52,3 +52,9 @@ impl<const GAP_OPEN: i8, const GAP_EXTEND: i8, const I: usize> ScoreParams for P
     const GAP_EXTEND: i8 = GAP_EXTEND;
     const I: usize = I;
 }
+
+impl<const GAP_OPEN: i8, const GAP_EXTEND: i8> ScoreParams for Params<{ GAP_OPEN }, { GAP_EXTEND }, { 0 }> {
+    const GAP_OPEN: i8 = GAP_OPEN;
+    const GAP_EXTEND: i8 = GAP_EXTEND;
+    const I: usize = 0;
+}
