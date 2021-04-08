@@ -100,21 +100,21 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         let mut C_buf = A([i16::MIN; L]);
 
         loop {
+            let old_off = off;
+            off += simd_extract_i16::<0>(D);
+            let off_add = simd_set1_i16(clamp(old_off - off));
+
             let (D_max, D_argmax) = match dir {
                 Direction::Diagonal => {
                     let (D, C, D_max, D_argmax) = place_block_diagonal();
                 },
                 Direction::Right => {
-                    let old_off = off;
-                    off += simd_extract_i16::<0>(D);
-                    let off_add = simd_set1_i16(clamp(old_off - off));
                     let corner = if prev_dir == Direction::Down { clamp(corner1 - off) } else { i16::MIN };
 
-                    let (new_D, new_C, D_max, D_argmax) = place_block_right(
-                        off,
-                        corner,
+                    let (new_D, new_C, D_max, D_argmax) = place_block_rd::<true>(
                         simd_adds_i16(D, off_add),
                         simd_adds_i16(C, off_add),
+                        corner,
                         D_buf.0.as_mut_ptr(),
                         C_buf.0.as_mut_ptr()
                     );
@@ -124,7 +124,23 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     (D_max, D_argmax)
                 },
                 Direction::Down => {
+                    let corner = if prev_dir == Direction::Right { clamp(corner1 - off) } else { i16::MIN };
+                    let D_buf_ptr = D_buf.0.as_mut_ptr();
+                    let C_buf_ptr = C_buf.0.as_mut_ptr();
+                    simd_store(D_buf_ptr as _, simd_adds_i16(simd_load(D_buf_ptr as _), off_add));
+                    simd_store(C_buf_ptr as _, simd_adds_i16(simd_load(C_buf_ptr as _), off_add));
 
+                    let (new_D, new_C, D_max, D_argmax) = place_block_rd::<false>(
+                        simd_set1_i16(i16::MIN),
+                        simd_set1_i16(i16::MIN),
+                        corner,
+                        D_buf.0.as_mut_ptr(),
+                        C_buf.0.as_mut_ptr()
+                    );
+
+                    D = new_D;
+                    C = new_C;
+                    (D_max, D_argmax)
                 }
             };
 
@@ -132,6 +148,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 let max = simd_hmax_i16(D_max);
 
                 if best_max != i32::MIN && off + max < best_max - self.x_drop {
+                    // x drop termination
                     break;
                 }
 
@@ -149,6 +166,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             prev_dir = dir;
 
             if self.i + L > query.len() && self.j + L > reference.len() {
+                // reached the end of the strings
                 break;
             } else if self.j + L > reference.len() || down_max > right_max {
                 self.i += L;
@@ -185,16 +203,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         };
     }
 
+    // Place block right or down.
+    //
+    // Assumes all inputs are already relative to the current offset.
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    unsafe fn place_block_right(&mut self,
-                                off: i32,
-                                corner: i16,
-                                mut D10: Simd,
-                                mut C10: Simd,
-                                D_buf: *mut i16,
-                                R_buf: *mut i16) -> (Simd, Simd, Simd, Simd) {
+    #[inline]
+    unsafe fn place_block_rd<const RIGHT: bool>(&mut self,
+                                                mut D10: Simd,
+                                                mut C10: Simd,
+                                                corner: i16,
+                                                D_buf: *mut i16,
+                                                R_buf: *mut i16) -> (Simd, Simd, Simd, Simd) {
         let (neg_inf, gap_open, gap_extend, gap_extend1234) = self.get_const_simd();
         let mut D00 = simd_sl_i16!(D10, simd_set1_i16(corner), 1);
         let mut D_max = neg_inf;
@@ -202,7 +223,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         let mut curr_i = simd_set1_i16(0);
 
         if TRACE {
-            self.trace.dir(0b01);
+            self.trace.dir(if RIGHT { 0b01 } else { 0b10 });
         }
 
         for i in 0..L {
@@ -232,9 +253,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             };
 
             let R11 = {
-                let mut R = simd_sl_i16!(D11, neg_inf, 1);
-                R = simd_prefix_scan_i16(R, gap_extend, gap_extend1234, neg_inf);
-                simd_adds_i16(R, gap_open)
+                let R_insert = if RIGHT { neg_inf } else { simd_set1_i16(*R_buf.add(i)) };
+                let mut R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
+                simd_prefix_scan_i16(R, gap_extend, gap_extend1234, neg_inf)
             };
             D11 = simd_max_i16(D11, R11);
 
@@ -250,10 +271,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
             }
 
-            ptr::write(D_buf.add(i), simd_extract_i16::<{ L - 1 }>(D11));
-            ptr::write(R_buf.add(i), simd_extract_i16::<{ L - 1 }>(R11));
+            let D_insert = if RIGHT { neg_inf } else { simd_set1_i16(*D_buf.add(i)) };
+            D00 = simd_sl_i16!(D11, D_insert, 1);
 
-            D00 = simd_sl_i16!(D11, neg_inf, 1);
+            ptr::write(D_buf.add(i), simd_extract_i16::<{ L - 1 }>(D11));
+            let R_buf_val = {
+                let R_last = simd_max_i16(simd_adds_i16(D11, gap_open), simd_adds_i16(R11, gap_extend));
+                simd_extract_i16::<{ L - 1 }>(R_last)
+            };
+            ptr::write(R_buf.add(i), R_buf_val);
+
             D10 = D11;
             C10 = C11;
 
