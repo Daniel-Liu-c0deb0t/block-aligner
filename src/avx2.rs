@@ -11,6 +11,9 @@ pub const L: usize = 16;
 pub const L_BYTES: usize = L * 2;
 pub const HALFSIMD_MUL: usize = 1;
 
+#[repr(align(32))]
+pub struct Aligned(pub [i16; L]);
+
 #[target_feature(enable = "avx2")]
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { _mm256_adds_epi16(a, b) }
@@ -78,6 +81,7 @@ macro_rules! simd_sl_i16 {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! simd_sr_i16 {
     ($a:expr, $b:expr, $num:literal) => {
         {
@@ -221,6 +225,7 @@ pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
 #[inline]
 pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i }
 
+#[allow(unused_macros)]
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:literal) => {
         {

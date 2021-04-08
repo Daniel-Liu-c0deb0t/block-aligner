@@ -7,6 +7,9 @@ pub const HALFSIMD_MUL: usize = 2;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 
+#[repr(align(16))]
+pub struct Aligned(pub [i16; L]);
+
 // Note: SIMD vectors treated as little-endian
 
 #[target_feature(enable = "simd128")]
@@ -91,6 +94,7 @@ macro_rules! simd_sl_i16 {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! simd_sr_i16 {
     ($a:expr, $b:expr, $num:literal) => {
         {
@@ -211,6 +215,7 @@ pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i8x16_splat(v) }
 #[inline]
 pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i + i / L * L }
 
+#[allow(unused_macros)]
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:literal) => {
         {

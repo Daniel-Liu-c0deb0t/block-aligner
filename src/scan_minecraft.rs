@@ -6,8 +6,7 @@ use crate::simd128::*;
 
 use crate::scores::*;
 
-use std::{alloc, cmp, ptr, i16};
-use std::cmp::Ordering;
+use std::{cmp, ptr, i16};
 use std::marker::PhantomData;
 
 const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
@@ -66,19 +65,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             assert!(x_drop >= 0);
         }
 
-        let a = Self {
+        let mut a = Self {
             res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
             trace: if TRACE { Trace::new(query.len(), reference.len()) } else { Trace::new(0, 0) },
             query,
-            0,
+            i: 0,
             reference,
-            0,
+            j: 0,
             matrix,
             x_drop,
             _phantom: PhantomData
         };
 
-        a.align_core();
+        unsafe { a.align_core(); }
         a
     }
 
@@ -86,6 +85,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     unsafe fn align_core(&mut self) {
+        let neg_inf = simd_set1_i16(i16::MIN);
         let mut best_max = i32::MIN;
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
@@ -93,26 +93,27 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         let mut prev_dir = Direction::Diagonal;
         let mut off = 0i32;
         let mut corner1 = i16::MIN as i32;
-        let mut corner2 = i16::MIN as i32;
+        let mut corner2 = 0i32;
         let mut D = simd_insert_i16::<{ L - 1 }>(neg_inf, 0i16);
         let mut C = neg_inf;
-        let mut D_buf = A([i16::MIN; L]);
-        let mut R_buf = A([i16::MIN; L]);
+        let mut D_buf = Aligned([i16::MIN; L]);
+        D_buf.0[L - 1] = 0;
+        let mut R_buf = Aligned([i16::MIN; L]);
 
         loop {
             let old_off = off;
-            off += simd_extract_i16::<0>(D);
+            off += simd_extract_i16::<0>(D) as i32;
             let off_add = simd_set1_i16(clamp(old_off - off));
 
             let (new_D, new_C, D_max, D_argmax) = match dir {
                 Direction::Diagonal => {
                     let off_add = old_off - off;
 
-                    place_block_diag(
+                    self.place_block_diag(
                         clamp(corner2 - off),
-                        clamp((D_buf[L - 2] as i32) + off_add),
+                        clamp((D_buf.0[L - 2] as i32) + off_add),
                         clamp((simd_extract_i16::<{ L - 2 }>(D) as i32) + off_add),
-                        clamp((R_buf[L - 1] as i32) + off_add),
+                        clamp((R_buf.0[L - 1] as i32) + off_add),
                         clamp((simd_extract_i16::<{ L - 1 }>(C) as i32) + off_add),
                         D_buf.0.as_mut_ptr(),
                         R_buf.0.as_mut_ptr()
@@ -121,7 +122,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 Direction::Right => {
                     let corner = if prev_dir == Direction::Down { clamp(corner1 - off) } else { i16::MIN };
 
-                    place_block_rd::<true>(
+                    self.place_block_rd::<true>(
                         simd_adds_i16(D, off_add),
                         simd_adds_i16(C, off_add),
                         corner,
@@ -136,9 +137,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     simd_store(D_buf_ptr as _, simd_adds_i16(simd_load(D_buf_ptr as _), off_add));
                     simd_store(C_buf_ptr as _, simd_adds_i16(simd_load(C_buf_ptr as _), off_add));
 
-                    place_block_rd::<false>(
-                        simd_set1_i16(i16::MIN),
-                        simd_set1_i16(i16::MIN),
+                    self.place_block_rd::<false>(
+                        neg_inf,
+                        neg_inf,
                         corner,
                         D_buf.0.as_mut_ptr(),
                         R_buf.0.as_mut_ptr()
@@ -151,13 +152,13 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             if X_DROP {
                 let max = simd_hmax_i16(D_max);
 
-                if best_max != i32::MIN && off + max as i32 < best_max - self.x_drop {
+                if best_max != i32::MIN && off + (max as i32) < best_max - self.x_drop {
                     // x drop termination
                     break;
                 }
 
-                if off + max as i32 > best_max {
-                    let lane_idx = (simd_movemask_epi8(
+                if off + (max as i32) > best_max {
+                    let lane_idx = (simd_movemask_i8(
                             simd_cmpeq_i16(D_max, simd_set1_i16(max))).trailing_zeros() / 2) as usize;
                     best_argmax_i = self.i + lane_idx;
                     best_argmax_j = self.j + simd_slow_extract_i16(D_argmax, lane_idx) as usize;
@@ -169,16 +170,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             let down_max = simd_hmax_i16(simd_load(D_buf.0.as_ptr() as _));
             prev_dir = dir;
 
-            if self.i + L > query.len() && self.j + L > reference.len() {
+            if self.i + L > self.query.len() && self.j + L > self.reference.len() {
                 // reached the end of the strings
                 break;
-            } else if self.j + L > reference.len() || down_max > right_max {
+            } else if self.j + L > self.reference.len() || down_max > right_max {
                 self.i += L;
                 dir = Direction::Down;
-            } else if self.i + L > query.len() || right_max > down_max {
+            } else if self.i + L > self.query.len() || right_max > down_max {
                 self.j += L;
                 dir = Direction::Right;
-            } else if right_max == down_max && down_max == D_buf[L - 1] {
+            } else if right_max == down_max && down_max == D_buf.0[L - 1] {
                 self.i += L - 1;
                 self.j += L - 1;
                 dir = Direction::Diagonal;
@@ -189,20 +190,20 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             }
 
             corner1 = corner2;
-            corner2 = off + D_buf[L - 1] as i32;
+            corner2 = off + D_buf.0[L - 1] as i32;
         }
 
         self.res = if X_DROP {
             AlignResult {
-                best_max,
-                best_argmax_i,
-                best_argmax_j
+                score: best_max,
+                query_idx: best_argmax_i,
+                reference_idx: best_argmax_j
             }
         } else {
             AlignResult {
-                off + simd_slow_extract_i16(D, query.len() - self.i) as i32,
-                query.len(),
-                reference.len()
+                score: off + simd_slow_extract_i16(D, self.query.len() - self.i) as i32,
+                query_idx: self.query.len(),
+                reference_idx: self.reference.len()
             }
         };
     }
@@ -223,7 +224,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                                D_buf: *mut i16,
                                R_buf: *mut i16) -> (Simd, Simd, Simd, Simd) {
         let (neg_inf, gap_open, gap_extend, gap_extend1234) = self.get_const_simd();
-        let mut D00 = simd_sl_i16!(D10, simd_set1_i16(corner10), 2);
+        let mut D00 = simd_sl_i16!(neg_inf, simd_set1_i16(corner10), 2);
         let mut D10 = neg_inf;
         let mut C10 = neg_inf;
         let mut R_insert = simd_set1_i16(R_corner);
@@ -247,9 +248,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             // efficiently lookup scores for each query character
             let scores = if M::NUC {
-                halfsimd_lookup1_i16(scores1, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _)))
+                halfsimd_lookup1_i16(scores1, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
             } else {
-                halfsimd_lookup2_i16(scores1, scores2, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _)))
+                halfsimd_lookup2_i16(scores1, scores2, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
             };
 
             let mut D11 = simd_adds_i16(D00, scores);
@@ -258,24 +259,24 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             if i == 0 {
                 D11 = simd_insert_i16::<0>(D11, corner11);
-                C11 = simd_insert_i16::<0>(C11, R_corner);
+                C11 = simd_insert_i16::<0>(C11, C_corner);
             }
 
             let trace_D_C = if TRACE {
-                simd_movemask_i8(simd_cmpeq_i16(delta_D11, delta_C11))
+                simd_movemask_i8(simd_cmpeq_i16(D11, C11))
             } else {
                 0 // should be optimized out
             };
 
             let R11 = {
-                let mut R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
+                let R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
                 R_insert = neg_inf;
                 simd_prefix_scan_i16(R, gap_extend, gap_extend1234, neg_inf)
             };
             D11 = simd_max_i16(D11, R11);
 
             if TRACE {
-                let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(delta_D11, delta_R11));
+                let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(D11, R11));
                 self.trace.add(((trace_D_R & Self::EVEN_BITS) << 1) | (trace_D_C & Self::EVEN_BITS));
             }
 
@@ -342,9 +343,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             // efficiently lookup scores for each query character
             let scores = if M::NUC {
-                halfsimd_lookup1_i16(scores1, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _)))
+                halfsimd_lookup1_i16(scores1, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
             } else {
-                halfsimd_lookup2_i16(scores1, scores2, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _)))
+                halfsimd_lookup2_i16(scores1, scores2, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
             };
 
             let mut D11 = simd_adds_i16(D00, scores);
@@ -352,20 +353,20 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             D11 = simd_max_i16(D11, C11);
 
             let trace_D_C = if TRACE {
-                simd_movemask_i8(simd_cmpeq_i16(delta_D11, delta_C11))
+                simd_movemask_i8(simd_cmpeq_i16(D11, C11))
             } else {
                 0 // should be optimized out
             };
 
             let R11 = {
                 let R_insert = if RIGHT { neg_inf } else { simd_set1_i16(*R_buf.add(i)) };
-                let mut R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
+                let R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
                 simd_prefix_scan_i16(R, gap_extend, gap_extend1234, neg_inf)
             };
             D11 = simd_max_i16(D11, R11);
 
             if TRACE {
-                let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(delta_D11, delta_R11));
+                let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(D11, R11));
                 self.trace.add(((trace_D_R & Self::EVEN_BITS) << 1) | (trace_D_C & Self::EVEN_BITS));
             }
 
@@ -399,7 +400,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
     }
 
     #[inline(always)]
-    pub fn res(&self) -> {
+    pub fn res(&self) -> AlignResult {
         self.res
     }
 
@@ -436,8 +437,8 @@ fn convert_char(c: u8, nuc: bool) -> u8 {
 #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 #[inline]
-fn simd_convert_char(v: HalfSimd, nuc: bool) -> HalfSimd {
-    if nuc { v } else { halfsimd_sub_i8(v, halfsimd_set1_i8(b'A')) }
+unsafe fn simd_convert_char(v: HalfSimd, nuc: bool) -> HalfSimd {
+    if nuc { v } else { halfsimd_sub_i8(v, halfsimd_set1_i8(b'A' as i8)) }
 }
 
 #[inline(always)]
@@ -450,18 +451,15 @@ fn div_ceil(n: usize, d: usize) -> usize {
     (n + d - 1) / d
 }
 
-#[repr(align(L))]
-struct A([i16; L]);
-
 #[derive(Clone, PartialEq, Debug)]
-pub struct PaddedString {
+pub struct PaddedBytes {
     s: Vec<u8>
 }
 
 impl PaddedBytes {
     #[inline(always)]
     pub fn from_bytes(b: &[u8]) -> Self {
-        let v = b.to_owned();
+        let mut v = b.to_owned();
         v.insert(0, NULL);
         v.resize(v.len() + L, NULL);
         Self { s: v }
@@ -474,7 +472,7 @@ impl PaddedBytes {
 
     #[inline(always)]
     pub fn from_string(s: String) -> Self {
-        let v = s.into_bytes();
+        let mut v = s.into_bytes();
         v.insert(0, NULL);
         v.resize(v.len() + L, NULL);
         Self { s: v }
@@ -492,7 +490,7 @@ impl PaddedBytes {
 
     #[inline(always)]
     pub fn as_ptr(&self, i: usize) -> *const u8 {
-        self.s.as_ptr().add(i)
+        unsafe { self.s.as_ptr().add(i) }
     }
 
     #[inline(always)]
