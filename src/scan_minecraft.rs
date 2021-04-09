@@ -86,28 +86,33 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
     #[allow(non_snake_case)]
     unsafe fn align_core(&mut self) {
         let neg_inf = simd_set1_i16(i16::MIN);
+
         let mut best_max = i32::MIN;
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
+
         let mut dir = Direction::Diagonal;
         let mut prev_dir = Direction::Diagonal;
+
         let mut off = 0i32;
+        let mut prev_off = 0i32;
+
         let mut corner1 = i16::MIN as i32;
         let mut corner2 = 0i32;
+
         let mut D = simd_insert_i16::<{ L - 1 }>(neg_inf, 0i16);
         let mut C = neg_inf;
+
         let mut D_buf = Aligned([i16::MIN; L]);
         D_buf.0[L - 1] = 0;
         let mut R_buf = Aligned([i16::MIN; L]);
 
         loop {
-            let old_off = off;
-            off += simd_extract_i16::<0>(D) as i32;
-            let off_add = simd_set1_i16(clamp(old_off - off));
+            let off_add = simd_set1_i16(clamp(prev_off - off));
 
             let (new_D, new_C, D_max, D_argmax) = match dir {
                 Direction::Diagonal => {
-                    let off_add = old_off - off;
+                    let off_add = prev_off - off;
 
                     self.place_block_diag(
                         clamp(corner2 - off),
@@ -149,13 +154,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             D = new_D;
             C = new_C;
 
+            let right_max = simd_hmax_i16(D);
+            let down_max = simd_hmax_i16(simd_load(D_buf.0.as_ptr() as _));
+            prev_dir = dir;
+
             if X_DROP {
                 let max = simd_hmax_i16(D_max);
-
-                if best_max != i32::MIN && off + (max as i32) < best_max - self.x_drop {
-                    // x drop termination
-                    break;
-                }
 
                 if off + (max as i32) > best_max {
                     let lane_idx = (simd_movemask_i8(
@@ -164,11 +168,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     best_argmax_j = self.j + simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     best_max = off + max as i32;
                 }
-            }
 
-            let right_max = simd_hmax_i16(D);
-            let down_max = simd_hmax_i16(simd_load(D_buf.0.as_ptr() as _));
-            prev_dir = dir;
+                if off + (cmp::max(right_max, down_max) as i32) < best_max - self.x_drop {
+                    // x drop termination
+                    break;
+                }
+            }
 
             if self.i + L > self.query.len() && self.j + L > self.reference.len() {
                 // reached the end of the strings
@@ -191,6 +196,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             corner1 = corner2;
             corner2 = off + D_buf.0[L - 1] as i32;
+            prev_off = off;
+            off += simd_extract_i16::<0>(D) as i32;
         }
 
         self.res = if X_DROP {
@@ -513,6 +520,7 @@ enum Direction {
     Diagonal
 }
 
+#[derive(Clone)]
 pub struct Trace {
     trace: Vec<u32>,
     shift_dir: Vec<u32>,
@@ -559,83 +567,81 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scan_align() {
-        type TestParams = Params<-11, -1, 1024>;
+    fn test_no_x_drop() {
+        type TestParams = GapParams<-11, -1>;
 
-        unsafe {
-            let r = b"AAAA";
-            let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 2, false, false>::new(q, &BLOSUM62);
-            a.align(r, 0);
-            assert_eq!(a.score(), 11);
+        let r = PaddedBytes::from_bytes(b"AAAA");
+        let q = PaddedBytes::from_bytes(b"AARA");
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        assert_eq!(a.res().score, 11);
 
-            let r = b"AAAA";
-            let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 6, false, false>::new(q, &BLOSUM62);
-            a.align(r, 0);
-            assert_eq!(a.score(), 11);
+        let r = PaddedBytes::from_bytes(b"AAAA");
+        let q = PaddedBytes::from_bytes(b"AAAA");
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        assert_eq!(a.res().score, 16);
 
-            let r = b"AAAA";
-            let q = b"AAAA";
-            let mut a = ScanAligner::<TestParams, _, 2, false, false>::new(q, &BLOSUM62);
-            a.align(r, 0);
-            assert_eq!(a.score(), 16);
+        let r = PaddedBytes::from_bytes(b"AAAA");
+        let q = PaddedBytes::from_bytes(b"AARA");
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        assert_eq!(a.res().score, 11);
 
-            let r = b"AAAA";
-            let q = b"AARA";
-            let mut a = ScanAligner::<TestParams, _, 1, false, false>::new(q, &BLOSUM62);
-            a.align(r, 0);
-            assert_eq!(a.score(), 11);
+        let r = PaddedBytes::from_bytes(b"AAAA");
+        let q = PaddedBytes::from_bytes(b"RRRR");
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        assert_eq!(a.res().score, -4);
 
-            let r = b"AAAA";
-            let q = b"RRRR";
-            let mut a = ScanAligner::<TestParams, _, 8, false, false>::new(q, &BLOSUM62);
-            a.align(r, 0);
-            assert_eq!(a.score(), -4);
+        let r = PaddedBytes::from_bytes(b"AAAA");
+        let q = PaddedBytes::from_bytes(b"AAA");
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        assert_eq!(a.res().score, 1);
 
-            let r = b"AAAA";
-            let q = b"AAA";
-            let mut a = ScanAligner::<TestParams, _, 2, false, false>::new(q, &BLOSUM62);
-            a.align(r, 0);
-            assert_eq!(a.score(), 1);
+        type TestParams2 = GapParams<-1, -1>;
 
-            type TestParams2 = Params<-1, -1, 2048>;
+        let r = PaddedBytes::from_bytes(b"AAAN");
+        let q = PaddedBytes::from_bytes(b"ATAA");
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        assert_eq!(a.res().score, 1);
 
-            let r = b"AAAN";
-            let q = b"ATAA";
-            let mut a = ScanAligner::<TestParams2, _, 4, false, false>::new(q, &NW1);
-            a.align(r, 0);
-            assert_eq!(a.score(), 1);
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        assert_eq!(a.res().score, 32);
 
-            let r = b"AAAA";
-            let q = b"C";
-            let mut a = ScanAligner::<TestParams2, _, 8, false, false>::new(q, &NW1);
-            a.align(r, 0);
-            assert_eq!(a.score(), -4);
-            let mut a = ScanAligner::<TestParams2, _, 8, false, false>::new(r, &NW1);
-            a.align(q, 0);
-            assert_eq!(a.score(), -1);
-        }
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let q = PaddedBytes::from_bytes(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT");
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        assert_eq!(a.res().score, -32);
+
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let q = PaddedBytes::from_bytes(b"TATATATATATATATATATATATATATATATA");
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        assert_eq!(a.res().score, 0);
+
+        let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT");
+        let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT");
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        assert_eq!(a.res().score, 9);
+
+        let r = PaddedBytes::from_bytes(b"AAAA");
+        let q = PaddedBytes::from_bytes(b"C");
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        assert_eq!(a.res().score, -4);
+        let a = Block::<TestParams2, _, false, false>::align(&r, &q, &NW1, 0);
+        assert_eq!(a.res().score, -4);
     }
 
     #[test]
     fn test_x_drop() {
-        type TestParams = Params<-11, -1, 1024>;
+        type TestParams = GapParams<-11, -1>;
 
-        unsafe {
-            let r = b"AAARRA";
-            let q = b"AAAAAA";
-            let mut a = ScanAligner::<TestParams, _, 3, false, true>::new(q, &BLOSUM62);
-            a.align(r, 1);
-            assert_eq!(a.score(), 12);
-            assert_eq!(a.end_idx(), EndIndex { query_idx: 3, ref_idx: 3 });
+        let r = PaddedBytes::from_bytes(b"AAARRA");
+        let q = PaddedBytes::from_bytes(b"AAAAAA");
+        let a = Block::<TestParams, _, false, true>::align(&q, &r, &BLOSUM62, 1);
+        assert_eq!(a.res(), AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
 
-            let r = b"AAARRA";
-            let q = b"AAAAAA";
-            let mut a = ScanAligner::<TestParams, _, 20, false, true>::new(q, &BLOSUM62);
-            a.align(r, 1);
-            assert_eq!(a.score(), 12);
-            assert_eq!(a.end_idx(), EndIndex { query_idx: 3, ref_idx: 3 });
-        }
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA");
+        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let a = Block::<TestParams, _, false, true>::align(&q, &r, &BLOSUM62, 1);
+        assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
     }
 }

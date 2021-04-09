@@ -6,7 +6,7 @@ use test::{Bencher, black_box};
 
 use rand::prelude::*;
 
-use better_alignment::scan::*;
+use better_alignment::scan_minecraft::*;
 use better_alignment::scores::*;
 
 static AMINO_ACIDS: [u8; 20] = [
@@ -22,14 +22,13 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
-    type BenchParams = Params<-11, -1, 1024>;
+    let r = PaddedBytes::from_bytes(&r);
+    let q = PaddedBytes::from_bytes(&q);
+    type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        unsafe {
-            let mut a = ScanAligner::<BenchParams, _, K, false, false>::new(&q, &BLOSUM62);
-            a.align(&r, 0);
-            a.score()
-        }
+        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        a.res()
     });
 }
 
@@ -37,23 +36,18 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &NUC, &mut rng));
     let q = black_box(rand_mutate(&r, K, &NUC, &mut rng));
-    type BenchParams = Params<-1, -1, 2048>;
+    let r = PaddedBytes::from_bytes(&r);
+    let q = PaddedBytes::from_bytes(&q);
+    type BenchParams = GapParams<-1, -1>;
 
     b.iter(|| {
-        unsafe {
-            let mut a = ScanAligner::<BenchParams, _, K, false, false>::new(&q, &NW1);
-            a.align(&r, 0);
-            a.score()
-        }
+        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &NW1, 0);
+        a.res()
     });
 }
 
 #[bench]
-fn bench_scan_aa_15_100(b: &mut Bencher) { bench_scan_aa_core::<15>(b, 100); }
-#[bench]
-fn bench_scan_aa_15_1000(b: &mut Bencher) { bench_scan_aa_core::<15>(b, 1000); }
-#[bench]
-fn bench_scan_aa_15_10000(b: &mut Bencher) { bench_scan_aa_core::<15>(b, 10000); }
+fn bench_scan_aa_10_100(b: &mut Bencher) { bench_scan_aa_core::<10>(b, 100); }
 #[bench]
 fn bench_scan_aa_100_1000(b: &mut Bencher) { bench_scan_aa_core::<100>(b, 1000); }
 #[bench]
