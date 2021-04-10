@@ -19,7 +19,7 @@ fn run<const K: usize>(len: usize) -> AlignResult {
 }
 
 fn main() {
-    for _i in 0..10000 {
+    for _i in 0..30000 {
         run::<1000>(10000);
     }
 }

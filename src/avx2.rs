@@ -92,7 +92,7 @@ macro_rules! simd_sr_i16 {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
-    _mm256_permute2x128_si256(a, b, 0x02)
+    _mm256_permute2x128_si256(a, b, 0x03)
 }
 
 #[target_feature(enable = "avx2")]
@@ -176,7 +176,9 @@ unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd, Simd) {
 #[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
     let (gap_cost, gap_cost01231234, gap_cost12345678, neg_inf) = get_prefix_scan_consts(gap);
+
     // Optimized prefix add and max for every four elements
+    // Note: be very careful to avoid lane-crossing which has a large penalty
     let mut shift1 = simd_sll_i16::<1>(R_max, neg_inf);
     shift1 = _mm256_adds_epi16(shift1, gap_cost);
     shift1 = _mm256_max_epi16(R_max, shift1);
@@ -184,7 +186,7 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
     shift2 = _mm256_adds_epi16(shift2, _mm256_slli_epi16(gap_cost, 1));
     shift2 = _mm256_max_epi16(shift1, shift2);
 
-    // Correct each group using an element from the previous group
+    // Correct upper group in each lane using the last element of the previous group
     let mask = _mm256_set_epi8(
         7, 6, 7, 6, 7, 6, 7, 6, 1, 0, 1, 0, 1, 0, 1, 0,
         7, 6, 7, 6, 7, 6, 7, 6, 1, 0, 1, 0, 1, 0, 1, 0
@@ -193,16 +195,15 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
     correct1 = _mm256_adds_epi16(correct1, gap_cost01231234);
     correct1 = _mm256_max_epi16(shift2, correct1);
 
+    // Correct the upper lane using the last element of the lower lane
     let mut correct2 = simd_sl_i128(correct1, neg_inf);
     let mask = _mm256_set_epi8(
-        15, 14, 15, 14, 15, 14, 15, 14, 0, 0, 0, 0, 0, 0, 0, 0,
-        15, 14, 15, 14, 15, 14, 15, 14, 0, 0, 0, 0, 0, 0, 0, 0
+        15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14,
+         1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0
     );
     correct2 = _mm256_shuffle_epi8(correct2, mask);
     correct2 = _mm256_adds_epi16(correct2, gap_cost12345678);
-    correct2 = _mm256_max_epi16(correct1, correct2);
-
-    correct2
+    _mm256_max_epi16(correct1, correct2)
 }
 
 // use avx2 target feature to prevent legacy SSE mode penalty
