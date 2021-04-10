@@ -3,8 +3,6 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use std::cmp;
-
 pub type Simd = __m256i;
 pub type HalfSimd = __m128i;
 pub const L: usize = 16;
@@ -45,10 +43,6 @@ pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { _mm256_store_si256(ptr, a) }
 #[target_feature(enable = "avx2")]
 #[inline]
 pub unsafe fn simd_set1_i16(v: i16) -> Simd { _mm256_set1_epi16(v) }
-
-#[target_feature(enable = "avx2")]
-#[inline]
-pub unsafe fn simd_set4_i16(d: i16, c: i16, b: i16, a: i16) -> Simd { _mm256_set_epi16(d, c, b, a, d, c, b, a, d, c, b, a, d, c, b, a) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
@@ -103,6 +97,12 @@ unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
 
 #[target_feature(enable = "avx2")]
 #[inline]
+unsafe fn simd_sll_i16<const IDX: usize>(a: Simd, b: Simd) -> Simd {
+    _mm256_alignr_epi8(a, b, (L - IDX * 2) as i32)
+}
+
+#[target_feature(enable = "avx2")]
+#[inline]
 pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     debug_assert!(i < L);
 
@@ -120,7 +120,8 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
     let mut v2 = _mm256_max_epi16(v, _mm256_srli_si256(v, 2));
     v2 = _mm256_max_epi16(v2, _mm256_srli_si256(v2, 4));
     v2 = _mm256_max_epi16(v2, _mm256_srli_si256(v2, 8));
-    cmp::max(simd_extract_i16::<0>(v2), simd_extract_i16::<{ L / 2 }>(v2))
+    v2 = _mm256_max_epi16(v2, simd_sl_i128(v2, v2));
+    simd_extract_i16::<0>(v2)
 }
 
 #[target_feature(enable = "avx2")]
@@ -136,13 +137,14 @@ pub unsafe fn simd_hargmax_i16(v: Simd) -> (i16, usize) {
 #[inline]
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-pub unsafe fn simd_naive_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf: Simd) -> Simd {
-    let mut curr = delta_R_max;
+pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
+    let (gap_cost, _gap_cost01231234, _gap_cost12345678, neg_inf) = get_prefix_scan_consts(gap);
+    let mut curr = R_max;
 
     for _i in 0..(L - 1) {
         let prev = curr;
         curr = simd_sl_i16!(curr, neg_inf, 1);
-        curr = _mm256_adds_epi16(curr, stride_gap);
+        curr = _mm256_adds_epi16(curr, gap_cost);
         curr = _mm256_max_epi16(curr, prev);
     }
 
@@ -151,33 +153,53 @@ pub unsafe fn simd_naive_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, ne
 
 #[target_feature(enable = "avx2")]
 #[inline]
+unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd, Simd) {
+    let gap_cost = _mm256_set1_epi16(gap);
+    let gap_cost01231234 = _mm256_set_epi16(
+        gap * 4, gap * 3, gap * 2, gap * 1,
+        gap * 3, gap * 2, gap * 1, gap * 0,
+        gap * 4, gap * 3, gap * 2, gap * 1,
+        gap * 3, gap * 2, gap * 1, gap * 0
+    );
+    let gap_cost12345678 = _mm256_set_epi16(
+        gap * 8, gap * 7, gap * 6, gap * 5,
+        gap * 4, gap * 3, gap * 2, gap * 1,
+        gap * 8, gap * 7, gap * 6, gap * 5,
+        gap * 4, gap * 3, gap * 2, gap * 1
+    );
+    let neg_inf = _mm256_set1_epi16(i16::MIN);
+    (gap_cost, gap_cost01231234, gap_cost12345678, neg_inf)
+}
+
+#[target_feature(enable = "avx2")]
+#[inline]
 #[allow(non_snake_case)]
-pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_gap1234: Simd, neg_inf: Simd) -> Simd {
+pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
+    let (gap_cost, gap_cost01231234, gap_cost12345678, neg_inf) = get_prefix_scan_consts(gap);
     // Optimized prefix add and max for every four elements
-    let mut shift1 = simd_sl_i16!(delta_R_max, neg_inf, 1);
-    shift1 = _mm256_adds_epi16(shift1, stride_gap);
-    shift1 = _mm256_max_epi16(delta_R_max, shift1);
-    let mut shift2 = simd_sl_i16!(shift1, neg_inf, 2);
-    shift2 = _mm256_adds_epi16(shift2, _mm256_slli_epi16(stride_gap, 1));
+    let mut shift1 = simd_sll_i16::<1>(R_max, neg_inf);
+    shift1 = _mm256_adds_epi16(shift1, gap_cost);
+    shift1 = _mm256_max_epi16(R_max, shift1);
+    let mut shift2 = simd_sll_i16::<2>(shift1, neg_inf);
+    shift2 = _mm256_adds_epi16(shift2, _mm256_slli_epi16(gap_cost, 1));
     shift2 = _mm256_max_epi16(shift1, shift2);
 
     // Correct each group using an element from the previous group
-    let mut correct1 = simd_sl_i16!(shift2, neg_inf, 1);
     let mask = _mm256_set_epi8(
-        9, 8, 9, 8, 9, 8, 9, 8, 1, 0, 1, 0, 1, 0, 1, 0,
-        9, 8, 9, 8, 9, 8, 9, 8, 1, 0, 1, 0, 1, 0, 1, 0
+        7, 6, 7, 6, 7, 6, 7, 6, 1, 0, 1, 0, 1, 0, 1, 0,
+        7, 6, 7, 6, 7, 6, 7, 6, 1, 0, 1, 0, 1, 0, 1, 0
     );
-    correct1 = _mm256_shuffle_epi8(correct1, mask);
-    correct1 = _mm256_adds_epi16(correct1, stride_gap1234);
+    let mut correct1 = _mm256_shuffle_epi8(shift2, mask);
+    correct1 = _mm256_adds_epi16(correct1, gap_cost01231234);
     correct1 = _mm256_max_epi16(shift2, correct1);
 
     let mut correct2 = simd_sl_i128(correct1, neg_inf);
     let mask = _mm256_set_epi8(
-        15, 14, 15, 14, 15, 14, 15, 14, 7, 6, 7, 6, 7, 6, 7, 6,
-        15, 14, 15, 14, 15, 14, 15, 14, 7, 6, 7, 6, 7, 6, 7, 6
+        15, 14, 15, 14, 15, 14, 15, 14, 0, 0, 0, 0, 0, 0, 0, 0,
+        15, 14, 15, 14, 15, 14, 15, 14, 0, 0, 0, 0, 0, 0, 0, 0
     );
     correct2 = _mm256_shuffle_epi8(correct2, mask);
-    correct2 = _mm256_adds_epi16(correct2, _mm256_adds_epi16(stride_gap1234, _mm256_slli_epi16(stride_gap, 2)));
+    correct2 = _mm256_adds_epi16(correct2, gap_cost12345678);
     correct2 = _mm256_max_epi16(correct1, correct2);
 
     correct2
@@ -306,11 +328,11 @@ mod tests {
         struct A([i16; L]);
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set4_i16(0, 0, 0, 0), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), 0);
         simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set4_i16(-4, -3, -2, -1), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), -1);
         simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
     }
 }

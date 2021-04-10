@@ -46,10 +46,6 @@ pub unsafe fn simd_set1_i16(v: i16) -> Simd { i16x8_splat(v) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_set4_i16(d: i16, c: i16, b: i16, a: i16) -> Simd { i16x8_const(a, b, c, d, a, b, c, d) }
-
-#[target_feature(enable = "simd128")]
-#[inline]
 pub unsafe fn simd_extract_i16<const IDX: usize>(a: Simd) -> i16 {
     debug_assert!(IDX < L);
     i16x8_extract_lane::<{ IDX }>(a)
@@ -140,13 +136,14 @@ pub unsafe fn simd_hargmax_i16(v: Simd) -> (i16, usize) {
 #[inline]
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-pub unsafe fn simd_naive_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, neg_inf: Simd) -> Simd {
-    let mut curr = delta_R_max;
+pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
+    let (gap_cost, _gap_cost1234, neg_inf) = get_prefix_scan_consts(gap);
+    let mut curr = R_max;
 
     for _i in 0..(L - 1) {
         let prev = curr;
         curr = simd_sl_i16!(curr, neg_inf, 1);
-        curr = i16x8_add_saturate_s(curr, stride_gap);
+        curr = i16x8_add_saturate_s(curr, gap_cost);
         curr = i16x8_max_s(curr, prev);
     }
 
@@ -155,19 +152,34 @@ pub unsafe fn simd_naive_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, ne
 
 #[target_feature(enable = "simd128")]
 #[inline]
+unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd) {
+    let gap_cost = _mm256_set1_epi16(gap);
+    let gap_cost1234 = _mm256_set_epi16(
+        gap * 4, gap * 3, gap * 2, gap * 1,
+        gap * 4, gap * 3, gap * 2, gap * 1,
+        gap * 4, gap * 3, gap * 2, gap * 1,
+        gap * 4, gap * 3, gap * 2, gap * 1
+    );
+    let neg_inf = _mm256_set1_epi16(i16::MIN);
+    (gap_cost, gap_cost1234, neg_inf)
+}
+
+#[target_feature(enable = "simd128")]
+#[inline]
 #[allow(non_snake_case)]
-pub unsafe fn simd_prefix_scan_i16(delta_R_max: Simd, stride_gap: Simd, stride_gap1234: Simd, neg_inf: Simd) -> Simd {
+pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
+    let (gap_cost, _gap_cost1234, neg_inf) = get_prefix_scan_consts(gap);
     // Optimized prefix add and max for every four elements
-    let mut shift1 = simd_sl_i16!(delta_R_max, neg_inf, 1);
-    shift1 = i16x8_add_saturate_s(shift1, stride_gap);
-    shift1 = i16x8_max_s(shift1, delta_R_max);
+    let mut shift1 = simd_sl_i16!(R_max, neg_inf, 1);
+    shift1 = i16x8_add_saturate_s(shift1, gap_cost);
+    shift1 = i16x8_max_s(shift1, R_max);
     let mut shift2 = simd_sl_i16!(shift1, neg_inf, 2);
-    shift2 = i16x8_add_saturate_s(shift2, i16x8_shl(stride_gap, 1));
+    shift2 = i16x8_add_saturate_s(shift2, i16x8_shl(gap_cost, 1));
     let temp = i16x8_max_s(shift1, shift2);
 
     // Almost there: correct the last group using the last element of the previous group
     let mut correct = v16x8_shuffle::<0, 0, 0, 0, 3, 3, 3, 3>(temp, temp);
-    correct = i16x8_add_saturate_s(correct, stride_gap1234);
+    correct = i16x8_add_saturate_s(correct, gap_cost1234);
 
     i16x8_max_s(temp, correct)
 }
@@ -336,11 +348,11 @@ mod tests {
         struct A([i16; L]);
 
         let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(0), simd_set4_i16(0, 0, 0, 0), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), 0);
         simd_assert_vec_eq(res, [8, 9, 10, 15, 15, 15, 15, 15]);
 
         let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), simd_set1_i16(-1), simd_set4_i16(-4, -3, -2, -1), simd_set1_i16(i16::MIN));
+        let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), -1);
         simd_assert_vec_eq(res, [8, 9, 10, 15, 14, 13, 14, 13]);
     }
 }

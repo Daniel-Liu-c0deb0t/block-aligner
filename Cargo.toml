@@ -12,6 +12,7 @@ codegen-units = 1
 debug-assertions = false
 lto = true
 panic = "abort"
+#debug = true
 
 [profile.bench]
 codegen-units = 1
@@ -20,6 +21,6 @@ lto = true
 
 [dependencies]
 wee_alloc = "^0.4"
+rand = { version = "^0.8", default-features = false, features = ["std_rng", "alloc"] }
 
 [dev-dependencies]
-rand = { version = "^0.8", default-features = false, features = ["std_rng", "alloc"] }

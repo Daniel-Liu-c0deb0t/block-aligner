@@ -21,3 +21,5 @@ pub mod simd128;
 pub mod scan_minecraft;
 
 pub mod scores;
+
+pub mod simulate;

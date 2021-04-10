@@ -30,6 +30,7 @@ const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids
 // Each block is made up of vertical SIMD vectors of length 8 or 16 16-bit integers.
 
 // TODO: count number of down/right shifts for profiling
+// TODO: create matrices with const fn
 
 pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
@@ -221,7 +222,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    #[inline]
+    #[cold]
     unsafe fn place_block_diag(&mut self,
                                corner11: i16,
                                corner10: i16,
@@ -230,7 +231,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                                C_corner: i16,
                                D_buf: *mut i16,
                                R_buf: *mut i16) -> (Simd, Simd, Simd, Simd) {
-        let (neg_inf, gap_open, gap_extend, gap_extend1234) = self.get_const_simd();
+        let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
         let mut D00 = simd_sl_i16!(neg_inf, simd_set1_i16(corner10), 2);
         let mut D10 = neg_inf;
         let mut C10 = neg_inf;
@@ -278,7 +279,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             let R11 = {
                 let R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
                 R_insert = neg_inf;
-                simd_prefix_scan_i16(R, gap_extend, gap_extend1234, neg_inf)
+                simd_prefix_scan_i16(R, P::GAP_EXTEND as i16)
             };
             D11 = simd_max_i16(D11, R11);
 
@@ -329,7 +330,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                                                 corner: i16,
                                                 D_buf: *mut i16,
                                                 R_buf: *mut i16) -> (Simd, Simd, Simd, Simd) {
-        let (neg_inf, gap_open, gap_extend, gap_extend1234) = self.get_const_simd();
+        let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
         let mut D00 = simd_sl_i16!(D10, simd_set1_i16(corner), 1);
         let mut D_max = neg_inf;
         let mut D_argmax = simd_set1_i16(0);
@@ -368,7 +369,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             let R11 = {
                 let R_insert = if RIGHT { neg_inf } else { simd_set1_i16(*R_buf.add(i)) };
                 let R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
-                simd_prefix_scan_i16(R, gap_extend, gap_extend1234, neg_inf)
+                simd_prefix_scan_i16(R, P::GAP_EXTEND as i16)
             };
             D11 = simd_max_i16(D11, R11);
 
@@ -420,18 +421,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[inline]
-    unsafe fn get_const_simd(&self) -> (Simd, Simd, Simd, Simd) {
+    unsafe fn get_const_simd(&self) -> (Simd, Simd, Simd) {
         // some useful constant simd vectors
         let neg_inf = simd_set1_i16(i16::MIN);
         let gap_open = simd_set1_i16(P::GAP_OPEN as i16);
         let gap_extend = simd_set1_i16(P::GAP_EXTEND as i16);
-        let gap_extend1234 = simd_set4_i16(
-            (P::GAP_EXTEND as i16) * 4,
-            (P::GAP_EXTEND as i16) * 3,
-            (P::GAP_EXTEND as i16) * 2,
-            (P::GAP_EXTEND as i16) * 1
-        );
-        (neg_inf, gap_open, gap_extend, gap_extend1234)
+        (neg_inf, gap_open, gap_extend)
     }
 }
 
