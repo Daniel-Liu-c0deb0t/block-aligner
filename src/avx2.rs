@@ -30,6 +30,10 @@ pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { _mm256_cmpeq_epi16(a, b
 
 #[target_feature(enable = "avx2")]
 #[inline]
+pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { _mm256_cmpgt_epi16(a, b) }
+
+#[target_feature(enable = "avx2")]
+#[inline]
 pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd { _mm256_blendv_epi8(a, b, mask) }
 
 #[target_feature(enable = "avx2")]

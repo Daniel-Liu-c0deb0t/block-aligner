@@ -30,6 +30,10 @@ pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { i16x8_eq(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
+pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { i16x8_gt(a, b) }
+
+#[target_feature(enable = "simd128")]
+#[inline]
 pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd { v128_bitselect(b, a, mask) }
 
 #[target_feature(enable = "simd128")]

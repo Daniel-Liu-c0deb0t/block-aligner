@@ -276,12 +276,14 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 0 // should be optimized out
             };
 
-            let R11 = {
-                let R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
-                R_insert = neg_inf;
-                simd_prefix_scan_i16(R, P::GAP_EXTEND as i16)
-            };
-            D11 = simd_max_i16(D11, R11);
+            let D11_open = simd_adds_i16(D11, gap_open);
+            let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
+            R_insert = neg_inf;
+            // avoid doing prefix scan if possible!
+            if simd_movemask_i8(simd_cmpgt_i16(R11, D11_open)) != 0 {
+                R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
+                D11 = simd_max_i16(D11, R11);
+            }
 
             if TRACE {
                 let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(D11, R11));
@@ -300,7 +302,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             ptr::write(D_buf.add(i), simd_extract_i16::<{ L - 1 }>(D11));
             let R_buf_val = {
-                let R_last = simd_max_i16(simd_adds_i16(D11, gap_open), simd_adds_i16(R11, gap_extend));
+                let R_last = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
                 simd_extract_i16::<{ L - 1 }>(R_last)
             };
             ptr::write(R_buf.add(i), R_buf_val);
@@ -366,12 +368,14 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 0 // should be optimized out
             };
 
-            let R11 = {
-                let R_insert = if RIGHT { neg_inf } else { simd_set1_i16(*R_buf.add(i)) };
-                let R = simd_sl_i16!(simd_adds_i16(D11, gap_open), R_insert, 1);
-                simd_prefix_scan_i16(R, P::GAP_EXTEND as i16)
-            };
-            D11 = simd_max_i16(D11, R11);
+            let D11_open = simd_adds_i16(D11, gap_open);
+            let R_insert = if RIGHT { neg_inf } else { simd_set1_i16(*R_buf.add(i)) };
+            let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
+            // avoid doing prefix scan if possible!
+            if simd_movemask_i8(simd_cmpgt_i16(R11, D11_open)) != 0 {
+                R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
+                D11 = simd_max_i16(D11, R11);
+            }
 
             if TRACE {
                 let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(D11, R11));
@@ -390,7 +394,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             ptr::write(D_buf.add(i), simd_extract_i16::<{ L - 1 }>(D11));
             let R_buf_val = {
-                let R_last = simd_max_i16(simd_adds_i16(D11, gap_open), simd_adds_i16(R11, gap_extend));
+                let R_last = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
                 simd_extract_i16::<{ L - 1 }>(R_last)
             };
             ptr::write(R_buf.add(i), R_buf_val);
