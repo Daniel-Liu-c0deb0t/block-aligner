@@ -232,6 +232,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                                D_buf: *mut i16,
                                R_buf: *mut i16) -> (Simd, Simd, Simd, Simd) {
         let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
+        let query = halfsimd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC);
         let mut D00 = simd_sl_i16!(neg_inf, simd_set1_i16(corner10), 2);
         let mut D10 = neg_inf;
         let mut C10 = neg_inf;
@@ -256,9 +257,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             // efficiently lookup scores for each query character
             let scores = if M::NUC {
-                halfsimd_lookup1_i16(scores1, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
+                halfsimd_lookup1_i16(scores1, query)
             } else {
-                halfsimd_lookup2_i16(scores1, scores2, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
+                halfsimd_lookup2_i16(scores1, scores2, query)
             };
 
             let mut D11 = simd_adds_i16(D00, scores);
@@ -333,6 +334,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                                                 D_buf: *mut i16,
                                                 R_buf: *mut i16) -> (Simd, Simd, Simd, Simd) {
         let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
+        let query = halfsimd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC);
         let mut D00 = simd_sl_i16!(D10, simd_set1_i16(corner), 1);
         let mut D_max = neg_inf;
         let mut D_argmax = simd_set1_i16(0);
@@ -353,9 +355,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             // efficiently lookup scores for each query character
             let scores = if M::NUC {
-                halfsimd_lookup1_i16(scores1, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
+                halfsimd_lookup1_i16(scores1, query)
             } else {
-                halfsimd_lookup2_i16(scores1, scores2, simd_convert_char(halfsimd_loadu(self.query.as_ptr(self.i) as _), M::NUC))
+                halfsimd_lookup2_i16(scores1, scores2, query)
             };
 
             let mut D11 = simd_adds_i16(D00, scores);
@@ -443,7 +445,7 @@ fn convert_char(c: u8, nuc: bool) -> u8 {
 #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 #[inline]
-unsafe fn simd_convert_char(v: HalfSimd, nuc: bool) -> HalfSimd {
+unsafe fn halfsimd_convert_char(v: HalfSimd, nuc: bool) -> HalfSimd {
     if nuc { v } else { halfsimd_sub_i8(v, halfsimd_set1_i8(b'A' as i8)) }
 }
 

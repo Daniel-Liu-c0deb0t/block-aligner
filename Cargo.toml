@@ -24,3 +24,4 @@ wee_alloc = "^0.4"
 rand = { version = "^0.8", default-features = false, features = ["std_rng", "alloc"] }
 
 [dev-dependencies]
+bio = "^0.33"

@@ -5,7 +5,7 @@ Better alignment algorithms.
 Use
 ```
 brew install cargo-instruments
-cargo instruments --example profile --release --open
+RUSTFLAGS="-C target-cpu=native" cargo instruments --example profile --release --open
 ```
 
 ## WASM SIMD support
