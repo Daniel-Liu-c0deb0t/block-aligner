@@ -7,6 +7,9 @@ edition = "2018"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+debug = []
+
 [profile.release]
 codegen-units = 1
 debug-assertions = false

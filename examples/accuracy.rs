@@ -9,10 +9,13 @@ use better_alignment::scan_minecraft::*;
 use better_alignment::scores::*;
 use better_alignment::simulate::*;
 
-use std::str;
+use std::{env, str, cmp};
 
-fn test(iter: usize, len: usize, k: usize) -> usize {
+fn test(iter: usize, len: usize, k: usize, verbose: bool) -> (usize, f64, i32, i32) {
     let mut wrong = 0usize;
+    let mut wrong_avg = 0i64;
+    let mut wrong_min = i32::MAX;
+    let mut wrong_max = i32::MIN;
     let mut rng = StdRng::seed_from_u64(1234);
 
     for _i in 0..iter {
@@ -33,32 +36,49 @@ fn test(iter: usize, len: usize, k: usize) -> usize {
 
         if bio_score != scan_score {
             wrong += 1;
-            println!(
-                "bio: {}, ours: {}\nq: {}\nr: {}\nk: {}",
-                bio_score,
-                scan_score,
-                str::from_utf8(&q).unwrap(),
-                str::from_utf8(&r).unwrap(),
-                k
-            );
+            let score_diff = bio_score - scan_score;
+            wrong_avg += score_diff as i64;
+            wrong_min = cmp::min(wrong_min, score_diff);
+            wrong_max = cmp::max(wrong_max, score_diff);
+
+            if verbose {
+                println!(
+                    "bio: {}, ours: {}\nq: {}\nr: {}",
+                    bio_score,
+                    scan_score,
+                    str::from_utf8(&q).unwrap(),
+                    str::from_utf8(&r).unwrap()
+                );
+            }
         }
     }
 
-    wrong
+    (wrong, (wrong_avg as f64) / (iter as f64), wrong_min, wrong_max)
 }
 
 fn main() {
-    let iter = 100;
-    let lens = [5, 10, 20, 50, 100];
-    let rcp_ks = [10, 5];
+    let arg1 = env::args().skip(1).next();
+    let verbose = arg1.is_some() && arg1.unwrap() == "-v";
+    let iter = 1000;
+    let lens = [10, 20, 50, 100, 1000];
+    let rcp_ks = [10, 5, 2];
 
     let mut total_wrong = 0usize;
     let mut total = 0usize;
 
     for &len in &lens {
         for &rcp_k in &rcp_ks {
-            let wrong = test(iter, len, len / rcp_k);
-            println!("\nlen: {}, 1/k: {}, iter: {}, wrong: {}\n", len, rcp_k, iter, wrong);
+            let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, len / rcp_k, verbose);
+            println!(
+                "\nlen: {}, k: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
+                len,
+                len / rcp_k,
+                iter,
+                wrong,
+                wrong_avg,
+                wrong_min,
+                wrong_max
+            );
             total_wrong += wrong;
             total += iter;
         }

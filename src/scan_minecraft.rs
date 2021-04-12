@@ -29,7 +29,6 @@ const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids
 //
 // Each block is made up of vertical SIMD vectors of length 8 or 16 16-bit integers.
 
-// TODO: count number of down/right shifts for profiling
 // TODO: create matrices with const fn
 
 pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
@@ -111,6 +110,14 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         loop {
             let off_add = simd_set1_i16(clamp(prev_off - off));
 
+            #[cfg(feature = "debug")]
+            {
+                println!("i: {}", self.i);
+                println!("j: {}", self.j);
+                println!("{:?}", dir);
+                println!("off: {}", off);
+            }
+
             let (new_D, new_C, D_max, D_argmax) = match dir {
                 Direction::Diagonal => {
                     let off_add = prev_off - off;
@@ -176,23 +183,33 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 }
             }
 
+            // first check if the shift direction is "forced"
             if self.i + L > self.query.len() && self.j + L > self.reference.len() {
                 // reached the end of the strings
                 break;
-            } else if self.j + L > self.reference.len() || down_max > right_max {
+            } else if self.j + L > self.reference.len() {
                 self.i += L;
                 dir = Direction::Down;
-            } else if self.i + L > self.query.len() || right_max > down_max {
+            } else if self.i + L > self.query.len() {
                 self.j += L;
                 dir = Direction::Right;
-            } else if right_max == down_max && down_max == D_buf.0[L - 1] {
-                self.i += L - 1;
-                self.j += L - 1;
-                dir = Direction::Diagonal;
             } else {
-                // arbitrary
-                self.j += L;
-                dir = Direction::Right;
+                // move according to max
+                if down_max > right_max {
+                    self.i += L;
+                    dir = Direction::Down;
+                } else if right_max > down_max {
+                    self.j += L;
+                    dir = Direction::Right;
+                } else if right_max == down_max && down_max == D_buf.0[L - 1] {
+                    self.i += L - 1;
+                    self.j += L - 1;
+                    dir = Direction::Diagonal;
+                } else {
+                    // arbitrary
+                    self.j += L;
+                    dir = Direction::Right;
+                }
             }
 
             corner1 = corner2;
@@ -208,6 +225,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 reference_idx: best_argmax_j
             }
         } else {
+            debug_assert!(self.i <= self.query.len());
             AlignResult {
                 score: off + simd_slow_extract_i16(D, self.query.len() - self.i) as i32,
                 query_idx: self.query.len(),
@@ -296,6 +314,18 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 let mask = simd_cmpeq_i16(D_max, D11);
                 D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
                 curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+            }
+
+            #[cfg(feature = "debug")]
+            {
+                print!("s:   ");
+                simd_dbg_i16(scores);
+                print!("C11: ");
+                simd_dbg_i16(C11);
+                print!("R11: ");
+                simd_dbg_i16(R11);
+                print!("D11: ");
+                simd_dbg_i16(D11);
             }
 
             D00 = simd_sl_i16!(D11, D_insert, 1);
@@ -389,6 +419,18 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 let mask = simd_cmpeq_i16(D_max, D11);
                 D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
                 curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+            }
+
+            #[cfg(feature = "debug")]
+            {
+                print!("s:   ");
+                simd_dbg_i16(scores);
+                print!("C11: ");
+                simd_dbg_i16(C11);
+                print!("R11: ");
+                simd_dbg_i16(R11);
+                print!("D11: ");
+                simd_dbg_i16(D11);
             }
 
             let D_insert = if RIGHT { neg_inf } else { simd_set1_i16(*D_buf.add(i)) };
