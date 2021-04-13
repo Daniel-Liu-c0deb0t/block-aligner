@@ -1,4 +1,4 @@
-#![cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
+#![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 
 use rand::prelude::*;
 
