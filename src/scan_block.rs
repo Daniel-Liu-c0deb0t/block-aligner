@@ -31,7 +31,7 @@ const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids
 
 // TODO: create matrices with const fn
 
-pub struct Block<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
+pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
     trace: Trace,
     query: &'a PaddedBytes,
@@ -43,7 +43,7 @@ pub struct Block<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE
     _phantom: PhantomData<P>
 }
 
-impl<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { TRACE }, { X_DROP }> {
+impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { B }, { TRACE }, { X_DROP }> {
     const EVEN_BITS: u32 = 0x55555555u32;
 
     /// Adaptive banded alignment.
@@ -91,7 +91,7 @@ impl<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, cons
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
 
-        let mut dir = Direction::Diagonal;
+        let mut dir = Direction::Right;
 
         let mut off = 0i32;
         let mut prev_off = 0i32;
@@ -99,8 +99,8 @@ impl<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, cons
         #[repr(align(32))]
         struct Aligned([i16; B * L]);
 
-        let mut D10 = Aligned([i16::MIN; B * L]);
-        let mut C10 = Aligned([i16::MIN; B * L]);
+        let mut D10_buf = Aligned([i16::MIN; B * L]);
+        let mut C10_buf = Aligned([i16::MIN; B * L]);
 
         let mut D_buf = Aligned([i16::MIN; B * L]);
         D_buf.0[0] = 0;
@@ -109,14 +109,13 @@ impl<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, cons
         }
         let mut R_buf = Aligned([i16::MIN; B * L]);
         self.i += 1;
-        // note: this algorithm does not keep track of "corner" score from previous blocks
-        // this may reduce accuracy a bit, but cutting corners makes it easier to implement
 
         loop {
             let mut D_max = neg_inf;
             let mut D_argmax = simd_set1_i16(0);
             let mut curr_right_max = neg_inf;
             let mut curr_down_max = neg_inf;
+            let off_add = simd_set1_i16(clamp(prev_off - off));
 
             #[cfg(feature = "debug")]
             {
@@ -128,14 +127,12 @@ impl<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, cons
 
             match dir {
                 Direction::Right => {
-                    let off_add = simd_set1_i16(clamp(prev_off - off));
-
                     let mut temp_D_buf = Aligned([i16::MIN; L]);
                     let mut temp_R_buf = Aligned([i16::MIN; L]);
                     let mut corner = i16::MIN;
                     let mut curr_i = simd_set1_i16(0);
 
-                    for i in (0..B * L).step(L) {
+                    for i in (0..B * L).step_by(L) {
                         let next_corner = clamp((D10_buf.0[i + L - 1] as i32) + prev_off - off);
 
                         let D10_buf_ptr = D10_buf.0.as_mut_ptr().add(i);
@@ -154,7 +151,7 @@ impl<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, cons
                         );
 
                         corner = next_corner;
-                        right_max = simd_max_i16(right_max, simd_load(D10_buf_ptr as _));
+                        curr_right_max = simd_max_i16(curr_right_max, simd_load(D10_buf_ptr as _));
 
                         if X_DROP {
                             D_max = simd_max_i16(D_max, curr_D_max);
@@ -171,31 +168,73 @@ impl<'a, const B: usize, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, cons
                     // shift and offset bottom row
                     let D_buf_ptr = D_buf.0.as_mut_ptr();
                     let R_buf_ptr = R_buf.0.as_mut_ptr();
-                    for j in (0..(B - 1) * L).step(L) {
+                    for j in (0..(B - 1) * L).step_by(L) {
                         let next_D = simd_adds_i16(simd_load(D_buf_ptr.add(j + L) as _), off_add);
-                        simd_store(D_buf_ptr.add(j) as _, next_D);
-                        curr_down_max = simd_max_i16(curr_down_max, next_D);
                         let next_R = simd_adds_i16(simd_load(R_buf_ptr.add(j + L) as _), off_add);
+                        simd_store(D_buf_ptr.add(j) as _, next_D);
                         simd_store(R_buf_ptr.add(j) as _, next_R);
+                        curr_down_max = simd_max_i16(curr_down_max, next_D);
                     }
                     let next_D = simd_load(temp_D_buf.0.as_mut_ptr() as _);
-                    simd_store(D_buf_ptr.add((B - 1) * L), next_D);
+                    let next_R = simd_load(temp_R_buf.0.as_mut_ptr() as _);
+                    simd_store(D_buf_ptr.add((B - 1) * L) as _, next_D);
+                    simd_store(R_buf_ptr.add((B - 1) * L) as _, next_R);
                     curr_down_max = simd_max_i16(curr_down_max, next_D);
-                    simd_store(R_buf_ptr.add((B - 1) * L), simd_load(temp_R_buf.0.as_mut_ptr() as _));
                 },
                 Direction::Down => {
-                    let D_buf_ptr = D_buf.0.as_mut_ptr();
-                    let C_buf_ptr = R_buf.0.as_mut_ptr();
-                    simd_store(D_buf_ptr as _, simd_adds_i16(simd_load(D_buf_ptr as _), off_add));
-                    simd_store(C_buf_ptr as _, simd_adds_i16(simd_load(C_buf_ptr as _), off_add));
+                    let mut temp_D10_buf = Aligned([i16::MIN; L]);
+                    let mut temp_C10_buf = Aligned([i16::MIN; L]);
+                    let mut corner = i16::MIN;
+                    let mut curr_j = simd_set1_i16(0);
 
-                    self.place_block_rd::<false>(
-                        neg_inf,
-                        neg_inf,
-                        corner,
-                        D_buf.0.as_mut_ptr(),
-                        R_buf.0.as_mut_ptr()
-                    )
+                    for j in (0..B * L).step_by(L) {
+                        let next_corner = clamp((D_buf.0[j + L - 1] as i32) + prev_off - off);
+
+                        let D_buf_ptr = D_buf.0.as_mut_ptr().add(j);
+                        simd_store(D_buf_ptr as _, simd_adds_i16(simd_load(D_buf_ptr as _), off_add));
+                        let R_buf_ptr = R_buf.0.as_mut_ptr().add(j);
+                        simd_store(R_buf_ptr as _, simd_adds_i16(simd_load(R_buf_ptr as _), off_add));
+
+                        let (early_exit, curr_D_max, curr_D_argmax) = self.place_block(
+                            self.i + (B - 1) * L,
+                            self.j + j,
+                            temp_D10_buf.0.as_mut_ptr(),
+                            temp_C10_buf.0.as_mut_ptr(),
+                            corner,
+                            D_buf_ptr,
+                            R_buf_ptr
+                        );
+
+                        corner = next_corner;
+                        curr_down_max = simd_max_i16(curr_down_max, simd_load(D_buf_ptr as _));
+
+                        if X_DROP {
+                            D_max = simd_max_i16(D_max, curr_D_max);
+                            let mask = simd_cmpeq_i16(D_max, curr_D_max);
+                            D_argmax = simd_blend_i8(D_argmax, simd_adds_i16(curr_D_argmax, curr_j), mask);
+                            curr_j = simd_adds_i16(curr_j, simd_set1_i16(L as i16));
+                        }
+
+                        if early_exit {
+                            break;
+                        }
+                    }
+
+                    // shift and offset right column
+                    let D10_buf_ptr = D10_buf.0.as_mut_ptr();
+                    let C10_buf_ptr = C10_buf.0.as_mut_ptr();
+                    for i in (0..(B - 1) * L).step_by(L) {
+                        let next_D = simd_adds_i16(simd_load(D10_buf_ptr.add(i + L) as _), off_add);
+                        let next_C = simd_adds_i16(simd_load(C10_buf_ptr.add(i + L) as _), off_add);
+                        simd_store(D10_buf_ptr.add(i) as _, next_D);
+                        simd_store(C10_buf_ptr.add(i) as _, next_C);
+                        curr_right_max = simd_max_i16(curr_right_max, next_D);
+                    }
+                    let next_D = simd_load(temp_D10_buf.0.as_mut_ptr() as _);
+                    let next_C = simd_load(temp_C10_buf.0.as_mut_ptr() as _);
+                    simd_store(D10_buf_ptr.add((B - 1) * L) as _, next_D);
+                    simd_store(C10_buf_ptr.add((B - 1) * L) as _, next_C);
+                    curr_right_max = simd_max_i16(curr_right_max, next_D);
                 }
             }
 
@@ -491,8 +530,7 @@ pub struct AlignResult {
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Direction {
     Right,
-    Down,
-    Diagonal
+    Down
 }
 
 #[derive(Clone)]
@@ -547,61 +585,61 @@ mod tests {
 
         let r = PaddedBytes::from_bytes(b"AAAA");
         let q = PaddedBytes::from_bytes(b"AARA");
-        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 11);
 
         let r = PaddedBytes::from_bytes(b"AAAA");
         let q = PaddedBytes::from_bytes(b"AAAA");
-        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 16);
 
         let r = PaddedBytes::from_bytes(b"AAAA");
         let q = PaddedBytes::from_bytes(b"AARA");
-        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 11);
 
         let r = PaddedBytes::from_bytes(b"AAAA");
         let q = PaddedBytes::from_bytes(b"RRRR");
-        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, -4);
 
         let r = PaddedBytes::from_bytes(b"AAAA");
         let q = PaddedBytes::from_bytes(b"AAA");
-        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 1);
 
         type TestParams2 = GapParams<-1, -1>;
 
         let r = PaddedBytes::from_bytes(b"AAAN");
         let q = PaddedBytes::from_bytes(b"ATAA");
-        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 1);
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 32);
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         let q = PaddedBytes::from_bytes(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT");
-        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, -32);
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
         let q = PaddedBytes::from_bytes(b"TATATATATATATATATATATATATATATATA");
-        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 0);
 
         let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT");
         let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT");
-        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 9);
 
         let r = PaddedBytes::from_bytes(b"AAAA");
         let q = PaddedBytes::from_bytes(b"C");
-        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, -4);
-        let a = Block::<TestParams2, _, false, false>::align(&r, &q, &NW1, 0);
+        let a = Block::<TestParams2, _, 2, false, false>::align(&r, &q, &NW1, 0);
         assert_eq!(a.res().score, -4);
     }
 
@@ -611,12 +649,12 @@ mod tests {
 
         let r = PaddedBytes::from_bytes(b"AAARRA");
         let q = PaddedBytes::from_bytes(b"AAAAAA");
-        let a = Block::<TestParams, _, false, true>::align(&q, &r, &BLOSUM62, 1);
+        let a = Block::<TestParams, _, 2, false, true>::align(&q, &r, &BLOSUM62, 1);
         assert_eq!(a.res(), AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA");
         let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        let a = Block::<TestParams, _, false, true>::align(&q, &r, &BLOSUM62, 1);
+        let a = Block::<TestParams, _, 2, false, true>::align(&q, &r, &BLOSUM62, 1);
         assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
     }
 }
