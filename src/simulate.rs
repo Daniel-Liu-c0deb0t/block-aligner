@@ -11,7 +11,7 @@ pub static NUC: [u8; 5] = [
 
 pub fn rand_mutate<R: Rng>(a: &[u8], k: usize, alpha: &[u8], rng: &mut R) -> Vec<u8> {
     let mut edits = vec![0u8; a.len()];
-    let curr_k: usize = rng.gen_range(k / 2..k + 1);
+    let curr_k: usize = rng.gen_range(k * 3 / 4..k + 1);
     let mut idx: Vec<usize> = (0usize..a.len()).collect();
     idx.shuffle(rng);
 
