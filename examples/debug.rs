@@ -1,4 +1,4 @@
-#![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#![cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
 
 use better_alignment::scan_block::*;
 use better_alignment::scores::*;
@@ -13,8 +13,8 @@ fn main() {
     let mut r = args.next().unwrap();
     r.make_ascii_uppercase();
     let r = r.as_bytes().to_owned();
-    let r_padded = PaddedBytes::from_bytes(&r, 2);
-    let q_padded = PaddedBytes::from_bytes(&q, 2);
+    let r_padded = PaddedBytes::from_bytes(&r, 2, false);
+    let q_padded = PaddedBytes::from_bytes(&q, 2, false);
     type RunParams = GapParams<-11, -1>;
 
     let block_aligner = Block::<RunParams, _, 2, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);

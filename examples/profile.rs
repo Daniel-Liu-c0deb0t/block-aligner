@@ -1,4 +1,4 @@
-#![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#![cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
 
 use rand::prelude::*;
 
@@ -10,8 +10,8 @@ fn run<const K: usize>(len: usize) -> AlignResult {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = rand_str(len, &AMINO_ACIDS, &mut rng);
     let q = rand_mutate(&r, K, &AMINO_ACIDS, &mut rng);
-    let r = PaddedBytes::from_bytes(&r, 2);
-    let q = PaddedBytes::from_bytes(&q, 2);
+    let r = PaddedBytes::from_bytes(&r, 2, false);
+    let q = PaddedBytes::from_bytes(&q, 2, false);
     type RunParams = GapParams<-11, -1>;
 
     let a = Block::<RunParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
@@ -19,7 +19,7 @@ fn run<const K: usize>(len: usize) -> AlignResult {
 }
 
 fn main() {
-    for _i in 0..30000 {
+    for _i in 0..10000 {
         run::<1000>(10000);
     }
 }

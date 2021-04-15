@@ -27,7 +27,7 @@ pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { i16x8_eq(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { i16x8_gt(a, b) }
+pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { i16x8_gt_s(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
@@ -154,14 +154,12 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 #[target_feature(enable = "simd128")]
 #[inline]
 unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd) {
-    let gap_cost = _mm256_set1_epi16(gap);
-    let gap_cost1234 = _mm256_set_epi16(
-        gap * 4, gap * 3, gap * 2, gap * 1,
-        gap * 4, gap * 3, gap * 2, gap * 1,
-        gap * 4, gap * 3, gap * 2, gap * 1,
-        gap * 4, gap * 3, gap * 2, gap * 1
+    let gap_cost = i16x8_splat(gap);
+    let gap_cost1234 = i16x8_const(
+        gap * 1, gap * 2, gap * 3, gap * 4,
+        gap * 1, gap * 2, gap * 3, gap * 4
     );
-    let neg_inf = _mm256_set1_epi16(i16::MIN);
+    let neg_inf = i16x8_splat(i16::MIN);
     (gap_cost, gap_cost1234, neg_inf)
 }
 
@@ -169,7 +167,7 @@ unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd) {
 #[inline]
 #[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
-    let (gap_cost, _gap_cost1234, neg_inf) = get_prefix_scan_consts(gap);
+    let (gap_cost, gap_cost1234, neg_inf) = get_prefix_scan_consts(gap);
     // Optimized prefix add and max for every four elements
     let mut shift1 = simd_sl_i16!(R_max, neg_inf, 1);
     shift1 = i16x8_add_saturate_s(shift1, gap_cost);
@@ -329,9 +327,6 @@ mod tests {
         let vec = halfsimd_load(vec.0.as_ptr() as *const HalfSimd);
         let res = halfsimd_sr_i8!(vec, vec, 1);
         halfsimd_assert_vec_eq(res, [2, 3, 4, 5, 6, 7, 8, 1]);
-
-        let vec = simd_set4_i16(4, 3, 2, 1);
-        simd_assert_vec_eq(vec, [1, 2, 3, 4, 1, 2, 3, 4]);
 
         simd_assert_vec_eq(simd_adds_i16(simd_set1_i16(i16::MIN), simd_set1_i16(i16::MIN)), [i16::MIN; 8]);
         simd_assert_vec_eq(simd_adds_i16(simd_set1_i16(i16::MAX), simd_set1_i16(i16::MIN)), [-1; 8]);

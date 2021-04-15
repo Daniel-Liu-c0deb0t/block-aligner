@@ -1,4 +1,4 @@
-#![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#![cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
 
 use rand::prelude::*;
 
@@ -26,8 +26,8 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, verbose: bool) -> (usize,
         let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
         let bio_score = bio_aligner.global(&q, &r).score;
 
-        let r_padded = PaddedBytes::from_bytes(&r, 2);
-        let q_padded = PaddedBytes::from_bytes(&q, 2);
+        let r_padded = PaddedBytes::from_bytes(&r, 2, false);
+        let q_padded = PaddedBytes::from_bytes(&q, 2, false);
         type RunParams = GapParams<-11, -1>;
 
         // ours
@@ -65,10 +65,10 @@ fn main() {
     let slow = false;
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let iter = 100;
-    let lens = [100, 1000, 10000];
-    let rcp_ks = [5.0, 2.0, 1.4];
-    /*let lens = [10, 20, 100];
-    let rcp_ks = [10.0, 5.0];*/
+    /*let lens = [100, 1000, 10000];
+    let rcp_ks = [5.0, 2.0, 1.4];*/
+    let lens = [10, 20, 100];
+    let rcp_ks = [10.0, 5.0];
 
     let mut total_wrong = 0usize;
     let mut total = 0usize;
