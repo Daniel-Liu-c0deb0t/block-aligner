@@ -7,9 +7,6 @@ pub const HALFSIMD_MUL: usize = 2;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 
-#[repr(align(16))]
-pub struct Aligned(pub [i16; L]);
-
 // Note: SIMD vectors treated as little-endian
 
 #[target_feature(enable = "simd128")]

@@ -6,7 +6,7 @@ use test::{Bencher, black_box};
 
 use rand::prelude::*;
 
-use better_alignment::scan_minecraft::*;
+use better_alignment::scan_block::*;
 use better_alignment::scores::*;
 use better_alignment::simulate::*;
 
@@ -19,7 +19,7 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<BenchParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         a.res()
     });
 }
@@ -33,7 +33,7 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-1, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<BenchParams, _, 2, false, false>::align(&q, &r, &NW1, 0);
         a.res()
     });
 }

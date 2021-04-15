@@ -5,7 +5,7 @@ use rand::prelude::*;
 use bio::alignment::pairwise::*;
 use bio::scores::blosum62;
 
-use better_alignment::scan_minecraft::*;
+use better_alignment::scan_block::*;
 use better_alignment::scores::*;
 use better_alignment::simulate::*;
 
@@ -26,15 +26,15 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, verbose: bool) -> (usize,
         let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
         let bio_score = bio_aligner.global(&q, &r).score;
 
-        let r_padded = PaddedBytes::from_bytes(&r);
-        let q_padded = PaddedBytes::from_bytes(&q);
+        let r_padded = PaddedBytes::from_bytes(&r, 2);
+        let q_padded = PaddedBytes::from_bytes(&q, 2);
         type RunParams = GapParams<-11, -1>;
 
         // ours
         let scan_score = if slow {
             slow_align(&q, &r)
         } else {
-            let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
+            let block_aligner = Block::<RunParams, _, 2, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
             block_aligner.res().score
         };
 
@@ -62,11 +62,13 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, verbose: bool) -> (usize,
 
 fn main() {
     let arg1 = env::args().skip(1).next();
-    let slow = true;
+    let slow = false;
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let iter = 100;
     let lens = [100, 1000, 10000];
     let rcp_ks = [5.0, 2.0, 1.4];
+    /*let lens = [10, 20, 100];
+    let rcp_ks = [10.0, 5.0];*/
 
     let mut total_wrong = 0usize;
     let mut total = 0usize;

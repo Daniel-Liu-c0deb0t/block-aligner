@@ -9,9 +9,6 @@ pub const L: usize = 16;
 pub const L_BYTES: usize = L * 2;
 pub const HALFSIMD_MUL: usize = 1;
 
-#[repr(align(32))]
-pub struct Aligned(pub [i16; L]);
-
 #[target_feature(enable = "avx2")]
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { _mm256_adds_epi16(a, b) }

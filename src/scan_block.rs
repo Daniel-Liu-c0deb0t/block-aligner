@@ -6,7 +6,7 @@ use crate::simd128::*;
 
 use crate::scores::*;
 
-use std::{cmp, ptr, i16};
+use std::{cmp, ptr, i16, alloc};
 use std::marker::PhantomData;
 
 const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
@@ -91,24 +91,24 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
 
-        let mut dir = Direction::Right;
+        let mut dir = Direction::Down;
 
         let mut off = 0i32;
         let mut prev_off = 0i32;
 
-        #[repr(align(32))]
-        struct Aligned([i16; B * L]);
+        let mut D10_buf = Aligned::new(B);
+        let mut C10_buf = Aligned::new(B);
 
-        let mut D10_buf = Aligned([i16::MIN; B * L]);
-        let mut C10_buf = Aligned([i16::MIN; B * L]);
-
-        let mut D_buf = Aligned([i16::MIN; B * L]);
-        D_buf.0[0] = 0;
-        for j in 1..D_buf.0.len() {
-            D_buf.0[j] = (P::GAP_OPEN as i16) + ((j - 1) as i16) * (P::GAP_EXTEND as i16);
+        let mut D_buf = Aligned::new(B);
+        let mut R_buf = Aligned::new(B);
+        for j in 0..B * L {
+            let D_insert = if j == 0 { 0 } else { (P::GAP_OPEN as i16) + ((j - 1) as i16) * (P::GAP_EXTEND as i16) };
+            D_buf.set(j, D_insert);
+            R_buf.set(j, D_insert + (P::GAP_OPEN as i16));
         }
-        let mut R_buf = Aligned([i16::MIN; B * L]);
         self.i += 1;
+
+        let mut start = 0usize;
 
         loop {
             let mut D_max = neg_inf;
@@ -121,23 +121,24 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
             {
                 println!("i: {}", self.i);
                 println!("j: {}", self.j);
+                println!("start: {}", start);
                 println!("{:?}", dir);
                 println!("off: {}", off);
             }
 
             match dir {
                 Direction::Right => {
-                    let mut temp_D_buf = Aligned([i16::MIN; L]);
-                    let mut temp_R_buf = Aligned([i16::MIN; L]);
+                    let mut temp_D_buf = Aligned::new(1);
+                    let mut temp_R_buf = Aligned::new(1);
                     let mut corner = i16::MIN;
                     let mut curr_i = simd_set1_i16(0);
 
                     for i in (0..B * L).step_by(L) {
-                        let next_corner = clamp((D10_buf.0[i + L - 1] as i32) + prev_off - off);
+                        let next_corner = clamp((D10_buf.get(i + L - 1) as i32) + prev_off - off);
 
-                        let D10_buf_ptr = D10_buf.0.as_mut_ptr().add(i);
+                        let D10_buf_ptr = D10_buf.as_mut_ptr().add(i);
                         simd_store(D10_buf_ptr as _, simd_adds_i16(simd_load(D10_buf_ptr as _), off_add));
-                        let C10_buf_ptr = C10_buf.0.as_mut_ptr().add(i);
+                        let C10_buf_ptr = C10_buf.as_mut_ptr().add(i);
                         simd_store(C10_buf_ptr as _, simd_adds_i16(simd_load(C10_buf_ptr as _), off_add));
 
                         let (early_exit, curr_D_max, curr_D_argmax) = self.place_block(
@@ -146,8 +147,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
                             D10_buf_ptr,
                             C10_buf_ptr,
                             corner,
-                            temp_D_buf.0.as_mut_ptr(),
-                            temp_R_buf.0.as_mut_ptr()
+                            temp_D_buf.as_mut_ptr(),
+                            temp_R_buf.as_mut_ptr()
                         );
 
                         corner = next_corner;
@@ -166,8 +167,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
                     }
 
                     // shift and offset bottom row
-                    let D_buf_ptr = D_buf.0.as_mut_ptr();
-                    let R_buf_ptr = R_buf.0.as_mut_ptr();
+                    let D_buf_ptr = D_buf.as_mut_ptr();
+                    let R_buf_ptr = R_buf.as_mut_ptr();
                     for j in (0..(B - 1) * L).step_by(L) {
                         let next_D = simd_adds_i16(simd_load(D_buf_ptr.add(j + L) as _), off_add);
                         let next_R = simd_adds_i16(simd_load(R_buf_ptr.add(j + L) as _), off_add);
@@ -175,31 +176,31 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
                         simd_store(R_buf_ptr.add(j) as _, next_R);
                         curr_down_max = simd_max_i16(curr_down_max, next_D);
                     }
-                    let next_D = simd_load(temp_D_buf.0.as_mut_ptr() as _);
-                    let next_R = simd_load(temp_R_buf.0.as_mut_ptr() as _);
+                    let next_D = simd_load(temp_D_buf.as_mut_ptr() as _);
+                    let next_R = simd_load(temp_R_buf.as_mut_ptr() as _);
                     simd_store(D_buf_ptr.add((B - 1) * L) as _, next_D);
                     simd_store(R_buf_ptr.add((B - 1) * L) as _, next_R);
                     curr_down_max = simd_max_i16(curr_down_max, next_D);
                 },
                 Direction::Down => {
-                    let mut temp_D10_buf = Aligned([i16::MIN; L]);
-                    let mut temp_C10_buf = Aligned([i16::MIN; L]);
+                    let mut temp_D10_buf = Aligned::new(1);
+                    let mut temp_C10_buf = Aligned::new(1);
                     let mut corner = i16::MIN;
                     let mut curr_j = simd_set1_i16(0);
 
                     for j in (0..B * L).step_by(L) {
-                        let next_corner = clamp((D_buf.0[j + L - 1] as i32) + prev_off - off);
+                        let next_corner = clamp((D_buf.get(j + L - 1) as i32) + prev_off - off);
 
-                        let D_buf_ptr = D_buf.0.as_mut_ptr().add(j);
+                        let D_buf_ptr = D_buf.as_mut_ptr().add(j);
                         simd_store(D_buf_ptr as _, simd_adds_i16(simd_load(D_buf_ptr as _), off_add));
-                        let R_buf_ptr = R_buf.0.as_mut_ptr().add(j);
+                        let R_buf_ptr = R_buf.as_mut_ptr().add(j);
                         simd_store(R_buf_ptr as _, simd_adds_i16(simd_load(R_buf_ptr as _), off_add));
 
                         let (early_exit, curr_D_max, curr_D_argmax) = self.place_block(
-                            self.i + (B - 1) * L,
+                            self.i + start * L,
                             self.j + j,
-                            temp_D10_buf.0.as_mut_ptr(),
-                            temp_C10_buf.0.as_mut_ptr(),
+                            temp_D10_buf.as_mut_ptr(),
+                            temp_C10_buf.as_mut_ptr(),
                             corner,
                             D_buf_ptr,
                             R_buf_ptr
@@ -221,8 +222,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
                     }
 
                     // shift and offset right column
-                    let D10_buf_ptr = D10_buf.0.as_mut_ptr();
-                    let C10_buf_ptr = C10_buf.0.as_mut_ptr();
+                    let D10_buf_ptr = D10_buf.as_mut_ptr();
+                    let C10_buf_ptr = C10_buf.as_mut_ptr();
                     for i in (0..(B - 1) * L).step_by(L) {
                         let next_D = simd_adds_i16(simd_load(D10_buf_ptr.add(i + L) as _), off_add);
                         let next_C = simd_adds_i16(simd_load(C10_buf_ptr.add(i + L) as _), off_add);
@@ -230,8 +231,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
                         simd_store(C10_buf_ptr.add(i) as _, next_C);
                         curr_right_max = simd_max_i16(curr_right_max, next_D);
                     }
-                    let next_D = simd_load(temp_D10_buf.0.as_mut_ptr() as _);
-                    let next_C = simd_load(temp_C10_buf.0.as_mut_ptr() as _);
+                    let next_D = simd_load(temp_D10_buf.as_mut_ptr() as _);
+                    let next_C = simd_load(temp_C10_buf.as_mut_ptr() as _);
                     simd_store(D10_buf_ptr.add((B - 1) * L) as _, next_D);
                     simd_store(C10_buf_ptr.add((B - 1) * L) as _, next_C);
                     curr_right_max = simd_max_i16(curr_right_max, next_D);
@@ -254,7 +255,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
                             best_argmax_j = self.j + (B - 1) * L + idx % L;
                         },
                         Direction::Down => {
-                            best_argmax_i = self.i + (B - 1) * L + lane_idx;
+                            best_argmax_i = self.i + start * L + lane_idx;
                             best_argmax_j = self.j + idx;
                         }
                     }
@@ -268,9 +269,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
             }
 
             // first check if the shift direction is "forced"
-            if self.i + B * L > self.query.len() && self.j + B * L > self.reference.len() {
+            if self.i + (start + 1) * L > self.query.len() && self.j + B * L > self.reference.len() {
                 // reached the end of the strings
                 break;
+            } else if start < B - 1 {
+                start += 1;
             } else if self.j + B * L > self.reference.len() {
                 self.i += L;
                 dir = Direction::Down;
@@ -294,8 +297,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
 
             prev_off = off;
             off += match dir {
-                Direction::Right => D10_buf.0[0] as i32,
-                Direction::Down => D_buf.0[0] as i32
+                Direction::Right => D10_buf.get(0) as i32,
+                Direction::Down => D_buf.get(0) as i32
             };
         }
 
@@ -309,7 +312,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, cons
             debug_assert!(self.i <= self.query.len());
             debug_assert!(self.query.len() - self.i < B * L);
             AlignResult {
-                score: off + D10_buf.0[self.query.len() - self.i] as i32,
+                score: off + D10_buf.get(self.query.len() - self.i + (B - 1 - start) * L) as i32,
                 query_idx: self.query.len(),
                 reference_idx: self.reference.len()
             }
@@ -472,31 +475,79 @@ fn div_ceil(n: usize, d: usize) -> usize {
     (n + d - 1) / d
 }
 
+pub struct Aligned {
+    layout: alloc::Layout,
+    ptr: *const i16
+}
+
+impl Aligned {
+    #[inline(always)]
+    pub fn new(blocks: usize) -> Self {
+        unsafe {
+            let layout = alloc::Layout::from_size_align_unchecked(blocks * L * 2, L_BYTES);
+            let ptr = alloc::alloc(layout) as *const i16;
+            for i in 0..blocks * L {
+                ptr::write(ptr.add(i) as _, i16::MIN);
+            }
+            Self { layout, ptr }
+        }
+    }
+
+    #[inline(always)]
+    pub fn get(&self, i: usize) -> i16 {
+        unsafe { *self.ptr.add(i) }
+    }
+
+    #[inline(always)]
+    pub fn set(&mut self, i: usize, v: i16) {
+        unsafe { ptr::write(self.ptr.add(i) as _, v); }
+    }
+
+    #[inline(always)]
+    pub fn as_mut_ptr(&mut self) -> *mut i16 {
+        self.ptr as _
+    }
+
+    #[inline(always)]
+    pub fn as_ptr(&self) -> *const i16 {
+        self.ptr
+    }
+}
+
+impl Drop for Aligned {
+    fn drop(&mut self) {
+        unsafe { alloc::dealloc(self.ptr as _, self.layout); }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct PaddedBytes {
-    s: Vec<u8>
+    s: Vec<u8>,
+    len: usize
 }
 
 impl PaddedBytes {
     #[inline(always)]
-    pub fn from_bytes(b: &[u8]) -> Self {
+    pub fn from_bytes(b: &[u8], blocks: usize) -> Self {
         let mut v = b.to_owned();
+        let len = v.len();
         v.insert(0, NULL);
-        v.resize(v.len() + L, NULL);
-        Self { s: v }
+        v.resize(v.len() + blocks * L, NULL);
+        Self { s: v, len }
     }
 
     #[inline(always)]
-    pub fn from_str(s: &str) -> Self {
-        Self::from_bytes(s.as_bytes())
+    pub fn from_str(s: &str, blocks: usize) -> Self {
+        Self::from_bytes(s.as_bytes(), blocks)
     }
 
     #[inline(always)]
-    pub fn from_string(s: String) -> Self {
+    pub fn from_string(s: String, blocks: usize) -> Self {
         let mut v = s.into_bytes();
+        let len = v.len();
         v.insert(0, NULL);
-        v.resize(v.len() + L, NULL);
-        Self { s: v }
+        v.resize(v.len() + blocks * L, NULL);
+        Self { s: v, len }
     }
 
     #[inline(always)]
@@ -516,7 +567,7 @@ impl PaddedBytes {
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.s.len() - L - 1
+        self.len
     }
 }
 
@@ -583,60 +634,60 @@ mod tests {
     fn test_no_x_drop() {
         type TestParams = GapParams<-11, -1>;
 
-        let r = PaddedBytes::from_bytes(b"AAAA");
-        let q = PaddedBytes::from_bytes(b"AARA");
+        let r = PaddedBytes::from_bytes(b"AAAA", 2);
+        let q = PaddedBytes::from_bytes(b"AARA", 2);
         let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 11);
 
-        let r = PaddedBytes::from_bytes(b"AAAA");
-        let q = PaddedBytes::from_bytes(b"AAAA");
+        let r = PaddedBytes::from_bytes(b"AAAA", 2);
+        let q = PaddedBytes::from_bytes(b"AAAA", 2);
         let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 16);
 
-        let r = PaddedBytes::from_bytes(b"AAAA");
-        let q = PaddedBytes::from_bytes(b"AARA");
+        let r = PaddedBytes::from_bytes(b"AAAA", 2);
+        let q = PaddedBytes::from_bytes(b"AARA", 2);
         let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 11);
 
-        let r = PaddedBytes::from_bytes(b"AAAA");
-        let q = PaddedBytes::from_bytes(b"RRRR");
+        let r = PaddedBytes::from_bytes(b"AAAA", 2);
+        let q = PaddedBytes::from_bytes(b"RRRR", 2);
         let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, -4);
 
-        let r = PaddedBytes::from_bytes(b"AAAA");
-        let q = PaddedBytes::from_bytes(b"AAA");
+        let r = PaddedBytes::from_bytes(b"AAAA", 2);
+        let q = PaddedBytes::from_bytes(b"AAA", 2);
         let a = Block::<TestParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
         assert_eq!(a.res().score, 1);
 
         type TestParams2 = GapParams<-1, -1>;
 
-        let r = PaddedBytes::from_bytes(b"AAAN");
-        let q = PaddedBytes::from_bytes(b"ATAA");
+        let r = PaddedBytes::from_bytes(b"AAAN", 2);
+        let q = PaddedBytes::from_bytes(b"ATAA", 2);
         let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 1);
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 2);
+        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 2);
         let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 32);
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        let q = PaddedBytes::from_bytes(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT");
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 2);
+        let q = PaddedBytes::from_bytes(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT", 2);
         let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, -32);
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        let q = PaddedBytes::from_bytes(b"TATATATATATATATATATATATATATATATA");
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 2);
+        let q = PaddedBytes::from_bytes(b"TATATATATATATATATATATATATATATATA", 2);
         let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 0);
 
-        let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT");
-        let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT");
+        let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 2);
+        let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 2);
         let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, 9);
 
-        let r = PaddedBytes::from_bytes(b"AAAA");
-        let q = PaddedBytes::from_bytes(b"C");
+        let r = PaddedBytes::from_bytes(b"AAAA", 2);
+        let q = PaddedBytes::from_bytes(b"C", 2);
         let a = Block::<TestParams2, _, 2, false, false>::align(&q, &r, &NW1, 0);
         assert_eq!(a.res().score, -4);
         let a = Block::<TestParams2, _, 2, false, false>::align(&r, &q, &NW1, 0);
@@ -647,13 +698,13 @@ mod tests {
     fn test_x_drop() {
         type TestParams = GapParams<-11, -1>;
 
-        let r = PaddedBytes::from_bytes(b"AAARRA");
-        let q = PaddedBytes::from_bytes(b"AAAAAA");
+        let r = PaddedBytes::from_bytes(b"AAARRA", 2);
+        let q = PaddedBytes::from_bytes(b"AAAAAA", 2);
         let a = Block::<TestParams, _, 2, false, true>::align(&q, &r, &BLOSUM62, 1);
         assert_eq!(a.res(), AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA");
-        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA", 2);
+        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 2);
         let a = Block::<TestParams, _, 2, false, true>::align(&q, &r, &BLOSUM62, 1);
         assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
     }

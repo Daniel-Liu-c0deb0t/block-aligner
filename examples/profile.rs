@@ -2,7 +2,7 @@
 
 use rand::prelude::*;
 
-use better_alignment::scan_minecraft::*;
+use better_alignment::scan_block::*;
 use better_alignment::scores::*;
 use better_alignment::simulate::*;
 
@@ -10,11 +10,11 @@ fn run<const K: usize>(len: usize) -> AlignResult {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = rand_str(len, &AMINO_ACIDS, &mut rng);
     let q = rand_mutate(&r, K, &AMINO_ACIDS, &mut rng);
-    let r = PaddedBytes::from_bytes(&r);
-    let q = PaddedBytes::from_bytes(&q);
+    let r = PaddedBytes::from_bytes(&r, 2);
+    let q = PaddedBytes::from_bytes(&q, 2);
     type RunParams = GapParams<-11, -1>;
 
-    let a = Block::<RunParams, _, false, false>::align(&q, &r, &BLOSUM62, 0);
+    let a = Block::<RunParams, _, 2, false, false>::align(&q, &r, &BLOSUM62, 0);
     a.res()
 }
 

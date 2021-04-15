@@ -1,6 +1,6 @@
 #![cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 
-use better_alignment::scan_minecraft::*;
+use better_alignment::scan_block::*;
 use better_alignment::scores::*;
 
 use std::{env, str};
@@ -13,11 +13,11 @@ fn main() {
     let mut r = args.next().unwrap();
     r.make_ascii_uppercase();
     let r = r.as_bytes().to_owned();
-    let r_padded = PaddedBytes::from_bytes(&r);
-    let q_padded = PaddedBytes::from_bytes(&q);
+    let r_padded = PaddedBytes::from_bytes(&r, 2);
+    let q_padded = PaddedBytes::from_bytes(&q, 2);
     type RunParams = GapParams<-11, -1>;
 
-    let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
+    let block_aligner = Block::<RunParams, _, 2, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
     let scan_score = block_aligner.res().score;
 
     println!(
