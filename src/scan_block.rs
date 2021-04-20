@@ -130,7 +130,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
                     // offset previous column
                     self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
 
-                    let (early_exit, D_max, D_argmax, right_max) = self.place_block(
+                    let (D_max, D_argmax, right_max) = self.place_block(
                         self.query,
                         self.reference,
                         self.i,
@@ -162,7 +162,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
                     // offset previous row
                     self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
 
-                    let (early_exit, D_max, D_argmax, down_max) = self.place_block(
+                    let (D_max, D_argmax, down_max) = self.place_block(
                         self.reference,
                         self.query,
                         self.j,
@@ -191,7 +191,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
                     let prev_size = block_size - L;
 
                     // down
-                    let (_, D_max, D_argmax, down_max) = self.place_block(
+                    let (D_max, D_argmax, down_max) = self.place_block(
                         self.reference,
                         self.query,
                         self.j,
@@ -205,7 +205,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
                     );
 
                     // right
-                    let (early_exit, D_max, D_argmax, right_max) = self.place_block(
+                    let (D_max, D_argmax, right_max) = self.place_block(
                         self.query,
                         self.reference,
                         self.i,
@@ -228,14 +228,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
                     let lane_idx = (simd_movemask_i8(
                             simd_cmpeq_i16(D_max, simd_set1_i16(max))).trailing_zeros() / 2) as usize;
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
+                    let r = (idx % (block_size / L)) * L + lane_idx;
+                    let c = (block_size - STEP) + (idx / (block_size / L));
                     match dir {
                         Direction::Right => {
-                            best_argmax_i = self.i + (idx / L) * L + lane_idx;
-                            best_argmax_j = self.j + (block_size - 1) * L + idx % L;
+                            best_argmax_i = self.i + r;
+                            best_argmax_j = self.j + c;
                         },
                         Direction::Down => {
-                            best_argmax_i = self.i + start * L + lane_idx;
-                            best_argmax_j = self.j + idx;
+                            best_argmax_i = self.i + c;
+                            best_argmax_j = self.j + r;
+                        },
+                        Direction::Grow => {
+
                         }
                     }
                 }
@@ -291,9 +296,20 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
             }
         } else {
             debug_assert!(self.i <= self.query.len());
-            debug_assert!(self.query.len() - self.i < block_size * L);
+            let score = off + match dir {
+                Direction::Right | Direction::Grow => {
+                    let idx = self.query.len() - self.i;
+                    debug_assert!(idx < block_size);
+                    D_col.get(idx) as i32
+                },
+                Direction::Down => {
+                    let idx = self.reference.len() - self.j;
+                    debug_assert!(idx < block_size);
+                    D_row.get(idx) as i32
+                }
+            };
             AlignResult {
-                score: off + D10_buf.get(self.query.len() - self.i + (block_size - 1 - start) * L) as i32,
+                score,
                 query_idx: self.query.len(),
                 reference_idx: self.reference.len()
             }
@@ -357,13 +373,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
                           D_col: *mut i16,
                           C_col: *mut i16,
                           D_row: *mut i16,
-                          R_row: *mut i16) -> (bool, Simd, Simd, i16) {
+                          R_row: *mut i16) -> (Simd, Simd, i16) {
         let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
         let mut D_max = neg_inf;
         let mut right_max;
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
-        let mut early_exit = false;
 
         // TODO: trace direction
 
@@ -405,7 +420,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
                     0 // should be optimized out
                 };
 
-                // TODO: fix R/C swap
                 let D11_open = simd_adds_i16(D11, gap_open);
                 let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
                 // avoid doing prefix scan if possible!
@@ -443,24 +457,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
 
                 simd_store(D_col.add(i) as _, D11);
                 simd_store(C_col.add(i) as _, C11);
-
-                if !X_DROP && start_i + i + L > query.len()
-                    && start_j + j >= reference.len() {
-                    early_exit = true;
-                    break;
-                }
             }
 
             ptr::write(D_row.add(j), *D_col.add(height - 1));
             // must subtract gap_extend from R_insert due to how R_insert is calculated
             ptr::write(R_row.add(j), simd_extract_i16::<{ L - 1 }>(simd_subs_i16(R_insert, gap_extend)));
 
-            if !X_DROP && early_exit {
+            if !X_DROP && start_i + height > query.len()
+                && start_j + j >= reference.len() {
                 break;
             }
         }
 
-        (early_exit, D_max, D_argmax, simd_hmax_i16(right_max))
+        (D_max, D_argmax, simd_hmax_i16(right_max))
     }
 
     #[inline(always)]
