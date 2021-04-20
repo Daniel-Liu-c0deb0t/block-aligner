@@ -120,6 +120,8 @@ fn slow_align(q: &[u8], r: &[u8]) -> i32 {
     let mut dir = 0;
     let mut best_max = 0;
 
+    //println!("start");
+
     loop {
         let max = match dir {
             0 => { // right
@@ -142,6 +144,7 @@ fn slow_align(q: &[u8], r: &[u8]) -> i32 {
             block_width += block_grow;
             block_height += block_grow;
             y_drop += y_drop_grow;
+            //println!("i: {}, j: {}, w: {}", i, j, block_width);
             continue;
         }
 

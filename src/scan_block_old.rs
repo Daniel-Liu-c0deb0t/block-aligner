@@ -11,8 +11,6 @@ use std::marker::PhantomData;
 
 const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
 
-const STEP: usize = 4usize;
-
 // Notes:
 //
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11 (includes extension), gap extend = -1
@@ -33,7 +31,7 @@ const STEP: usize = 4usize;
 
 // TODO: create matrices with const fn
 
-pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> {
+pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
     trace: Trace,
     query: &'a PaddedBytes,
@@ -45,7 +43,7 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, cons
     _phantom: PhantomData<P>
 }
 
-impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MAX_SIZE }, { TRACE }, { X_DROP }> {
+impl<'a, P: ScoreParams, M: 'a + Matrix, const B: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { B }, { TRACE }, { X_DROP }> {
     const EVEN_BITS: u32 = 0x55555555u32;
 
     /// Adaptive banded alignment.
@@ -87,199 +85,207 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     unsafe fn align_core(&mut self) {
+        let neg_inf = simd_set1_i16(i16::MIN);
+
         let mut best_max = i32::MIN;
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
 
         let mut dir = Direction::Down;
-        let mut block_size = L;
 
         let mut off = 0i32;
         let mut prev_off;
 
-        let mut D_col = Aligned::new(MAX_SIZE);
-        let mut C_col = Aligned::new(MAX_SIZE);
+        let mut D10_buf = Aligned::new(B);
+        let mut C10_buf = Aligned::new(B);
 
-        let mut D_row = Aligned::new(MAX_SIZE);
-        let mut R_row = Aligned::new(MAX_SIZE);
-        for j in 0..MAX_SIZE {
+        let mut D_buf = Aligned::new(B);
+        let mut R_buf = Aligned::new(B);
+        for j in 0..B * L {
             let D_insert = if j == 0 { 0 } else { (P::GAP_OPEN as i16) + ((j - 1) as i16) * (P::GAP_EXTEND as i16) };
-            D_row.set(j, D_insert);
-            R_row.set(j, D_insert + (P::GAP_OPEN as i16));
+            D_buf.set(j, D_insert);
+            R_buf.set(j, D_insert + (P::GAP_OPEN as i16));
         }
         self.i += 1;
+
+        let mut start = 0usize;
 
         let mut temp_buf1 = Aligned::new(1);
         let mut temp_buf2 = Aligned::new(1);
 
         loop {
+            prev_off = off;
+            let mut D_max = neg_inf;
+            let mut D_argmax = simd_set1_i16(0);
+            let mut curr_right_max = neg_inf;
+            let mut curr_down_max = neg_inf;
+
             #[cfg(feature = "debug")]
             {
                 println!("i: {}", self.i);
                 println!("j: {}", self.j);
+                println!("start: {}", start);
                 println!("{:?}", dir);
                 println!("off: {}", off);
             }
 
-            prev_off = off;
-            let (D_max, D_argmax, right_max, down_max) = match dir {
+            match dir {
                 Direction::Right => {
-                    off += D_col.get(0) as i32;
+                    off += D10_buf.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
+                    // don't care about previous corner cell, even though it might have been computed
+                    // "cutting corners" in the implementation
+                    let mut corner = i16::MIN;
+                    let mut curr_i = simd_set1_i16(0);
 
-                    // offset previous column
-                    self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
+                    for i in (0..B * L).step_by(L) {
+                        let next_corner = clamp((D10_buf.get(i + L - 1) as i32) + prev_off - off);
 
-                    let (early_exit, D_max, D_argmax, right_max) = self.place_block(
-                        self.query,
-                        self.reference,
-                        self.i,
-                        self.j + block_size - STEP,
-                        STEP,
-                        block_size,
-                        D_col.as_mut_ptr(),
-                        C_col.as_mut_ptr(),
-                        temp_buf1.as_mut_ptr(),
-                        temp_buf2.as_mut_ptr()
-                    );
+                        let D10_buf_ptr = D10_buf.as_mut_ptr().add(i);
+                        simd_store(D10_buf_ptr as _, simd_adds_i16(simd_load(D10_buf_ptr as _), off_add));
+                        let C10_buf_ptr = C10_buf.as_mut_ptr().add(i);
+                        simd_store(C10_buf_ptr as _, simd_adds_i16(simd_load(C10_buf_ptr as _), off_add));
+
+                        let (early_exit, curr_D_max, curr_D_argmax) = self.place_block(
+                            self.i + i,
+                            self.j + (B - 1) * L,
+                            D10_buf_ptr,
+                            C10_buf_ptr,
+                            corner,
+                            temp_buf1.as_mut_ptr(),
+                            temp_buf2.as_mut_ptr()
+                        );
+
+                        corner = next_corner;
+                        curr_right_max = simd_max_i16(curr_right_max, simd_load(D10_buf_ptr as _));
+
+                        if X_DROP {
+                            D_max = simd_max_i16(D_max, curr_D_max);
+                            let mask = simd_cmpeq_i16(D_max, curr_D_max);
+                            D_argmax = simd_blend_i8(D_argmax, simd_adds_i16(curr_D_argmax, curr_i), mask);
+                            curr_i = simd_adds_i16(curr_i, simd_set1_i16(L as i16));
+                        }
+
+                        if early_exit {
+                            break;
+                        }
+                    }
 
                     // shift and offset bottom row
-                    let down_max = self.shift_and_offset(
-                        block_size,
-                        D_row.as_mut_ptr(),
-                        R_row.as_mut_ptr(),
+                    curr_down_max = self.shift_and_offset(
+                        D_buf.as_mut_ptr(),
+                        R_buf.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
                         off_add
                     );
-
-                    (D_max, D_argmax, right_max, down_max)
                 },
                 Direction::Down => {
-                    off += D_row.get(0) as i32;
+                    off += D_buf.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
+                    // don't care about previous corner cell, even though it might have been computed
+                    // "cutting corners" in the implementation
+                    let mut corner = i16::MIN;
+                    let mut curr_j = simd_set1_i16(0);
 
-                    // offset previous row
-                    self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
+                    for j in (0..B * L).step_by(L) {
+                        let next_corner = clamp((D_buf.get(j + L - 1) as i32) + prev_off - off);
 
-                    let (early_exit, D_max, D_argmax, down_max) = self.place_block(
-                        self.reference,
-                        self.query,
-                        self.j,
-                        self.i + block_size - STEP,
-                        block_size,
-                        STEP,
-                        D_row.as_mut_ptr(),
-                        R_row.as_mut_ptr(),
-                        temp_buf1.as_mut_ptr(),
-                        temp_buf2.as_mut_ptr()
-                    );
+                        let D_buf_ptr = D_buf.as_mut_ptr().add(j);
+                        simd_store(D_buf_ptr as _, simd_adds_i16(simd_load(D_buf_ptr as _), off_add));
+                        let R_buf_ptr = R_buf.as_mut_ptr().add(j);
+                        simd_store(R_buf_ptr as _, simd_adds_i16(simd_load(R_buf_ptr as _), off_add));
 
-                    // shift and offset last column
-                    let right_max = self.shift_and_offset(
-                        block_size,
-                        D_col.as_mut_ptr(),
-                        C_col.as_mut_ptr(),
+                        let (early_exit, curr_D_max, curr_D_argmax) = self.place_block(
+                            self.i + start * L,
+                            self.j + j,
+                            temp_buf1.as_mut_ptr(),
+                            temp_buf2.as_mut_ptr(),
+                            corner,
+                            D_buf_ptr,
+                            R_buf_ptr
+                        );
+
+                        corner = next_corner;
+                        curr_down_max = simd_max_i16(curr_down_max, simd_load(D_buf_ptr as _));
+
+                        if X_DROP {
+                            D_max = simd_max_i16(D_max, curr_D_max);
+                            let mask = simd_cmpeq_i16(D_max, curr_D_max);
+                            D_argmax = simd_blend_i8(D_argmax, simd_adds_i16(curr_D_argmax, curr_j), mask);
+                            curr_j = simd_adds_i16(curr_j, simd_set1_i16(L as i16));
+                        }
+
+                        if early_exit {
+                            break;
+                        }
+                    }
+
+                    // shift and offset right column
+                    curr_right_max = self.shift_and_offset(
+                        D10_buf.as_mut_ptr(),
+                        C10_buf.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
                         off_add
-                    );
-
-                    (D_max, D_argmax, right_max, down_max)
-                },
-                Direction::Grow => {
-                    let prev_size = block_size - L;
-
-                    // down
-                    let (_, D_max, D_argmax, down_max) = self.place_block(
-                        self.reference,
-                        self.query,
-                        self.j,
-                        self.i + prev_size,
-                        prev_size,
-                        L,
-                        D_row.as_mut_ptr(),
-                        R_row.as_mut_ptr(),
-                        D_col.as_mut_ptr().add(prev_size),
-                        C_col.as_mut_ptr().add(prev_size)
-                    );
-
-                    // right
-                    let (early_exit, D_max, D_argmax, right_max) = self.place_block(
-                        self.query,
-                        self.reference,
-                        self.i,
-                        self.j + prev_size,
-                        L,
-                        block_size,
-                        D_col.as_mut_ptr(),
-                        C_col.as_mut_ptr(),
-                        D_row.as_mut_ptr().add(prev_size),
-                        R_row.as_mut_ptr().add(prev_size)
                     );
                 }
             }
 
-            let max = simd_hmax_i16(D_max);
-            let edge_max = off + cmp::max(right_max, down_max) as i32;
+            let right_max = simd_hmax_i16(curr_right_max);
+            let down_max = simd_hmax_i16(curr_down_max);
 
-            if off + (max as i32) > best_max {
-                if X_DROP {
+            if X_DROP {
+                let max = simd_hmax_i16(D_max);
+
+                if off + (max as i32) > best_max {
                     let lane_idx = (simd_movemask_i8(
                             simd_cmpeq_i16(D_max, simd_set1_i16(max))).trailing_zeros() / 2) as usize;
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     match dir {
                         Direction::Right => {
                             best_argmax_i = self.i + (idx / L) * L + lane_idx;
-                            best_argmax_j = self.j + (block_size - 1) * L + idx % L;
+                            best_argmax_j = self.j + (B - 1) * L + idx % L;
                         },
                         Direction::Down => {
                             best_argmax_i = self.i + start * L + lane_idx;
                             best_argmax_j = self.j + idx;
                         }
                     }
+                    best_max = off + max as i32;
                 }
 
-                best_max = off + max as i32;
+                if off + (cmp::max(right_max, down_max) as i32) < best_max - self.x_drop {
+                    // x drop termination
+                    break;
+                }
             }
 
-            if X_DROP && edge_max < best_max - self.x_drop {
-                // x drop termination
-                break;
-            }
-
-            if self.i + block_size > self.query.len() && self.j + block_size > self.reference.len() {
+            // first check if the shift direction is "forced"
+            if self.i + (start + 1) * L > self.query.len() && self.j + B * L > self.reference.len() {
                 // reached the end of the strings
                 break;
-            }
-
-            if block_size < MAX_SIZE && edge_max < best_max - self.y_drop {
-                // y drop grow block
-                block_size += L;
-                self.y_drop += self.grow_y_drop;
-                dir = Direction::Grow;
-                continue;
-            }
-
-            // first check if the shift direction is "forced" to avoid going out of bounds
-            if self.j + block_size > self.reference.len() {
-                self.i += STEP;
+            } else if start < B - 1 {
+                start += 1;
+            } else if self.j + B * L > self.reference.len() {
+                self.i += L;
                 dir = Direction::Down;
-                continue;
-            }
-            if self.i + block_size > self.query.len() {
-                self.j += STEP;
+            } else if self.i + B * L > self.query.len() {
+                self.j += L;
                 dir = Direction::Right;
-                continue;
-            }
-
-            // move according to where the max is
-            if down_max > right_max {
-                self.i += STEP;
-                dir = Direction::Down;
             } else {
-                self.j += STEP;
-                dir = Direction::Right;
+                // move according to max
+                if down_max > right_max {
+                    self.i += L;
+                    dir = Direction::Down;
+                } else if right_max > down_max {
+                    self.j += L;
+                    dir = Direction::Right;
+                } else {
+                    // arbitrary
+                    self.j += L;
+                    dir = Direction::Right;
+                }
             }
         }
 
@@ -291,9 +297,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
             }
         } else {
             debug_assert!(self.i <= self.query.len());
-            debug_assert!(self.query.len() - self.i < block_size * L);
+            debug_assert!(self.query.len() - self.i < B * L);
             AlignResult {
-                score: off + D10_buf.get(self.query.len() - self.i + (block_size - 1 - start) * L) as i32,
+                score: off + D10_buf.get(self.query.len() - self.i + (B - 1 - start) * L) as i32,
                 query_idx: self.query.len(),
                 reference_idx: self.reference.len()
             }
@@ -304,40 +310,25 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn just_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
-        for i in (0..block_size).step_by(L) {
-            let curr1 = simd_adds_i16(simd_load(buf1.add(i) as _), off_add);
-            let curr2 = simd_adds_i16(simd_load(buf2.add(i) as _), off_add);
-            simd_store(buf1.add(i) as _, curr1);
-            simd_store(buf2.add(i) as _, curr2);
-        }
-    }
-
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-    #[allow(non_snake_case)]
-    #[inline]
-    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> i16 {
+    unsafe fn shift_and_offset(&self, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> Simd {
         let neg_inf = simd_set1_i16(i16::MIN);
         let mut curr_max = neg_inf;
-        let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
-        let mut curr2 = simd_adds_i16(simd_load(buf2 as _), off_add);
 
-        for i in (0..block_size - L).step_by(L) {
+        for i in (0..(B - 1) * L).step_by(L) {
             let next1 = simd_adds_i16(simd_load(buf1.add(i + L) as _), off_add);
             let next2 = simd_adds_i16(simd_load(buf2.add(i + L) as _), off_add);
-            simd_store(buf1.add(i) as _, simd_sr_i16!(next1, curr1, STEP * 2));
-            simd_store(buf2.add(i) as _, simd_sr_i16!(next2, curr2, STEP * 2));
+            simd_store(buf1.add(i) as _, next1);
+            simd_store(buf2.add(i) as _, next2);
             curr_max = simd_max_i16(curr_max, next1);
-            curr1 = next1;
-            curr2 = next2;
         }
 
         let next1 = simd_load(temp_buf1 as _);
         let next2 = simd_load(temp_buf2 as _);
-        simd_store(buf1.add(block_size - L) as _, simd_sr_i16!(next1, curr1, STEP * 2));
-        simd_store(buf2.add(block_size - L) as _, simd_sr_i16!(next2, curr2, STEP * 2));
-        simd_hmax_i16(simd_max_i16(curr_max, next1))
+        simd_store(buf1.add((B - 1) * L) as _, next1);
+        simd_store(buf2.add((B - 1) * L) as _, next2);
+        simd_store(temp_buf1 as _, neg_inf);
+        simd_store(temp_buf2 as _, neg_inf);
+        simd_max_i16(curr_max, next1)
     }
 
     // Place block right or down.
@@ -348,19 +339,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn place_block(&mut self,
-                          query: &[u8],
-                          reference: &[u8],
                           start_i: usize,
                           start_j: usize,
-                          width: usize,
-                          height: usize,
-                          D_col: *mut i16,
-                          C_col: *mut i16,
-                          D_row: *mut i16,
-                          R_row: *mut i16) -> (bool, Simd, Simd, i16) {
+                          D10_buf: *mut i16,
+                          C10_buf: *mut i16,
+                          corner: i16,
+                          D_buf: *mut i16,
+                          R_buf: *mut i16) -> (bool, Simd, Simd) {
         let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
+        let query = halfsimd_loadu(self.query.as_ptr(start_i) as _);
+        let mut D10 = simd_load(D10_buf as _);
+        let mut C10 = simd_load(C10_buf as _);
+        let mut D00 = simd_sl_i16!(D10, simd_set1_i16(corner), 1);
         let mut D_max = neg_inf;
-        let mut right_max;
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
         let mut early_exit = false;
@@ -368,99 +359,87 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MAX_SIZE: usize, const TRACE: boo
         // TODO: trace direction
 
         // hottest loop in the whole program
-        for j in 0..width {
-            let mut D_corner = neg_inf;
-            let mut R_insert = neg_inf;
-            right_max = neg_inf;
-
+        for j in 0..L {
             // efficiently lookup scores for each query character
-            let matrix_ptr = self.matrix.as_ptr(reference.get(start_j + j) as usize);
+            let matrix_ptr = self.matrix.as_ptr(self.reference.get(start_j + j) as usize);
             let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
             let scores2 = if M::NUC {
                 halfsimd_set1_i8(0) // unused, should be optimized out
             } else {
                 halfsimd_load((matrix_ptr as *const HalfSimd).add(1))
             };
+            let scores = if M::NUC {
+                halfsimd_lookup1_i16(scores1, query)
+            } else {
+                halfsimd_lookup2_i16(scores1, scores2, query)
+            };
 
-            for i in (0..height).step_by(L) {
-                let D10 = simd_load(D_col.add(i) as _);
-                let C10 = simd_load(C_col.add(i) as _);
-                let D00 = simd_sl_i16!(D10, D_corner, 1);
-                D_corner = D10;
+            let mut D11 = simd_adds_i16(D00, scores);
+            let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
+            D11 = simd_max_i16(D11, C11);
 
-                let q = halfsimd_loadu(query.as_ptr(start_i + i) as _);
-                let scores = if M::NUC {
-                    halfsimd_lookup1_i16(scores1, q)
-                } else {
-                    halfsimd_lookup2_i16(scores1, scores2, q)
-                };
+            let trace_D_C = if TRACE {
+                simd_movemask_i8(simd_cmpeq_i16(D11, C11))
+            } else {
+                0 // should be optimized out
+            };
 
-                let mut D11 = simd_adds_i16(D00, scores);
-                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
-                D11 = simd_max_i16(D11, C11);
-
-                let trace_D_C = if TRACE {
-                    simd_movemask_i8(simd_cmpeq_i16(D11, C11))
-                } else {
-                    0 // should be optimized out
-                };
-
-                // TODO: fix R/C swap
-                let D11_open = simd_adds_i16(D11, gap_open);
-                let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
-                // avoid doing prefix scan if possible!
-                if simd_movemask_i8(simd_cmpgt_i16(R11, D11_open)) != 0 {
-                    R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
-                    D11 = simd_max_i16(D11, R11);
-                }
-                R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
-
-                if TRACE {
-                    let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(D11, R11));
-                    //self.trace.add(((trace_D_R & Self::EVEN_BITS) << 1) | (trace_D_C & Self::EVEN_BITS));
-                }
-
-                D_max = simd_max_i16(D_max, D11);
-                right_max = simd_max_i16(right_max, D11);
-
-                if X_DROP {
-                    let mask = simd_cmpeq_i16(D_max, D11);
-                    D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
-                    curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
-                }
-
-                #[cfg(feature = "debug")]
-                {
-                    print!("s:   ");
-                    simd_dbg_i16(scores);
-                    print!("C11: ");
-                    simd_dbg_i16(C11);
-                    print!("R11: ");
-                    simd_dbg_i16(R11);
-                    print!("D11: ");
-                    simd_dbg_i16(D11);
-                }
-
-                simd_store(D_col.add(i) as _, D11);
-                simd_store(C_col.add(i) as _, C11);
-
-                if !X_DROP && start_i + i + L > query.len()
-                    && start_j + j >= reference.len() {
-                    early_exit = true;
-                    break;
-                }
+            let D11_open = simd_adds_i16(D11, gap_open);
+            let R_insert = simd_set1_i16(*R_buf.add(j));
+            let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
+            // avoid doing prefix scan if possible!
+            if simd_movemask_i8(simd_cmpgt_i16(R11, D11_open)) != 0 {
+                R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
+                D11 = simd_max_i16(D11, R11);
             }
 
-            ptr::write(D_row.add(j), *D_col.add(height - 1));
-            // must subtract gap_extend from R_insert due to how R_insert is calculated
-            ptr::write(R_row.add(j), simd_extract_i16::<{ L - 1 }>(simd_subs_i16(R_insert, gap_extend)));
+            if TRACE {
+                let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(D11, R11));
+                self.trace.add(((trace_D_R & Self::EVEN_BITS) << 1) | (trace_D_C & Self::EVEN_BITS));
+            }
 
-            if !X_DROP && early_exit {
+            if X_DROP {
+                D_max = simd_max_i16(D_max, D11);
+                let mask = simd_cmpeq_i16(D_max, D11);
+                D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
+                curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+            }
+
+            #[cfg(feature = "debug")]
+            {
+                print!("s:   ");
+                simd_dbg_i16(scores);
+                print!("C11: ");
+                simd_dbg_i16(C11);
+                print!("R11: ");
+                simd_dbg_i16(R11);
+                print!("D11: ");
+                simd_dbg_i16(D11);
+            }
+
+            let D_insert = simd_set1_i16(*D_buf.add(j));
+            D00 = simd_sl_i16!(D11, D_insert, 1);
+
+            ptr::write(D_buf.add(j), simd_extract_i16::<{ L - 1 }>(D11));
+            let R_buf_val = {
+                let R_last = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
+                simd_extract_i16::<{ L - 1 }>(R_last)
+            };
+            ptr::write(R_buf.add(j), R_buf_val);
+
+            D10 = D11;
+            C10 = C11;
+
+            if !X_DROP && start_i + L > self.query.len()
+                && start_j + j >= self.reference.len() {
+                early_exit = true;
                 break;
             }
         }
 
-        (early_exit, D_max, D_argmax, simd_hmax_i16(right_max))
+        simd_store(D10_buf as _, D10);
+        simd_store(C10_buf as _, C10);
+        (early_exit, D_max, D_argmax)
     }
 
     #[inline(always)]
@@ -612,8 +591,7 @@ pub struct AlignResult {
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Direction {
     Right,
-    Down,
-    Grow
+    Down
 }
 
 #[derive(Clone)]
