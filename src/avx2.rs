@@ -64,7 +64,7 @@ pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
 pub unsafe fn simd_movemask_i8(a: Simd) -> u32 { _mm256_movemask_epi8(a) as u32 }
 
 macro_rules! simd_sl_i16 {
-    ($a:expr, $b:expr, $num:literal) => {
+    ($a:expr, $b:expr, $num:expr) => {
         {
             debug_assert!(2 * $num <= L);
             #[cfg(target_arch = "x86")]
@@ -78,7 +78,7 @@ macro_rules! simd_sl_i16 {
 
 #[allow(unused_macros)]
 macro_rules! simd_sr_i16 {
-    ($a:expr, $b:expr, $num:literal) => {
+    ($a:expr, $b:expr, $num:expr) => {
         {
             debug_assert!(2 * $num <= L);
             #[cfg(target_arch = "x86")]
@@ -127,11 +127,9 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
 
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn simd_hargmax_i16(v: Simd) -> (i16, usize) {
-    let max = simd_hmax_i16(v);
+pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
     let v2 = _mm256_cmpeq_epi16(v, _mm256_set1_epi16(max));
-    let max_idx = (simd_movemask_i8(v2).trailing_zeros() as usize) / 2;
-    (max, max_idx)
+    (simd_movemask_i8(v2).trailing_zeros() as usize) / 2
 }
 
 #[target_feature(enable = "avx2")]
@@ -251,7 +249,7 @@ pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i }
 
 #[allow(unused_macros)]
 macro_rules! halfsimd_sr_i8 {
-    ($a:expr, $b:expr, $num:literal) => {
+    ($a:expr, $b:expr, $num:expr) => {
         {
             debug_assert!($num <= L);
             #[cfg(target_arch = "x86")]

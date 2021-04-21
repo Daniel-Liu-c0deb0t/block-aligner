@@ -29,15 +29,15 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
         let bio_score = bio_aligner.global(&q, &r).score;
 
-        let r_padded = PaddedBytes::from_bytes(&r, 2, false);
-        let q_padded = PaddedBytes::from_bytes(&q, 2, false);
+        let r_padded = PaddedBytes::from_bytes(&r, 256, false);
+        let q_padded = PaddedBytes::from_bytes(&q, 256, false);
         type RunParams = GapParams<-11, -1>;
 
         // ours
         let scan_score = if slow {
             slow_align(&q, &r)
         } else {
-            let block_aligner = Block::<RunParams, _, 2, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
+            let block_aligner = Block::<RunParams, _, 16, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 3, 2);
             block_aligner.res().score
         };
 
@@ -65,13 +65,16 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
 
 fn main() {
     let arg1 = env::args().skip(1).next();
-    let slow = true;
-    let insert_len = Some(64);
+    let slow = false;
+    let insert_len = Some(10);
     //let insert_len = None;
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
-    let iter = 100;
-    let lens = [1000];
-    let rcp_ks = [20.0, 10.0, 5.0];
+    //let iter = 100;
+    let iter = 1;
+    //let lens = [1000];
+    let lens = [10];
+    //let rcp_ks = [20.0, 10.0, 5.0];
+    let rcp_ks = [20.0];
     /*let lens = [10, 20, 100];
     let rcp_ks = [10.0, 5.0];*/
 
