@@ -13,14 +13,14 @@ debug = []
 [profile.release]
 codegen-units = 1
 debug-assertions = false
-lto = true
+lto = "thin"
 panic = "abort"
 #debug = true
 
 [profile.bench]
 codegen-units = 1
 debug-assertions = false
-lto = true
+lto = "thin"
 
 [dependencies]
 wee_alloc = "^0.4"

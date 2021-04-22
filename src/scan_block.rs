@@ -127,7 +127,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 println!("i: {}", self.i);
                 println!("j: {}", self.j);
                 println!("{:?}", dir);
-                println!("off: {}", off);
             }
 
             prev_off = off;
@@ -137,6 +136,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 Direction::Right => {
                     off += D_col.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
+
+                    #[cfg(feature = "debug")]
+                    println!("off: {}", off);
 
                     // offset previous column
                     self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
@@ -169,6 +171,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 Direction::Down => {
                     off += D_row.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
+
+                    #[cfg(feature = "debug")]
+                    println!("off: {}", off);
 
                     // offset previous row
                     self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
@@ -291,14 +296,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 break;
             }
 
-            if block_size < MAX_SIZE && (block_size < MIN_SIZE || edge_max < best_max - self.y_drop) {
-                // y drop grow block
-                block_size += L;
-                self.y_drop += self.grow_y_drop;
-                dir = Direction::Grow;
-                continue;
-            }
-
             // first check if the shift direction is "forced" to avoid going out of bounds
             if self.j + block_size > self.reference.len() {
                 self.i += Self::STEP;
@@ -308,6 +305,14 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             if self.i + block_size > self.query.len() {
                 self.j += Self::STEP;
                 dir = Direction::Right;
+                continue;
+            }
+
+            if block_size < MAX_SIZE && (block_size < MIN_SIZE || edge_max < best_max - self.y_drop) {
+                // y drop grow block
+                block_size += L;
+                self.y_drop += self.grow_y_drop;
+                dir = Direction::Grow;
                 continue;
             }
 
@@ -484,6 +489,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 {
                     print!("s:   ");
                     simd_dbg_i16(scores);
+                    print!("D00: ");
+                    simd_dbg_i16(D00);
                     print!("C11: ");
                     simd_dbg_i16(C11);
                     print!("R11: ");

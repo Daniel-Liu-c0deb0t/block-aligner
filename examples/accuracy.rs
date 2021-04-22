@@ -66,15 +66,12 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
 fn main() {
     let arg1 = env::args().skip(1).next();
     let slow = false;
-    let insert_len = Some(10);
+    let insert_len = Some(128);
     //let insert_len = None;
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
-    //let iter = 100;
-    let iter = 1;
-    //let lens = [1000];
-    let lens = [10];
-    //let rcp_ks = [20.0, 10.0, 5.0];
-    let rcp_ks = [20.0];
+    let iter = 100;
+    let lens = [100, 1000];
+    let rcp_ks = [20.0, 10.0, 5.0];
     /*let lens = [10, 20, 100];
     let rcp_ks = [10.0, 5.0];*/
 

@@ -71,7 +71,7 @@ macro_rules! simd_sl_i16 {
             use std::arch::x86::*;
             #[cfg(target_arch = "x86_64")]
             use std::arch::x86_64::*;
-            _mm256_alignr_epi8($a, _mm256_permute2x128_si256($a, $b, 0x02), (L - (2 * $num)) as i32)
+            _mm256_alignr_epi8($a, _mm256_permute2x128_si256($a, $b, 0x03), (L - (2 * $num)) as i32)
         }
     };
 }
