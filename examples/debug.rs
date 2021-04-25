@@ -13,11 +13,11 @@ fn main() {
     let mut r = args.next().unwrap();
     r.make_ascii_uppercase();
     let r = r.as_bytes().to_owned();
-    let r_padded = PaddedBytes::from_bytes(&r, 16, false);
-    let q_padded = PaddedBytes::from_bytes(&q, 16, false);
+    let r_padded = PaddedBytes::from_bytes(&r, 256, false);
+    let q_padded = PaddedBytes::from_bytes(&q, 256, false);
     type RunParams = GapParams<-11, -1>;
 
-    let block_aligner = Block::<RunParams, _, 16, 16, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 0, 0);
+    let block_aligner = Block::<RunParams, _, 16, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 10, 0);
     let scan_score = block_aligner.res().score;
 
     println!(

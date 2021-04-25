@@ -46,7 +46,7 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, cons
 }
 
 impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {
-    const STEP: usize = 4usize;
+    const STEP: usize = L / 2;
     const EVEN_BITS: u32 = 0x55555555u32;
 
     /// Adaptive banded alignment.
@@ -105,7 +105,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
         let mut D_col = Aligned::new(MAX_SIZE);
         let mut C_col = Aligned::new(MAX_SIZE);
-
         let mut D_row = Aligned::new(MAX_SIZE);
         let mut R_row = Aligned::new(MAX_SIZE);
         for i in 0..MAX_SIZE {
@@ -121,12 +120,23 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         let mut temp_buf1 = Aligned::new(L);
         let mut temp_buf2 = Aligned::new(L);
 
+        let mut i_ckpt = self.i;
+        let mut j_ckpt = self.j;
+        let mut off_ckpt = 0i32;
+        let mut D_col_ckpt = Aligned::new(MAX_SIZE);
+        let mut C_col_ckpt = Aligned::new(MAX_SIZE);
+        let mut D_row_ckpt = Aligned::new(MAX_SIZE);
+        let mut R_row_ckpt = Aligned::new(MAX_SIZE);
+        D_col_ckpt.set_all(&D_col);
+
         loop {
             #[cfg(feature = "debug")]
             {
                 println!("i: {}", self.i);
                 println!("j: {}", self.j);
                 println!("{:?}", dir);
+                println!("off: {}", off);
+                println!("block size: {}", block_size);
             }
 
             prev_off = off;
@@ -136,9 +146,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 Direction::Right => {
                     off += D_col.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
-
-                    #[cfg(feature = "debug")]
-                    println!("off: {}", off);
 
                     // offset previous column
                     self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
@@ -171,9 +178,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 Direction::Down => {
                     off += D_row.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
-
-                    #[cfg(feature = "debug")]
-                    println!("off: {}", off);
 
                     // offset previous row
                     self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
@@ -243,6 +247,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
+                    D_col_ckpt.set_all(&D_col);
+                    C_col_ckpt.set_all(&C_col);
+                    D_row_ckpt.set_all(&D_row);
+                    R_row_ckpt.set_all(&R_row);
+
                     (D_max2, D_argmax2, right_max, cmp::max(down_max, new_down_max))
                 }
             };
@@ -283,6 +292,14 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     }
                 }
 
+                i_ckpt = self.i;
+                j_ckpt = self.j;
+                off_ckpt = off;
+                D_col_ckpt.set_all(&D_col);
+                C_col_ckpt.set_all(&C_col);
+                D_row_ckpt.set_all(&D_row);
+                R_row_ckpt.set_all(&R_row);
+
                 best_max = off + max as i32;
             }
 
@@ -313,6 +330,15 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 block_size += L;
                 self.y_drop += self.grow_y_drop;
                 dir = Direction::Grow;
+
+                self.i = i_ckpt;
+                self.j = j_ckpt;
+                off = off_ckpt;
+                D_col.set_all(&D_col_ckpt);
+                C_col.set_all(&C_col_ckpt);
+                D_row.set_all(&D_row_ckpt);
+                R_row.set_all(&R_row_ckpt);
+
                 continue;
             }
 
@@ -558,7 +584,8 @@ fn div_ceil(n: usize, d: usize) -> usize {
 
 pub struct Aligned {
     layout: alloc::Layout,
-    ptr: *const i16
+    ptr: *const i16,
+    block_size: usize
 }
 
 impl Aligned {
@@ -572,7 +599,17 @@ impl Aligned {
         for i in (0..block_size).step_by(L) {
             simd_store(ptr.add(i) as _, neg_inf);
         }
-        Self { layout, ptr }
+        Self { layout, ptr, block_size }
+    }
+
+    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
+    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+    #[inline]
+    pub unsafe fn set_all(&mut self, o: &Aligned) {
+        let o_ptr = o.as_ptr();
+        for i in (0..self.block_size).step_by(L) {
+            simd_store(self.ptr.add(i) as _, simd_load(o_ptr.add(i) as _));
+        }
     }
 
     #[inline(always)]

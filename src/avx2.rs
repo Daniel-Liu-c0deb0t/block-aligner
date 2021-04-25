@@ -71,7 +71,11 @@ macro_rules! simd_sl_i16 {
             use std::arch::x86::*;
             #[cfg(target_arch = "x86_64")]
             use std::arch::x86_64::*;
-            _mm256_alignr_epi8($a, _mm256_permute2x128_si256($a, $b, 0x03), (L - (2 * $num)) as i32)
+            if $num == L / 2 {
+                _mm256_permute2x128_si256($a, $b, 0x03)
+            } else {
+                _mm256_alignr_epi8($a, _mm256_permute2x128_si256($a, $b, 0x03), (L - (2 * $num)) as i32)
+            }
         }
     };
 }
@@ -85,7 +89,11 @@ macro_rules! simd_sr_i16 {
             use std::arch::x86::*;
             #[cfg(target_arch = "x86_64")]
             use std::arch::x86_64::*;
-            _mm256_alignr_epi8(_mm256_permute2x128_si256($a, $b, 0x03), $b, (2 * $num) as i32)
+            if $num == L / 2 {
+                _mm256_permute2x128_si256($a, $b, 0x03)
+            } else {
+                _mm256_alignr_epi8(_mm256_permute2x128_si256($a, $b, 0x03), $b, (2 * $num) as i32)
+            }
         }
     };
 }
