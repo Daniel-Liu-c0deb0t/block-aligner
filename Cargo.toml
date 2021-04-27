@@ -15,7 +15,6 @@ codegen-units = 1
 debug-assertions = false
 lto = "thin"
 panic = "abort"
-#debug = true
 
 [profile.bench]
 codegen-units = 1

@@ -5,7 +5,7 @@ Better alignment algorithms.
 Use
 ```
 brew install cargo-instruments
-RUSTFLAGS="-C target-cpu=native" cargo instruments --example profile --release --open
+RUSTFLAGS="-g -C target-cpu=native" cargo instruments --example profile --release --open
 ```
 Make sure `debug = true` is in `Cargo.toml`.
 

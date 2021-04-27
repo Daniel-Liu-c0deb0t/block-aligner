@@ -6,6 +6,7 @@ use crate::simd128::*;
 
 use crate::scores::*;
 
+use std::intrinsics::unlikely;
 use std::{cmp, ptr, i16, alloc};
 use std::marker::PhantomData;
 
@@ -29,8 +30,6 @@ const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids
 //
 // Each block is made up of vertical SIMD vectors of length 8 or 16 16-bit integers.
 
-// TODO: create matrices with const fn
-
 pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
     trace: Trace,
@@ -45,8 +44,8 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, cons
     _phantom: PhantomData<P>
 }
 
+const STEP: usize = L / 2;
 impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {
-    const STEP: usize = L / 2;
     const EVEN_BITS: u32 = 0x55555555u32;
 
     /// Adaptive banded alignment.
@@ -147,18 +146,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     off += D_col.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
 
-                    // offset previous column
-                    self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
-
                     let (D_max, D_argmax, right_max) = self.place_block(
                         self.query,
                         self.reference,
                         self.i,
-                        self.j + block_size - Self::STEP,
-                        Self::STEP,
+                        self.j + block_size - STEP,
+                        STEP,
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
+                        off_add,
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr()
                     );
@@ -179,18 +176,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     off += D_row.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
 
-                    // offset previous row
-                    self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
-
                     let (D_max, D_argmax, down_max) = self.place_block(
                         self.reference,
                         self.query,
                         self.j,
-                        self.i + block_size - Self::STEP,
-                        Self::STEP,
+                        self.i + block_size - STEP,
+                        STEP,
                         block_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
+                        off_add,
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr()
                     );
@@ -223,6 +218,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                         prev_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
+                        simd_set1_i16(0),
                         D_col.as_mut_ptr().add(prev_size),
                         C_col.as_mut_ptr().add(prev_size)
                     );
@@ -240,6 +236,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
+                        simd_set1_i16(0),
                         D_row.as_mut_ptr().add(prev_size),
                         R_row.as_mut_ptr().add(prev_size)
                     );
@@ -261,12 +258,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             let max = cmp::max(D_max_max, grow_max);
             let edge_max = off + cmp::max(right_max, down_max) as i32;
 
-            if off + (max as i32) > best_max {
+            if unlikely(off + (max as i32) > best_max) {
                 if X_DROP {
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     let r = (idx % (block_size / L)) * L + lane_idx;
-                    let c = (block_size - Self::STEP) + (idx / (block_size / L));
+                    let c = (block_size - STEP) + (idx / (block_size / L));
 
                     match dir {
                         Direction::Right => {
@@ -303,29 +300,29 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 best_max = off + max as i32;
             }
 
-            if X_DROP && edge_max < best_max - self.x_drop {
+            if X_DROP && unlikely(edge_max < best_max - self.x_drop) {
                 // x drop termination
                 break;
             }
 
-            if self.i + block_size > self.query.len() && self.j + block_size > self.reference.len() {
+            if unlikely(self.i + block_size > self.query.len() && self.j + block_size > self.reference.len()) {
                 // reached the end of the strings
                 break;
             }
 
             // first check if the shift direction is "forced" to avoid going out of bounds
-            if self.j + block_size > self.reference.len() {
-                self.i += Self::STEP;
+            if unlikely(self.j + block_size > self.reference.len()) {
+                self.i += STEP;
                 dir = Direction::Down;
                 continue;
             }
-            if self.i + block_size > self.query.len() {
-                self.j += Self::STEP;
+            if unlikely(self.i + block_size > self.query.len()) {
+                self.j += STEP;
                 dir = Direction::Right;
                 continue;
             }
 
-            if block_size < MAX_SIZE && (block_size < MIN_SIZE || edge_max < best_max - self.y_drop) {
+            if unlikely(block_size < MAX_SIZE && (block_size < MIN_SIZE || edge_max < best_max - self.y_drop)) {
                 // y drop grow block
                 block_size += L;
                 self.y_drop += self.grow_y_drop;
@@ -344,10 +341,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
             // move according to where the max is
             if down_max > right_max {
-                self.i += Self::STEP;
+                self.i += STEP;
                 dir = Direction::Down;
             } else {
-                self.j += Self::STEP;
+                self.j += STEP;
                 dir = Direction::Right;
             }
         }
@@ -383,40 +380,29 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    #[inline]
-    unsafe fn just_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
-        for i in (0..block_size).step_by(L) {
-            let curr1 = simd_adds_i16(simd_load(buf1.add(i) as _), off_add);
-            let curr2 = simd_adds_i16(simd_load(buf2.add(i) as _), off_add);
-            simd_store(buf1.add(i) as _, curr1);
-            simd_store(buf2.add(i) as _, curr2);
-        }
-    }
-
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-    #[allow(non_snake_case)]
-    #[inline]
+    #[inline(never)]
     unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> i16 {
         let neg_inf = simd_set1_i16(i16::MIN);
         let mut curr_max = neg_inf;
         let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
         let mut curr2 = simd_adds_i16(simd_load(buf2 as _), off_add);
 
-        for i in (0..block_size - L).step_by(L) {
+        let mut i = 0;
+        while i < block_size - L {
             let next1 = simd_adds_i16(simd_load(buf1.add(i + L) as _), off_add);
             let next2 = simd_adds_i16(simd_load(buf2.add(i + L) as _), off_add);
-            simd_store(buf1.add(i) as _, simd_sr_i16!(next1, curr1, Self::STEP));
-            simd_store(buf2.add(i) as _, simd_sr_i16!(next2, curr2, Self::STEP));
+            simd_store(buf1.add(i) as _, simd_sr_i16!(next1, curr1, STEP));
+            simd_store(buf2.add(i) as _, simd_sr_i16!(next2, curr2, STEP));
             curr_max = simd_max_i16(curr_max, next1);
             curr1 = next1;
             curr2 = next2;
+            i += L;
         }
 
         let next1 = simd_load(temp_buf1 as _);
         let next2 = simd_load(temp_buf2 as _);
-        simd_store(buf1.add(block_size - L) as _, simd_sr_i16!(next1, curr1, Self::STEP));
-        simd_store(buf2.add(block_size - L) as _, simd_sr_i16!(next2, curr2, Self::STEP));
+        simd_store(buf1.add(block_size - L) as _, simd_sr_i16!(next1, curr1, STEP));
+        simd_store(buf2.add(block_size - L) as _, simd_sr_i16!(next2, curr2, STEP));
         simd_hmax_i16(simd_max_i16(curr_max, next1))
     }
 
@@ -426,7 +412,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    #[inline]
+    #[inline(never)]
     unsafe fn place_block(&mut self,
                           query: &PaddedBytes,
                           reference: &PaddedBytes,
@@ -436,6 +422,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                           height: usize,
                           D_col: *mut i16,
                           C_col: *mut i16,
+                          off_add: Simd,
                           D_row: *mut i16,
                           R_row: *mut i16) -> (Simd, Simd, i16) {
         let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
@@ -443,8 +430,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         let mut right_max = neg_inf;
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
+        let mut curr_off_add = off_add;
 
-        if width == 0 || height == 0 {
+        if unlikely(width == 0 || height == 0) {
             return (D_max, D_argmax, i16::MIN);
         }
 
@@ -465,9 +453,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 halfsimd_load((matrix_ptr as *const HalfSimd).add(1))
             };
 
-            for i in (0..height).step_by(L) {
-                let D10 = simd_load(D_col.add(i) as _);
-                let C10 = simd_load(C_col.add(i) as _);
+            let mut i = 0;
+            while i < height {
+                let D10 = simd_adds_i16(simd_load(D_col.add(i) as _), curr_off_add);
+                let C10 = simd_adds_i16(simd_load(C_col.add(i) as _), curr_off_add);
                 let D00 = simd_sl_i16!(D10, D_corner, 1);
                 D_corner = D10;
 
@@ -491,10 +480,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 let D11_open = simd_adds_i16(D11, gap_open);
                 let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
                 // avoid doing prefix scan if possible!
-                if simd_movemask_i8(simd_cmpgt_i16(R11, D11_open)) != 0 {
+                //if simd_movemask_i8(simd_cmpgt_i16(R11, D11_open)) != 0 {
                     R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
                     D11 = simd_max_i16(D11, R11);
-                }
+                //}
                 R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
 
                 if TRACE {
@@ -527,14 +516,16 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
                 simd_store(D_col.add(i) as _, D11);
                 simd_store(C_col.add(i) as _, C11);
+                i += L;
             }
 
             ptr::write(D_row.add(j), *D_col.add(height - 1));
             // must subtract gap_extend from R_insert due to how R_insert is calculated
             ptr::write(R_row.add(j), simd_extract_i16::<{ L - 1 }>(simd_subs_i16(R_insert, gap_extend)));
+            curr_off_add = simd_set1_i16(0);
 
-            if !X_DROP && start_i + height > query.len()
-                && start_j + j >= reference.len() {
+            if !X_DROP && unlikely(start_i + height > query.len()
+                                   && start_j + j >= reference.len()) {
                 break;
             }
         }
@@ -591,24 +582,26 @@ pub struct Aligned {
 impl Aligned {
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-    #[inline]
     pub unsafe fn new(block_size: usize) -> Self {
         let layout = alloc::Layout::from_size_align_unchecked(block_size * 2, L_BYTES);
         let ptr = alloc::alloc(layout) as *const i16;
         let neg_inf = simd_set1_i16(i16::MIN);
-        for i in (0..block_size).step_by(L) {
+        let mut i = 0;
+        while i < block_size {
             simd_store(ptr.add(i) as _, neg_inf);
+            i += L;
         }
         Self { layout, ptr, block_size }
     }
 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-    #[inline]
     pub unsafe fn set_all(&mut self, o: &Aligned) {
         let o_ptr = o.as_ptr();
-        for i in (0..self.block_size).step_by(L) {
+        let mut i = 0;
+        while i < self.block_size {
             simd_store(self.ptr.add(i) as _, simd_load(o_ptr.add(i) as _));
+            i += L;
         }
     }
 
