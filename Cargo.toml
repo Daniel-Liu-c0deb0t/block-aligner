@@ -27,3 +27,4 @@ rand = { version = "^0.8", default-features = false, features = ["std_rng", "all
 
 [dev-dependencies]
 bio = "^0.33"
+parasailors = "^0.3.1"

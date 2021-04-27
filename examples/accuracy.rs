@@ -37,7 +37,7 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         let scan_score = if slow {
             slow_align(&q, &r)
         } else {
-            let block_aligner = Block::<RunParams, _, 16, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 10, 0);
+            let block_aligner = Block::<RunParams, _, 16, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 7, 0);
             block_aligner.res().score
         };
 

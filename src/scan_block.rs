@@ -244,6 +244,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
+                    // TODO: one loop
                     D_col_ckpt.set_all(&D_col);
                     C_col_ckpt.set_all(&C_col);
                     D_row_ckpt.set_all(&D_row);
@@ -380,7 +381,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    #[inline(never)]
+    #[inline]
     unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> i16 {
         let neg_inf = simd_set1_i16(i16::MIN);
         let mut curr_max = neg_inf;
@@ -412,7 +413,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
     #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
     #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    #[inline(never)]
+    #[inline]
     unsafe fn place_block(&mut self,
                           query: &PaddedBytes,
                           reference: &PaddedBytes,
