@@ -51,7 +51,7 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize, insert: bool)
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 256, false, false>::align(&q, &r, &BLOSUM62, 0, 7, 0);
+        let a = Block::<BenchParams, _, 16, 256, false, false>::align(&q, &r, &BLOSUM62, 0, 6);
         a.res()
     });
 }
@@ -65,7 +65,7 @@ fn bench_scan_aa_core_small<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0, 0, 0);
+        let a = Block::<BenchParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0, 6);
         a.res()
     });
 }
@@ -79,7 +79,7 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-1, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 256, false, false>::align(&q, &r, &NW1, 0, 7, 0);
+        let a = Block::<BenchParams, _, 16, 256, false, false>::align(&q, &r, &NW1, 0, 6);
         a.res()
     });
 }

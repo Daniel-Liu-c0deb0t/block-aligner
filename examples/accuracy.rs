@@ -37,7 +37,7 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         let scan_score = if slow {
             slow_align(&q, &r)
         } else {
-            let block_aligner = Block::<RunParams, _, 16, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 7, 0);
+            let block_aligner = Block::<RunParams, _, 16, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 6);
             block_aligner.res().score
         };
 
@@ -66,8 +66,8 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
 fn main() {
     let arg1 = env::args().skip(1).next();
     let slow = false;
-    let insert_len = Some(128);
-    //let insert_len = None;
+    let insert_len_fn = |x: usize| Some(x / 10);
+    //let insert_len = |x: usize| None;
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let iter = 100;
     let lens = [100, 1000];
@@ -80,7 +80,7 @@ fn main() {
 
     for &len in &lens {
         for &rcp_k in &rcp_ks {
-            let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, verbose);
+            let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len_fn(len), verbose);
             println!(
                 "\nlen: {}, k: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
                 len,
