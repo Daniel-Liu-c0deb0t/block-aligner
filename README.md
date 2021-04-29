@@ -24,9 +24,9 @@ in previous works due to performance concerns, but with small, adaptive bands, t
 complex striped profile would probably not show up. With horizontal and vertical vectors,
 we can easily look up scores with shuffles for protein alignment, where there are 20 amino acids.
 Of course, this is probably a bit slower than the anti-diagonal approach, but you also can't handle
-protein scoring matrices or grow any blocks to handle large gaps.
+protein scoring matrices or grow any blocks to handle large gaps with that approach.
 
-Everyone loves numbers, so there are some preliminary AVX2 results below. Note that there are a
+Everyone loves numbers, so here are some preliminary AVX2 results below. Note that there are a
 lot of non-Rust libraries that are not here that are very fast.
 More work is needed to compare against those.
 ```
@@ -79,10 +79,12 @@ up scores out of the innermost loop. This means that we do a prefix scan in
 
 ## Install
 1. Clone this repo
+
 It's not on crates.io yet.
 
 ## Test
 1. `./test_avx2.sh` or `./test_wasm.sh`
+
 For assessing the accuracy of the aligner, run `./accuracy_avx2.sh`.
 
 For debugging, there exists a feature `debug` feature flag that prints out a lot of
