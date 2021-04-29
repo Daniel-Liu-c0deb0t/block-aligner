@@ -11,9 +11,9 @@ use bio::scores::blosum62;
 
 use parasailors::{Matrix, *};
 
-use better_alignment::scan_block::*;
-use better_alignment::scores::*;
-use better_alignment::simulate::*;
+use block_aligner::scan_block::*;
+use block_aligner::scores::*;
+use block_aligner::simulate::*;
 
 fn bench_rustbio_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);

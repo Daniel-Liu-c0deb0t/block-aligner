@@ -1,7 +1,7 @@
 #![cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
 
-use better_alignment::scan_block::*;
-use better_alignment::scores::*;
+use block_aligner::scan_block::*;
+use block_aligner::scores::*;
 
 use std::{env, str};
 

@@ -5,9 +5,9 @@ use rand::prelude::*;
 use bio::alignment::pairwise::*;
 use bio::scores::blosum62;
 
-use better_alignment::scan_block::*;
-use better_alignment::scores::*;
-use better_alignment::simulate::*;
+use block_aligner::scan_block::*;
+use block_aligner::scores::*;
+use block_aligner::simulate::*;
 
 use std::{env, str, cmp};
 

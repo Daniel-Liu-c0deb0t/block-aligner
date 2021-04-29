@@ -4,7 +4,7 @@
 extern crate test;
 use test::{Bencher, black_box};
 
-use better_alignment::avx2::*;
+use block_aligner::avx2::*;
 
 #[repr(align(32))]
 struct A([i16; L]);
