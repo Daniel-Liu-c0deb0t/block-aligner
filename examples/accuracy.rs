@@ -29,15 +29,15 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
         let bio_score = bio_aligner.global(&q, &r).score;
 
-        let r_padded = PaddedBytes::from_bytes(&r, 256, false);
-        let q_padded = PaddedBytes::from_bytes(&q, 256, false);
+        let r_padded = PaddedBytes::from_bytes(&r, 2048, false);
+        let q_padded = PaddedBytes::from_bytes(&q, 2048, false);
         type RunParams = GapParams<-11, -1>;
 
         // ours
         let scan_score = if slow {
             slow_align(&q, &r)
         } else {
-            let block_aligner = Block::<RunParams, _, 16, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 6);
+            let block_aligner = Block::<RunParams, _, 16, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 6);
             block_aligner.res().score
         };
 
@@ -66,33 +66,36 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
 fn main() {
     let arg1 = env::args().skip(1).next();
     let slow = false;
-    let insert_len_fn = |x: usize| Some(x / 10);
-    //let insert_len = |x: usize| None;
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
-    let iter = 100;
-    let lens = [100, 1000];
-    let rcp_ks = [20.0, 10.0, 5.0];
-    /*let lens = [10, 20, 100];
-    let rcp_ks = [10.0, 5.0];*/
+    let iters = [100, 100, 10];
+    let lens = [100, 1000, 10000];
+    let rcp_ks = [10.0, 5.0, 2.0];
+    let inserts = [false, true];
 
     let mut total_wrong = 0usize;
     let mut total = 0usize;
 
-    for &len in &lens {
-        for &rcp_k in &rcp_ks {
-            let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len_fn(len), verbose);
-            println!(
-                "\nlen: {}, k: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
-                len,
-                ((len as f64) / rcp_k) as usize,
-                iter,
-                wrong,
-                wrong_avg,
-                wrong_min,
-                wrong_max
-            );
-            total_wrong += wrong;
-            total += iter;
+    for &iter in &iters {
+        for &len in &lens {
+            for &rcp_k in &rcp_ks {
+                for &insert in &inserts {
+                    let insert_len = if insert { Some(len / 10) } else { None };
+                    let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, verbose);
+                    println!(
+                        "\nlen: {}, k: {}, insert: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
+                        len,
+                        ((len as f64) / rcp_k) as usize,
+                        insert,
+                        iter,
+                        wrong,
+                        wrong_avg,
+                        wrong_min,
+                        wrong_max
+                    );
+                    total_wrong += wrong;
+                    total += iter;
+                }
+            }
         }
     }
 

@@ -46,12 +46,12 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize, insert: bool)
     } else {
         black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng))
     };
-    let r = PaddedBytes::from_bytes(&r, 256, false);
-    let q = PaddedBytes::from_bytes(&q, 256, false);
+    let r = PaddedBytes::from_bytes(&r, 2048, false);
+    let q = PaddedBytes::from_bytes(&q, 2048, false);
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 256, false, false>::align(&q, &r, &BLOSUM62, 0, 6);
+        let a = Block::<BenchParams, _, 16, 2048, false, false>::align(&q, &r, &BLOSUM62, 0, 6);
         a.res()
     });
 }
@@ -60,8 +60,8 @@ fn bench_scan_aa_core_small<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 256, false);
-    let q = PaddedBytes::from_bytes(&q, 256, false);
+    let r = PaddedBytes::from_bytes(&r, 2048, false);
+    let q = PaddedBytes::from_bytes(&q, 2048, false);
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
@@ -74,12 +74,12 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &NUC, &mut rng));
     let q = black_box(rand_mutate(&r, K, &NUC, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 256, true);
-    let q = PaddedBytes::from_bytes(&q, 256, true);
+    let r = PaddedBytes::from_bytes(&r, 2048, true);
+    let q = PaddedBytes::from_bytes(&q, 2048, true);
     type BenchParams = GapParams<-1, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 256, false, false>::align(&q, &r, &NW1, 0, 6);
+        let a = Block::<BenchParams, _, 16, 2048, false, false>::align(&q, &r, &NW1, 0, 6);
         a.res()
     });
 }

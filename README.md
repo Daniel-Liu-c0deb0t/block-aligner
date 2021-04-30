@@ -30,22 +30,22 @@ Everyone loves numbers, so here are some preliminary AVX2 results below. Note th
 lot of non-Rust libraries that are not here that are very fast.
 More work is needed to compare against those.
 ```
-test bench_parasailors_aa_1000_10000 ... bench:  47,631,090 ns/iter (+/- 2,126,874)
-test bench_parasailors_aa_100_1000   ... bench:     555,880 ns/iter (+/- 13,777)
-test bench_parasailors_aa_10_100     ... bench:      17,215 ns/iter (+/- 421)
-test bench_rustbio_aa_100_1000       ... bench:  14,108,470 ns/iter (+/- 312,125)
-test bench_rustbio_aa_10_100         ... bench:     138,703 ns/iter (+/- 4,217)
-test bench_scan_aa_1000_10000        ... bench:     258,858 ns/iter (+/- 2,345)
-test bench_scan_aa_1000_10000_insert ... bench:     685,917 ns/iter (+/- 13,069)
-test bench_scan_aa_1000_10000_small  ... bench:     189,982 ns/iter (+/- 5,599)
-test bench_scan_aa_100_1000          ... bench:      25,654 ns/iter (+/- 651)
-test bench_scan_aa_100_1000_insert   ... bench:      44,584 ns/iter (+/- 637)
-test bench_scan_aa_100_1000_small    ... bench:      19,100 ns/iter (+/- 942)
-test bench_scan_aa_10_100            ... bench:       2,722 ns/iter (+/- 327)
-test bench_scan_aa_10_100_insert     ... bench:       2,824 ns/iter (+/- 14)
-test bench_scan_aa_10_100_small      ... bench:       2,107 ns/iter (+/- 215)
-test bench_scan_nuc_1000_10000       ... bench:     196,350 ns/iter (+/- 53,526)
-test bench_scan_nuc_100_1000         ... bench:      20,087 ns/iter (+/- 2,838)
+test bench_parasailors_aa_1000_10000 ... bench:  46,750,058 ns/iter (+/- 2,308,345)
+test bench_parasailors_aa_100_1000   ... bench:     543,164 ns/iter (+/- 7,508)
+test bench_parasailors_aa_10_100     ... bench:      17,038 ns/iter (+/- 397)
+test bench_rustbio_aa_100_1000       ... bench:  13,621,661 ns/iter (+/- 552,297)
+test bench_rustbio_aa_10_100         ... bench:     132,481 ns/iter (+/- 2,011)
+test bench_scan_aa_1000_10000        ... bench:     254,802 ns/iter (+/- 14,302)
+test bench_scan_aa_1000_10000_insert ... bench:   2,141,701 ns/iter (+/- 105,654)
+test bench_scan_aa_1000_10000_small  ... bench:     189,990 ns/iter (+/- 3,752)
+test bench_scan_aa_100_1000          ... bench:      26,087 ns/iter (+/- 1,186)
+test bench_scan_aa_100_1000_insert   ... bench:      44,264 ns/iter (+/- 497)
+test bench_scan_aa_100_1000_small    ... bench:      19,081 ns/iter (+/- 209)
+test bench_scan_aa_10_100            ... bench:       3,288 ns/iter (+/- 91)
+test bench_scan_aa_10_100_insert     ... bench:       3,500 ns/iter (+/- 152)
+test bench_scan_aa_10_100_small      ... bench:       2,081 ns/iter (+/- 40)
+test bench_scan_nuc_1000_10000       ... bench:     195,366 ns/iter (+/- 4,742)
+test bench_scan_nuc_100_1000         ... bench:      20,053 ns/iter (+/- 1,684)
 ```
 Rustbio benchmarks are simple scalar implementations from the rust-bio library.
 Parasailors is Rust bindings for Parasail, which calls an implementation of Farrar's algorithm
@@ -57,10 +57,11 @@ of the length of the entire sequence is inserted somewhere randomly (eg., for le
 a random insert of length 100). Small means that the calculated block is fixed in size, with a side
 length of 16.
 
-The important thing to note is that speed does not deteriorate too much when there are long
-inserts, and having an uncapped block size only incurs a small performance penalty vs
-fixed block size. Note that the accuracy is ~100% for no insert, and drops to ~95% with inserts,
-for sequence length = 1000, an insert of length 100, and 100 random mutations.
+Note that the accuracy is ~100% for no insert, and drops to >95% with large inserts.
+This was measured from random sequences of lengths = 100, 1000, or 10000, insert lengths = 10% of
+sequence lengths, and varying mutation rates from 10% to 50% of the sequence length.
+The tradeoff for this high accuracy is speed, as when there are long insertions, the block
+needs to grow a lot to handle the gap.
 This should be very promising vs previous adaptive banding approaches.
 Note that the task here is global alignment, which should be harder than X-drop because
 the block needs to make it all the way to the end of both strings without getting off track.
