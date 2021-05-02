@@ -21,6 +21,6 @@ pub mod simd128;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
 pub mod scan_block;
 
+pub mod cigar;
 pub mod scores;
-
 pub mod simulate;

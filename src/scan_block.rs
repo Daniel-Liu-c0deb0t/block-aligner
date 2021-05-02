@@ -5,6 +5,7 @@ use crate::avx2::*;
 use crate::simd128::*;
 
 use crate::scores::*;
+use crate::cigar::*;
 
 use std::intrinsics::unlikely;
 use std::{cmp, ptr, i16, alloc};
@@ -30,6 +31,8 @@ const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids
 //
 // Each block is made up of vertical SIMD vectors of length 8 or 16 16-bit integers.
 
+// TODO: trace add block
+
 pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
     trace: Trace,
@@ -45,8 +48,6 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, cons
 
 const STEP: usize = L / 2;
 impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {
-    const EVEN_BITS: u32 = 0x55555555u32;
-
     /// Adaptive banded alignment.
     ///
     /// The x drop option indicates whether to terminate the alignment process early when
@@ -70,7 +71,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
         let mut a = Self {
             res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
-            trace: if TRACE { Trace::new(query.len(), reference.len()) } else { Trace::new(0, 0) },
+            trace: if TRACE { Trace::new(query.len(), reference.len(), MAX_SIZE) } else { Trace::new(0, 0, 0) },
             query,
             i: 0,
             reference,
@@ -103,6 +104,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         let mut C_col = Aligned::new(MAX_SIZE);
         let mut D_row = Aligned::new(MAX_SIZE);
         let mut R_row = Aligned::new(MAX_SIZE);
+
+        if TRACE {
+            self.trace.add_block(0, 0, 1, MAX_SIZE, true);
+        }
         for i in 0..MAX_SIZE {
             let D_insert = if i == 0 {
                 0
@@ -110,6 +115,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 (P::GAP_OPEN as i16) + ((i - 1) as i16) * (P::GAP_EXTEND as i16)
             };
             D_col.set(i, D_insert);
+            if TRACE && i % L == 0 {
+                self.trace.add_trace(0xFFFFFFFFu8);
+            }
         }
         self.j += 1;
 
@@ -124,6 +132,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         let mut D_row_ckpt = Aligned::new(MAX_SIZE);
         let mut R_row_ckpt = Aligned::new(MAX_SIZE);
         D_col_ckpt.set_all(&D_col, MAX_SIZE);
+        if TRACE {
+            self.trace.save_ckpt();
+        }
 
         loop {
             #[cfg(feature = "debug")]
@@ -245,6 +256,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     C_col_ckpt.set_all(&C_col, block_size);
                     D_row_ckpt.set_all(&D_row, block_size);
                     R_row_ckpt.set_all(&R_row, block_size);
+                    if TRACE {
+                        self.trace.save_ckpt();
+                    }
 
                     (D_max2, D_argmax2, right_max, cmp::max(down_max, new_down_max))
                 }
@@ -294,6 +308,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     C_col_ckpt.set_all(&C_col, block_size);
                     D_row_ckpt.set_all(&D_row, block_size);
                     R_row_ckpt.set_all(&R_row, block_size);
+                    if TRACE {
+                        self.trace.save_ckpt();
+                    }
                 }
 
                 best_max = off + max as i32;
@@ -339,6 +356,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     C_col.set_all(&C_col_ckpt, block_size - L);
                     D_row.set_all(&D_row_ckpt, block_size - L);
                     R_row.set_all(&R_row_ckpt, block_size - L);
+                    if TRACE {
+                        self.trace.restore_ckpt();
+                    }
 
                     continue;
                 }
@@ -431,6 +451,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                           D_row: *mut i16,
                           R_row: *mut i16) -> (Simd, Simd, i16) {
         let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
+        let trace_mask = simd_set1_i16(0xFF00u16 as i16);
         let mut D_max = neg_inf;
         let mut right_max = neg_inf;
         let mut D_argmax = simd_set1_i16(0);
@@ -440,8 +461,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         if unlikely(width == 0 || height == 0) {
             return (D_max, D_argmax, i16::MIN);
         }
-
-        // TODO: trace direction
 
         // hottest loop in the whole program
         for j in 0..width {
@@ -476,24 +495,18 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
                 D11 = simd_max_i16(D11, C11);
 
-                let trace_D_C = if TRACE {
-                    simd_movemask_i8(simd_cmpeq_i16(D11, C11))
-                } else {
-                    0 // should be optimized out
-                };
+                let trace_D_C = simd_cmpeq_i16(D11, C11);
 
                 let D11_open = simd_adds_i16(D11, gap_open);
                 let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
-                // avoid doing prefix scan if possible!
-                //if simd_movemask_i8(simd_cmpgt_i16(R11, D11_open)) != 0 {
-                    R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
-                    D11 = simd_max_i16(D11, R11);
-                //}
+                R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
+                D11 = simd_max_i16(D11, R11);
                 R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
 
                 if TRACE {
-                    let trace_D_R = simd_movemask_i8(simd_cmpeq_i16(D11, R11));
-                    //self.trace.add(((trace_D_R & Self::EVEN_BITS) << 1) | (trace_D_C & Self::EVEN_BITS));
+                    let trace_D_R = simd_cmpeq_i16(D11, R11);
+                    let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, trace_mask));
+                    self.trace.add(trace);
                 }
 
                 D_max = simd_max_i16(D_max, D11);
@@ -706,40 +719,136 @@ enum Direction {
 #[derive(Clone)]
 pub struct Trace {
     trace: Vec<u32>,
-    shift_dir: Vec<u32>,
-    idx: usize
+    right: Vec<u64>,
+    block_start: Vec<u32>,
+    block_size: Vec<u32>,
+    block_idx: usize,
+    ckpt_trace_idx: usize,
+    ckpt_block_idx: usize
 }
 
 impl Trace {
     #[inline(always)]
-    pub fn new(query_len: usize, reference_len: usize) -> Self {
-        let len = query_len + reference_len;
-        Self {
-            trace: vec![0; div_ceil(len, 16)],
-            shift_dir: vec![0; div_ceil(div_ceil(len, L), 16)],
-            idx: 0
-        }
-    }
-
-    #[inline(always)]
-    pub fn add(&mut self, t: u32) {
-        unsafe { *self.trace.get_unchecked_mut(self.idx) = t; }
-        self.idx += 1;
-    }
-
-    #[inline(always)]
-    pub fn dir(&mut self, d: u32) {
-        let i = self.idx / L;
+    pub fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
+        let len = div_ceil(query_len + reference_len, STEP);
+        let mut trace = Vec::with_capacity((query_len + reference_len) * (block_size / L));
+        let mut right = Vec::with_capacity(div_ceil(len, 64));
+        let mut block_start = Vec::with_capacity(len * 2);
+        let mut block_size = Vec::with_capacity(len * 2);
         unsafe {
-            *self.shift_dir.get_unchecked_mut(i / 16) |= d << (i % 16);
+            right.set_len(right.len());
+            block_start.set_len(block_start.len());
+            block_size.set_len(block_size.len());
+        }
+
+        Self {
+            trace,
+            right,
+            block_start,
+            block_size,
+            block_idx: 0,
+            ckpt_trace_idx: 0,
+            ckpt_block_idx: 0
         }
     }
 
     #[inline(always)]
-    pub fn clear(&mut self) {
-        self.trace.fill(0);
-        self.shift_dir.fill(0);
-        self.idx = 0;
+    pub fn add_trace(&mut self, t: u32) {
+        let trace_idx = self.trace.len();
+        self.trace.set_len(trace_idx + 1);
+        unsafe { *self.trace.get_unchecked_mut(trace_idx) = t; }
+    }
+
+    #[inline(always)]
+    pub fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
+        unsafe {
+            *self.block_start.get_unchecked_mut(self.block_idx * 2) = i as u32;
+            *self.block_start.get_unchecked_mut(self.block_idx * 2 + 1) = j as u32;
+            *self.block_size.get_unchecked_mut(self.block_idx * 2) = height as u32;
+            *self.block_size.get_unchecked_mut(self.block_idx * 2 + 1) = width as u32;
+
+            let a = self.block_idx / 64;
+            let b = self.block_idx % 64;
+            let mut v = *self.shift_dir.get_unchecked(a);
+            v &= ~(1 << b);
+            v |= (right as u64) << b;
+            *self.shift_dir.get_unchecked_mut(a) = v;
+
+            self.trace.reserve(width * height / L);
+
+            self.block_idx += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub fn save_ckpt(&mut self) {
+        self.ckpt_trace_idx = self.trace.len();
+        self.ckpt_block_idx = self.block_idx;
+    }
+
+    #[inline(always)]
+    pub fn restore_ckpt(&mut self) {
+        self.trace.set_len(self.ckpt_trace_idx);
+        self.block_idx = self.ckpt_block_idx;
+    }
+
+    pub fn cigar(&self, mut i: usize, mut j: usize) -> Cigar {
+        unsafe {
+            let mut res = Cigar::new(i + j + 2);
+            let mut block_idx = self.block_idx;
+            let mut trace_idx = self.trace.len();
+            let mut block_i;
+            let mut block_j;
+            let mut block_width;
+            let mut block_height;
+            let mut right;
+
+            while i > 0 || j > 0 {
+                loop {
+                    block_idx -= 1;
+                    block_i = *self.block_start.get_unchecked(block_idx * 2);
+                    block_j = *self.block_start.get_unchecked(block_idx * 2 + 1);
+                    block_height = *self.block_size.get_unchecked(block_idx * 2);
+                    block_width = *self.block_size.get_unchecked(block_idx * 2 + 1);
+                    trace_idx -= block_width * block_height / L;
+                    right = (*self.right.get_unchecked(block_idx / 64) & (1 << (block_idx % 64))) > 0;
+
+                    if i >= block_i && j >= block_j {
+                        break;
+                    }
+                }
+
+                while i >= block_i && j >= block_j {
+                    let curr_i = i - block_i;
+                    let curr_j = j - block_i;
+                    let t = if right {
+                        let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
+                        (*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11
+                    } else {
+                        let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
+                        (*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11
+                    };
+                    let op = match t {
+                        0b00 => {
+                            i -= 1;
+                            j -= 1;
+                            Operation::M
+                        },
+                        0b01 => {
+                            j -= 1;
+                            Operation::D
+                        },
+                        _ => {
+                            i -= 1;
+                            Operation::I
+                        }
+                    };
+                    res.add(op);
+                }
+            }
+
+            res
+        }
     }
 }
 
