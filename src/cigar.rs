@@ -14,23 +14,24 @@ struct OpLen {
 }
 
 pub struct Cigar {
-    s: Vec<OpLen>,
-    idx: usize
+    s: Vec<OpLen>
 }
 
 impl Cigar {
     pub unsafe fn new(max_len: usize) -> Self {
-        let mut s = Vec::with_capacity(max_len);
-        s.set_len(max_len);
-        Cigar { s, idx: 0 }
+        let s = Vec::with_capacity(max_len);
+        Cigar { s }
     }
 
     pub unsafe fn add(&mut self, op: Operation) {
-        if idx == 0 || op != self.s.get_unchecked(self.idx - 1).0 {
-            *self.s.get_unchecked_mut(self.idx) = OpLen { op, len: 1 };
-            self.idx += 1;
+        debug_assert!(self.s.len() < self.s.capacity());
+        if self.s.len() == 0 || op != self.s.get_unchecked(self.s.len() - 1).op {
+            let idx = self.s.len();
+            self.s.set_len(self.s.len() + 1);
+            *self.s.get_unchecked_mut(idx) = OpLen { op, len: 1 };
         } else {
-            *self.s.get_unchecked_mut(self.idx - 1).1 += 1;
+            let idx = self.s.len() - 1;
+            self.s.get_unchecked_mut(idx).len += 1;
         }
     }
 }
@@ -43,7 +44,7 @@ impl fmt::Display for Cigar {
                 Operation::I => 'I',
                 Operation::D => 'D'
             };
-            write!(f, "{}{}", op_len.len, c);
+            write!(f, "{}{}", op_len.len, c)?;
         }
         Ok(())
     }

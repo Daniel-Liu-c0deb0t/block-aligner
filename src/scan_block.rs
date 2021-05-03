@@ -31,8 +31,6 @@ const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids
 //
 // Each block is made up of vertical SIMD vectors of length 8 or 16 16-bit integers.
 
-// TODO: trace add block
-
 pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
     trace: Trace,
@@ -116,7 +114,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             };
             D_col.set(i, D_insert);
             if TRACE && i % L == 0 {
-                self.trace.add_trace(0xFFFFFFFFu8);
+                // first column traceback is all inserts
+                self.trace.add_trace(0xAAAAAAAAu32);
             }
         }
         self.j += 1;
@@ -154,6 +153,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     off += D_col.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
 
+                    if TRACE {
+                        self.trace.add_block(self.i, self.j + block_size - STEP, STEP, block_size, true);
+                    }
+
                     let (D_max, D_argmax, right_max) = self.place_block(
                         self.query,
                         self.reference,
@@ -183,6 +186,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 Direction::Down => {
                     off += D_row.get(0) as i32;
                     let off_add = simd_set1_i16(clamp(prev_off - off));
+
+                    if TRACE {
+                        self.trace.add_block(self.i + block_size - STEP, self.j, block_size, STEP, false);
+                    }
 
                     let (D_max, D_argmax, down_max) = self.place_block(
                         self.reference,
@@ -216,6 +223,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     #[cfg(feature = "debug")]
                     println!("Grow down");
 
+                    if TRACE {
+                        self.trace.add_block(self.i + prev_size, self.j, prev_size, L, false);
+                    }
+
                     // down
                     let (D_max1, D_argmax1, down_max) = self.place_block(
                         self.reference,
@@ -233,6 +244,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
                     #[cfg(feature = "debug")]
                     println!("Grow right");
+
+                    if TRACE {
+                        self.trace.add_block(self.i, self.j + prev_size, L, block_size, true);
+                    }
 
                     // right
                     let (D_max2, D_argmax2, right_max) = self.place_block(
@@ -495,28 +510,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
                 D11 = simd_max_i16(D11, C11);
 
-                let trace_D_C = simd_cmpeq_i16(D11, C11);
-
                 let D11_open = simd_adds_i16(D11, gap_open);
                 let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
                 R11 = simd_prefix_scan_i16(R11, P::GAP_EXTEND as i16);
                 D11 = simd_max_i16(D11, R11);
                 R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
-
-                if TRACE {
-                    let trace_D_R = simd_cmpeq_i16(D11, R11);
-                    let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, trace_mask));
-                    self.trace.add(trace);
-                }
-
-                D_max = simd_max_i16(D_max, D11);
-                right_max = simd_max_i16(right_max, D11);
-
-                if X_DROP {
-                    let mask = simd_cmpeq_i16(D_max, D11);
-                    D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
-                    curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
-                }
 
                 #[cfg(feature = "debug")]
                 {
@@ -530,6 +528,29 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     simd_dbg_i16(R11);
                     print!("D11: ");
                     simd_dbg_i16(D11);
+                }
+
+                if TRACE {
+                    let trace_D_C = simd_cmpeq_i16(D11, C11);
+                    let trace_D_R = simd_cmpeq_i16(D11, R11);
+                    #[cfg(feature = "debug")]
+                    {
+                        print!("D_C: ");
+                        simd_dbg_i16(trace_D_C);
+                        print!("D_R: ");
+                        simd_dbg_i16(trace_D_R);
+                    }
+                    let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, trace_mask));
+                    self.trace.add_trace(trace);
+                }
+
+                D_max = simd_max_i16(D_max, D11);
+                right_max = simd_max_i16(right_max, D11);
+
+                if X_DROP {
+                    let mask = simd_cmpeq_i16(D_max, D11);
+                    D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
+                    curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
                 }
 
                 simd_store(D_col.add(i) as _, D11);
@@ -722,6 +743,7 @@ pub struct Trace {
     right: Vec<u64>,
     block_start: Vec<u32>,
     block_size: Vec<u32>,
+    trace_idx: usize,
     block_idx: usize,
     ckpt_trace_idx: usize,
     ckpt_block_idx: usize
@@ -730,15 +752,15 @@ pub struct Trace {
 impl Trace {
     #[inline(always)]
     pub fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
-        let len = div_ceil(query_len + reference_len, STEP);
-        let mut trace = Vec::with_capacity((query_len + reference_len) * (block_size / L));
+        let len = query_len + reference_len;
+        let trace = Vec::with_capacity(len * (block_size / L));
         let mut right = Vec::with_capacity(div_ceil(len, 64));
         let mut block_start = Vec::with_capacity(len * 2);
         let mut block_size = Vec::with_capacity(len * 2);
         unsafe {
-            right.set_len(right.len());
-            block_start.set_len(block_start.len());
-            block_size.set_len(block_size.len());
+            right.set_len(right.capacity());
+            block_start.set_len(block_start.capacity());
+            block_size.set_len(block_size.capacity());
         }
 
         Self {
@@ -746,6 +768,7 @@ impl Trace {
             right,
             block_start,
             block_size,
+            trace_idx: 0,
             block_idx: 0,
             ckpt_trace_idx: 0,
             ckpt_block_idx: 0
@@ -754,13 +777,14 @@ impl Trace {
 
     #[inline(always)]
     pub fn add_trace(&mut self, t: u32) {
-        let trace_idx = self.trace.len();
-        self.trace.set_len(trace_idx + 1);
-        unsafe { *self.trace.get_unchecked_mut(trace_idx) = t; }
+        debug_assert!(self.trace_idx < self.trace.len());
+        unsafe { *self.trace.get_unchecked_mut(self.trace_idx) = t; }
+        self.trace_idx += 1;
     }
 
     #[inline(always)]
     pub fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
+        debug_assert!(self.block_idx * 2 < self.block_start.len());
         unsafe {
             *self.block_start.get_unchecked_mut(self.block_idx * 2) = i as u32;
             *self.block_start.get_unchecked_mut(self.block_idx * 2 + 1) = j as u32;
@@ -769,12 +793,13 @@ impl Trace {
 
             let a = self.block_idx / 64;
             let b = self.block_idx % 64;
-            let mut v = *self.shift_dir.get_unchecked(a);
-            v &= ~(1 << b);
+            let mut v = *self.right.get_unchecked(a);
+            v &= !(1 << b);
             v |= (right as u64) << b;
-            *self.shift_dir.get_unchecked_mut(a) = v;
+            *self.right.get_unchecked_mut(a) = v;
 
             self.trace.reserve(width * height / L);
+            self.trace.set_len(self.trace.len() + width * height / L);
 
             self.block_idx += 1;
         }
@@ -788,7 +813,7 @@ impl Trace {
 
     #[inline(always)]
     pub fn restore_ckpt(&mut self) {
-        self.trace.set_len(self.ckpt_trace_idx);
+        unsafe { self.trace.set_len(self.ckpt_trace_idx); }
         self.block_idx = self.ckpt_block_idx;
     }
 
@@ -806,10 +831,10 @@ impl Trace {
             while i > 0 || j > 0 {
                 loop {
                     block_idx -= 1;
-                    block_i = *self.block_start.get_unchecked(block_idx * 2);
-                    block_j = *self.block_start.get_unchecked(block_idx * 2 + 1);
-                    block_height = *self.block_size.get_unchecked(block_idx * 2);
-                    block_width = *self.block_size.get_unchecked(block_idx * 2 + 1);
+                    block_i = *self.block_start.get_unchecked(block_idx * 2) as usize;
+                    block_j = *self.block_start.get_unchecked(block_idx * 2 + 1) as usize;
+                    block_height = *self.block_size.get_unchecked(block_idx * 2) as usize;
+                    block_width = *self.block_size.get_unchecked(block_idx * 2 + 1) as usize;
                     trace_idx -= block_width * block_height / L;
                     right = (*self.right.get_unchecked(block_idx / 64) & (1 << (block_idx % 64))) > 0;
 
@@ -818,29 +843,44 @@ impl Trace {
                     }
                 }
 
-                while i >= block_i && j >= block_j {
+                while i >= block_i && j >= block_j && (i > 0 || j > 0) {
                     let curr_i = i - block_i;
-                    let curr_j = j - block_i;
-                    let t = if right {
+                    let curr_j = j - block_j;
+                    let op = if right {
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
-                        (*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11
+                        let t = (*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11;
+                        match t {
+                            0b00 => {
+                                i -= 1;
+                                j -= 1;
+                                Operation::M
+                            },
+                            0b10 => {
+                                i -= 1;
+                                Operation::I
+                            },
+                            _ => { // bias towards j -= 1 to avoid going out of bounds
+                                j -= 1;
+                                Operation::D
+                            }
+                        }
                     } else {
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
-                        (*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11
-                    };
-                    let op = match t {
-                        0b00 => {
-                            i -= 1;
-                            j -= 1;
-                            Operation::M
-                        },
-                        0b01 => {
-                            j -= 1;
-                            Operation::D
-                        },
-                        _ => {
-                            i -= 1;
-                            Operation::I
+                        let t = (*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11;
+                        match t {
+                            0b00 => {
+                                i -= 1;
+                                j -= 1;
+                                Operation::M
+                            },
+                            0b10 => {
+                                j -= 1;
+                                Operation::D
+                            },
+                            _ => { // bias towards i -= 1 to avoid going out of bounds
+                                i -= 1;
+                                Operation::I
+                            }
                         }
                     };
                     res.add(op);
@@ -935,5 +975,33 @@ mod tests {
         let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, false);
         let a = Block::<TestParams, _, 16, 16, false, true>::align(&q, &r, &BLOSUM62, 1, 0);
         assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
+    }
+
+    #[test]
+    fn test_trace() {
+        type TestParams = GapParams<-11, -1>;
+
+        let r = PaddedBytes::from_bytes(b"AAARRA", 16, false);
+        let q = PaddedBytes::from_bytes(b"AAAAAA", 16, false);
+        let a = Block::<TestParams, _, 16, 16, true, false>::align(&q, &r, &BLOSUM62, 0, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
+        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "6M");
+
+        let r = PaddedBytes::from_bytes(b"AAAA", 16, false);
+        let q = PaddedBytes::from_bytes(b"AAA", 16, false);
+        let a = Block::<TestParams, _, 16, 16, true, false>::align(&q, &r, &BLOSUM62, 0, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 1, query_idx: 3, reference_idx: 4 });
+        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "3M1D");
+
+        type TestParams2 = GapParams<-1, -1>;
+
+        let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, true);
+        let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 16, true);
+        let a = Block::<TestParams2, _, 16, 16, true, false>::align(&q, &r, &NW1, 0, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 9, query_idx: 24, reference_idx: 21 });
+        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");
     }
 }
