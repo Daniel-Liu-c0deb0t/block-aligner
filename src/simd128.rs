@@ -205,7 +205,7 @@ pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
+pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { ptr.read_unaligned() }
 
 #[target_feature(enable = "simd128")]
 #[inline]

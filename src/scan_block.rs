@@ -595,6 +595,147 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
     }
 }
 
+#[derive(Clone)]
+pub struct Trace {
+    trace: Vec<u32>,
+    right: Vec<u64>,
+    block_start: Vec<u32>,
+    block_size: Vec<u32>,
+    trace_idx: usize,
+    block_idx: usize,
+    ckpt_trace_idx: usize,
+    ckpt_block_idx: usize
+}
+
+impl Trace {
+    #[inline(always)]
+    pub fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
+        let len = query_len + reference_len;
+        let trace = Vec::with_capacity(len * (block_size / L));
+        let mut right = Vec::with_capacity(div_ceil(len, 64));
+        let mut block_start = Vec::with_capacity(len * 2);
+        let mut block_size = Vec::with_capacity(len * 2);
+        unsafe {
+            right.set_len(right.capacity());
+            block_start.set_len(block_start.capacity());
+            block_size.set_len(block_size.capacity());
+        }
+
+        Self {
+            trace,
+            right,
+            block_start,
+            block_size,
+            trace_idx: 0,
+            block_idx: 0,
+            ckpt_trace_idx: 0,
+            ckpt_block_idx: 0
+        }
+    }
+
+    #[inline(always)]
+    pub fn add_trace(&mut self, t: u32) {
+        debug_assert!(self.trace_idx < self.trace.len());
+        unsafe { *self.trace.get_unchecked_mut(self.trace_idx) = t; }
+        self.trace_idx += 1;
+    }
+
+    #[inline(always)]
+    pub fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
+        debug_assert!(self.block_idx * 2 < self.block_start.len());
+        unsafe {
+            *self.block_start.get_unchecked_mut(self.block_idx * 2) = i as u32;
+            *self.block_start.get_unchecked_mut(self.block_idx * 2 + 1) = j as u32;
+            *self.block_size.get_unchecked_mut(self.block_idx * 2) = height as u32;
+            *self.block_size.get_unchecked_mut(self.block_idx * 2 + 1) = width as u32;
+
+            let a = self.block_idx / 64;
+            let b = self.block_idx % 64;
+            let mut v = *self.right.get_unchecked(a);
+            v &= !(1 << b);
+            v |= (right as u64) << b;
+            *self.right.get_unchecked_mut(a) = v;
+
+            self.trace.reserve(width * height / L);
+            self.trace.set_len(self.trace.len() + width * height / L);
+
+            self.block_idx += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub fn save_ckpt(&mut self) {
+        self.ckpt_trace_idx = self.trace.len();
+        self.ckpt_block_idx = self.block_idx;
+    }
+
+    #[inline(always)]
+    pub fn restore_ckpt(&mut self) {
+        unsafe { self.trace.set_len(self.ckpt_trace_idx); }
+        self.block_idx = self.ckpt_block_idx;
+    }
+
+    pub fn cigar(&self, mut i: usize, mut j: usize) -> Cigar {
+        unsafe {
+            let mut res = Cigar::new(i + j + 5);
+            let mut block_idx = self.block_idx;
+            let mut trace_idx = self.trace.len();
+            let mut block_i;
+            let mut block_j;
+            let mut block_width;
+            let mut block_height;
+            let mut right;
+
+            while i > 0 || j > 0 {
+                loop {
+                    block_idx -= 1;
+                    block_i = *self.block_start.get_unchecked(block_idx * 2) as usize;
+                    block_j = *self.block_start.get_unchecked(block_idx * 2 + 1) as usize;
+                    block_height = *self.block_size.get_unchecked(block_idx * 2) as usize;
+                    block_width = *self.block_size.get_unchecked(block_idx * 2 + 1) as usize;
+                    trace_idx -= block_width * block_height / L;
+
+                    if i >= block_i && j >= block_j {
+                        right = (((*self.right.get_unchecked(block_idx / 64) >> (block_idx % 64)) & 0b1) << 2) as usize;
+                        break;
+                    }
+                }
+
+                while i >= block_i && j >= block_j && (i > 0 || j > 0) {
+                    let curr_i = i - block_i;
+                    let curr_j = j - block_j;
+                    let t = if right > 0 {
+                        let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
+                        ((*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11) as usize
+                    } else {
+                        let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
+                        ((*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11) as usize
+                    };
+
+                    // use lookup table instead of hard to predict branches
+                    static OP_LUT: [(Operation, usize, usize); 8] = [
+                        (Operation::M, 1, 1), // 0b000
+                        (Operation::I, 1, 0), // 0b001
+                        (Operation::D, 0, 1), // 0b010
+                        (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
+                        (Operation::M, 1, 1), // 0b100
+                        (Operation::D, 0, 1), // 0b101
+                        (Operation::I, 1, 0), // 0b110
+                        (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
+                    ];
+                    let lut_idx = right | t;
+                    let op = OP_LUT[lut_idx].0;
+                    i -= OP_LUT[lut_idx].1;
+                    j -= OP_LUT[lut_idx].2;
+                    res.add(op);
+                }
+            }
+
+            res
+        }
+    }
+}
+
 #[inline(always)]
 fn convert_char(c: u8, nuc: bool) -> u8 {
     let c = c.to_ascii_uppercase();
@@ -735,161 +876,6 @@ enum Direction {
     Right,
     Down,
     Grow
-}
-
-#[derive(Clone)]
-pub struct Trace {
-    trace: Vec<u32>,
-    right: Vec<u64>,
-    block_start: Vec<u32>,
-    block_size: Vec<u32>,
-    trace_idx: usize,
-    block_idx: usize,
-    ckpt_trace_idx: usize,
-    ckpt_block_idx: usize
-}
-
-impl Trace {
-    #[inline(always)]
-    pub fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
-        let len = query_len + reference_len;
-        let trace = Vec::with_capacity(len * (block_size / L));
-        let mut right = Vec::with_capacity(div_ceil(len, 64));
-        let mut block_start = Vec::with_capacity(len * 2);
-        let mut block_size = Vec::with_capacity(len * 2);
-        unsafe {
-            right.set_len(right.capacity());
-            block_start.set_len(block_start.capacity());
-            block_size.set_len(block_size.capacity());
-        }
-
-        Self {
-            trace,
-            right,
-            block_start,
-            block_size,
-            trace_idx: 0,
-            block_idx: 0,
-            ckpt_trace_idx: 0,
-            ckpt_block_idx: 0
-        }
-    }
-
-    #[inline(always)]
-    pub fn add_trace(&mut self, t: u32) {
-        debug_assert!(self.trace_idx < self.trace.len());
-        unsafe { *self.trace.get_unchecked_mut(self.trace_idx) = t; }
-        self.trace_idx += 1;
-    }
-
-    #[inline(always)]
-    pub fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
-        debug_assert!(self.block_idx * 2 < self.block_start.len());
-        unsafe {
-            *self.block_start.get_unchecked_mut(self.block_idx * 2) = i as u32;
-            *self.block_start.get_unchecked_mut(self.block_idx * 2 + 1) = j as u32;
-            *self.block_size.get_unchecked_mut(self.block_idx * 2) = height as u32;
-            *self.block_size.get_unchecked_mut(self.block_idx * 2 + 1) = width as u32;
-
-            let a = self.block_idx / 64;
-            let b = self.block_idx % 64;
-            let mut v = *self.right.get_unchecked(a);
-            v &= !(1 << b);
-            v |= (right as u64) << b;
-            *self.right.get_unchecked_mut(a) = v;
-
-            self.trace.reserve(width * height / L);
-            self.trace.set_len(self.trace.len() + width * height / L);
-
-            self.block_idx += 1;
-        }
-    }
-
-    #[inline(always)]
-    pub fn save_ckpt(&mut self) {
-        self.ckpt_trace_idx = self.trace.len();
-        self.ckpt_block_idx = self.block_idx;
-    }
-
-    #[inline(always)]
-    pub fn restore_ckpt(&mut self) {
-        unsafe { self.trace.set_len(self.ckpt_trace_idx); }
-        self.block_idx = self.ckpt_block_idx;
-    }
-
-    pub fn cigar(&self, mut i: usize, mut j: usize) -> Cigar {
-        unsafe {
-            let mut res = Cigar::new(i + j + 2);
-            let mut block_idx = self.block_idx;
-            let mut trace_idx = self.trace.len();
-            let mut block_i;
-            let mut block_j;
-            let mut block_width;
-            let mut block_height;
-            let mut right;
-
-            while i > 0 || j > 0 {
-                loop {
-                    block_idx -= 1;
-                    block_i = *self.block_start.get_unchecked(block_idx * 2) as usize;
-                    block_j = *self.block_start.get_unchecked(block_idx * 2 + 1) as usize;
-                    block_height = *self.block_size.get_unchecked(block_idx * 2) as usize;
-                    block_width = *self.block_size.get_unchecked(block_idx * 2 + 1) as usize;
-                    trace_idx -= block_width * block_height / L;
-                    right = (*self.right.get_unchecked(block_idx / 64) & (1 << (block_idx % 64))) > 0;
-
-                    if i >= block_i && j >= block_j {
-                        break;
-                    }
-                }
-
-                while i >= block_i && j >= block_j && (i > 0 || j > 0) {
-                    let curr_i = i - block_i;
-                    let curr_j = j - block_j;
-                    let op = if right {
-                        let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
-                        let t = (*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11;
-                        match t {
-                            0b00 => {
-                                i -= 1;
-                                j -= 1;
-                                Operation::M
-                            },
-                            0b10 => {
-                                i -= 1;
-                                Operation::I
-                            },
-                            _ => { // bias towards j -= 1 to avoid going out of bounds
-                                j -= 1;
-                                Operation::D
-                            }
-                        }
-                    } else {
-                        let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
-                        let t = (*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11;
-                        match t {
-                            0b00 => {
-                                i -= 1;
-                                j -= 1;
-                                Operation::M
-                            },
-                            0b10 => {
-                                j -= 1;
-                                Operation::D
-                            },
-                            _ => { // bias towards i -= 1 to avoid going out of bounds
-                                i -= 1;
-                                Operation::I
-                            }
-                        }
-                    };
-                    res.add(op);
-                }
-            }
-
-            res
-        }
-    }
 }
 
 #[cfg(test)]

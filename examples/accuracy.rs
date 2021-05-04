@@ -2,6 +2,8 @@
 
 use rand::prelude::*;
 
+//use parasailors::{Matrix, *};
+
 use bio::alignment::pairwise::*;
 use bio::scores::blosum62;
 
@@ -28,6 +30,13 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         // rust-bio
         let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
         let bio_score = bio_aligner.global(&q, &r).score;
+
+        // parasailors
+        /*
+        let matrix = Matrix::new(MatrixType::Blosum62);
+        let profile = Profile::new(&q, &matrix);
+        let parasail_score = global_alignment_score(&profile, &r, 11, 1);
+        */
 
         let r_padded = PaddedBytes::from_bytes(&r, 2048, false);
         let q_padded = PaddedBytes::from_bytes(&q, 2048, false);
@@ -75,26 +84,24 @@ fn main() {
     let mut total_wrong = 0usize;
     let mut total = 0usize;
 
-    for &iter in &iters {
-        for &len in &lens {
-            for &rcp_k in &rcp_ks {
-                for &insert in &inserts {
-                    let insert_len = if insert { Some(len / 10) } else { None };
-                    let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, verbose);
-                    println!(
-                        "\nlen: {}, k: {}, insert: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
-                        len,
-                        ((len as f64) / rcp_k) as usize,
-                        insert,
-                        iter,
-                        wrong,
-                        wrong_avg,
-                        wrong_min,
-                        wrong_max
-                    );
-                    total_wrong += wrong;
-                    total += iter;
-                }
+    for (&len, &iter) in lens.iter().zip(&iters) {
+        for &rcp_k in &rcp_ks {
+            for &insert in &inserts {
+                let insert_len = if insert { Some(len / 10) } else { None };
+                let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, verbose);
+                println!(
+                    "\nlen: {}, k: {}, insert: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
+                    len,
+                    ((len as f64) / rcp_k) as usize,
+                    insert,
+                    iter,
+                    wrong,
+                    wrong_avg,
+                    wrong_min,
+                    wrong_max
+                );
+                total_wrong += wrong;
+                total += iter;
             }
         }
     }

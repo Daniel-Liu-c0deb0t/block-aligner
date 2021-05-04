@@ -24,15 +24,14 @@ impl Cigar {
     }
 
     pub unsafe fn add(&mut self, op: Operation) {
-        debug_assert!(self.s.len() < self.s.capacity());
-        if self.s.len() == 0 || op != self.s.get_unchecked(self.s.len() - 1).op {
-            let idx = self.s.len();
-            self.s.set_len(self.s.len() + 1);
-            *self.s.get_unchecked_mut(idx) = OpLen { op, len: 1 };
-        } else {
-            let idx = self.s.len() - 1;
-            self.s.get_unchecked_mut(idx).len += 1;
-        }
+        let len = self.s.len();
+        debug_assert!(len < self.s.capacity());
+        // almost branchless
+        let add = if len == 0 { 1 } else { (op != self.s.get_unchecked(len - 1).op) as usize };
+        let idx = len + add;
+        self.s.set_len(idx);
+        *self.s.get_unchecked_mut(len) = OpLen { op, len: 0 };
+        self.s.get_unchecked_mut(idx - 1).len += 1;
     }
 }
 
