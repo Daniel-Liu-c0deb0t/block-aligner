@@ -8,13 +8,11 @@ edition = "2018"
 debug = []
 
 [profile.release]
-codegen-units = 1
 debug-assertions = false
 lto = "thin"
 panic = "abort"
 
 [profile.bench]
-codegen-units = 1
 debug-assertions = false
 lto = "thin"
 

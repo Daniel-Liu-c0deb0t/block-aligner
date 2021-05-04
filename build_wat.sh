@@ -19,7 +19,7 @@ done
 
 # disassemble wasmtime generated object files with objdump
 for f in target/wasm32-wasi/*/deps/*.wasm.opt; do
-    wasmtime wasm2obj --enable-simd $f $f.o
+    wasmtime wasm2obj --wasm-features simd $f $f.o
     objdump -drwSl -x86-asm-syntax=intel $f.o | rustfilt -o $f.objdump
     echo "$f.objdump"
 done

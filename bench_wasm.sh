@@ -2,7 +2,7 @@ set -e
 
 cargo clean
 
-CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime --enable-simd --"
+CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime --wasm-features simd --"
 # CARGO_TARGET_WASM32_WASI_RUNNER="wasmer run --native --llvm --enable-simd --"
 # CARGO_TARGET_WASM32_WASI_RUNNER="wavm run --enable simd"
 

@@ -651,8 +651,7 @@ impl Trace {
 
             let a = self.block_idx / 64;
             let b = self.block_idx % 64;
-            let mut v = *self.right.get_unchecked(a);
-            v &= !(1 << b);
+            let mut v = if b == 0 { 0 } else { *self.right.get_unchecked(a) };
             v |= (right as u64) << b;
             *self.right.get_unchecked_mut(a) = v;
 
@@ -686,6 +685,18 @@ impl Trace {
             let mut block_height;
             let mut right;
 
+            // use lookup table instead of hard to predict branches
+            static OP_LUT: [(Operation, usize, usize); 8] = [
+                (Operation::M, 1, 1), // 0b000
+                (Operation::I, 1, 0), // 0b001
+                (Operation::D, 0, 1), // 0b010
+                (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
+                (Operation::M, 1, 1), // 0b100
+                (Operation::D, 0, 1), // 0b101
+                (Operation::I, 1, 0), // 0b110
+                (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
+            ];
+
             while i > 0 || j > 0 {
                 loop {
                     block_idx -= 1;
@@ -711,18 +722,6 @@ impl Trace {
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
                         ((*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11) as usize
                     };
-
-                    // use lookup table instead of hard to predict branches
-                    static OP_LUT: [(Operation, usize, usize); 8] = [
-                        (Operation::M, 1, 1), // 0b000
-                        (Operation::I, 1, 0), // 0b001
-                        (Operation::D, 0, 1), // 0b010
-                        (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
-                        (Operation::M, 1, 1), // 0b100
-                        (Operation::D, 0, 1), // 0b101
-                        (Operation::I, 1, 0), // 0b110
-                        (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
-                    ];
                     let lut_idx = right | t;
                     let op = OP_LUT[lut_idx].0;
                     i -= OP_LUT[lut_idx].1;

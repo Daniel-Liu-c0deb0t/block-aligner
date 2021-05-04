@@ -11,15 +11,15 @@ pub const L_BYTES: usize = L * 2;
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { i16x8_add_saturate_s(a, b) }
+pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { i16x8_add_sat(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_subs_i16(a: Simd, b: Simd) -> Simd { i16x8_sub_saturate_s(a, b) }
+pub unsafe fn simd_subs_i16(a: Simd, b: Simd) -> Simd { i16x8_sub_sat(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_max_i16(a: Simd, b: Simd) -> Simd { i16x8_max_s(a, b) }
+pub unsafe fn simd_max_i16(a: Simd, b: Simd) -> Simd { i16x8_max(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
@@ -27,7 +27,7 @@ pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { i16x8_eq(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { i16x8_gt_s(a, b) }
+pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { i16x8_gt(a, b) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
@@ -62,8 +62,8 @@ pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
 #[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_movemask_i8(a: Simd) -> u32 {
-    //i8x16_bitmask(a) as u32
-    const MUL: i64 = {
+    i8x16_bitmask(a) as u32
+    /*const MUL: i64 = {
         let mut m = 0u64;
         m |= 1u64 << (0 - 0);
         m |= 1u64 << (8 - 1);
@@ -78,7 +78,7 @@ pub unsafe fn simd_movemask_i8(a: Simd) -> u32 {
     let b = i64x2_mul(v128_and(a, i8x16_splat(0b10000000u8 as i8)), i64x2_splat(MUL));
     let res1 = i8x16_extract_lane::<{ L * 2 - 1 }>(b) as u32;
     let res2 = i8x16_extract_lane::<{ L - 1 }>(b) as u32;
-    (res1 << 8) | res2
+    (res1 << 8) | res2*/
 }
 
 macro_rules! simd_sl_i16 {
@@ -118,9 +118,9 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
 #[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
-    let mut v2 = i16x8_max_s(v, simd_sr_i16!(v, v, 1));
-    v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 2));
-    v2 = i16x8_max_s(v2, simd_sr_i16!(v2, v2, 4));
+    let mut v2 = i16x8_max(v, simd_sr_i16!(v, v, 1));
+    v2 = i16x8_max(v2, simd_sr_i16!(v2, v2, 2));
+    v2 = i16x8_max(v2, simd_sr_i16!(v2, v2, 4));
     simd_extract_i16::<0>(v2)
 }
 
@@ -142,8 +142,8 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
     for _i in 0..(L - 1) {
         let prev = curr;
         curr = simd_sl_i16!(curr, neg_inf, 1);
-        curr = i16x8_add_saturate_s(curr, gap_cost);
-        curr = i16x8_max_s(curr, prev);
+        curr = i16x8_add_sat(curr, gap_cost);
+        curr = i16x8_max(curr, prev);
     }
 
     curr
@@ -168,17 +168,17 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
     let (gap_cost, gap_cost1234, neg_inf) = get_prefix_scan_consts(gap);
     // Optimized prefix add and max for every four elements
     let mut shift1 = simd_sl_i16!(R_max, neg_inf, 1);
-    shift1 = i16x8_add_saturate_s(shift1, gap_cost);
-    shift1 = i16x8_max_s(shift1, R_max);
+    shift1 = i16x8_add_sat(shift1, gap_cost);
+    shift1 = i16x8_max(shift1, R_max);
     let mut shift2 = simd_sl_i16!(shift1, neg_inf, 2);
-    shift2 = i16x8_add_saturate_s(shift2, i16x8_shl(gap_cost, 1));
-    let temp = i16x8_max_s(shift1, shift2);
+    shift2 = i16x8_add_sat(shift2, i16x8_shl(gap_cost, 1));
+    let temp = i16x8_max(shift1, shift2);
 
     // Almost there: correct the last group using the last element of the previous group
     let mut correct = v16x8_shuffle::<0, 0, 0, 0, 3, 3, 3, 3>(temp, temp);
-    correct = i16x8_add_saturate_s(correct, gap_cost1234);
+    correct = i16x8_add_sat(correct, gap_cost1234);
 
-    i16x8_max_s(temp, correct)
+    i16x8_max(temp, correct)
 }
 
 #[target_feature(enable = "simd128")]
@@ -188,15 +188,15 @@ pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) 
     let v_mask = v128_and(v, mask);
     let a = v8x16_swizzle(lut1, v_mask);
     let b = v8x16_swizzle(lut2, v_mask);
-    let lut_mask = i8x16_gt_s(v, mask);
+    let lut_mask = i8x16_gt(v, mask);
     let c = v128_bitselect(b, a, lut_mask);
-    i16x8_widen_low_i8x16_s(c)
+    i16x8_widen_low_i8x16(c)
 }
 
 #[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_lookup1_i16(lut: HalfSimd, v: HalfSimd) -> Simd {
-    i16x8_widen_low_i8x16_s(v8x16_swizzle(lut, v128_and(v, i8x16_splat(0b1111))))
+    i16x8_widen_low_i8x16(v8x16_swizzle(lut, v128_and(v, i8x16_splat(0b1111))))
 }
 
 #[target_feature(enable = "simd128")]
