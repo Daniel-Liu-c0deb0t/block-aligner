@@ -9,9 +9,9 @@ pub enum Operation {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct OpLen {
-    op: Operation,
-    len: usize
+pub struct OpLen {
+    pub op: Operation,
+    pub len: usize
 }
 
 pub struct Cigar {
@@ -32,9 +32,17 @@ impl Cigar {
         // branchlessly append one operation
         let add = (op != self.s.get_unchecked(len - 1).op) as usize;
         let idx = len + add;
-        self.s.set_len(idx);
         *self.s.get_unchecked_mut(len) = OpLen { op, len: 0 };
         self.s.get_unchecked_mut(idx - 1).len += 1;
+        self.s.set_len(idx);
+    }
+
+    pub fn len(&self) -> usize {
+        self.s.len() - 1
+    }
+
+    pub fn get(&self, i: usize) -> OpLen {
+        self.s[self.s.len() - 1 - i]
     }
 }
 

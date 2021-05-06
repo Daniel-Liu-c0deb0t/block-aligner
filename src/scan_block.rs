@@ -671,6 +671,7 @@ impl Trace {
     #[inline(always)]
     pub fn restore_ckpt(&mut self) {
         unsafe { self.trace.set_len(self.ckpt_trace_idx); }
+        self.trace_idx = self.ckpt_trace_idx;
         self.block_idx = self.ckpt_block_idx;
     }
 

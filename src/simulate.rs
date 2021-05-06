@@ -9,6 +9,15 @@ pub static NUC: [u8; 5] = [
     b'A', b'C', b'G', b'N', b'T'
 ];
 
+pub fn rand_mutate_suffix<R: Rng>(a: &mut Vec<u8>, k: usize, alpha: &[u8], suffix_len: usize, rng: &mut R) -> Vec<u8> {
+    let mut b = rand_mutate(a, k, alpha, rng);
+    let a_suffix = rand_str(suffix_len, alpha, rng);
+    let b_suffix = rand_str(suffix_len, alpha, rng);
+    a.extend_from_slice(&a_suffix);
+    b.extend_from_slice(&b_suffix);
+    b
+}
+
 pub fn rand_mutate_insert<R: Rng>(a: &[u8], k: usize, alpha: &[u8], insert_len: usize, rng: &mut R) -> Vec<u8> {
     let b = rand_mutate(a, k, alpha, rng);
     let insert = rand_str(insert_len, alpha, rng);
