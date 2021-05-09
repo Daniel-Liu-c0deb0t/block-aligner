@@ -1,7 +1,7 @@
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
 use crate::avx2::*;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use crate::simd128::*;
 
 use crate::scores::*;
@@ -84,8 +84,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         a
     }
 
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     unsafe fn align_core(&mut self) {
         let mut best_max = 0i32;
@@ -115,7 +113,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             D_col.set(i, D_insert);
             if TRACE && i % L == 0 {
                 // first column traceback is all inserts
-                self.trace.add_trace(0xAAAAAAAAu32);
+                self.trace.add_trace(0xAAAAAAAAAAAAAAAAu64 as TraceType);
             }
         }
         self.j += 1;
@@ -417,8 +415,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         };
     }
 
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> i16 {
@@ -449,8 +445,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
     // Place block right or down.
     //
     // Assumes all inputs are already relative to the current offset.
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn place_block(&mut self,
@@ -572,19 +566,17 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         (D_max, D_argmax, simd_hmax_i16(right_max))
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn res(&self) -> AlignResult {
         self.res
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn trace(&self) -> &Trace {
         assert!(TRACE);
         &self.trace
     }
 
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     #[inline]
     unsafe fn get_const_simd(&self) -> (Simd, Simd, Simd) {
         // some useful constant simd vectors
@@ -597,7 +589,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
 #[derive(Clone)]
 pub struct Trace {
-    trace: Vec<u32>,
+    trace: Vec<TraceType>,
     right: Vec<u64>,
     block_start: Vec<u32>,
     block_size: Vec<u32>,
@@ -608,18 +600,13 @@ pub struct Trace {
 }
 
 impl Trace {
-    #[inline(always)]
+    #[inline]
     pub fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
         let len = query_len + reference_len;
         let trace = Vec::with_capacity(len * (block_size / L));
-        let mut right = Vec::with_capacity(div_ceil(len, 64));
-        let mut block_start = Vec::with_capacity(len * 2);
-        let mut block_size = Vec::with_capacity(len * 2);
-        unsafe {
-            right.set_len(right.capacity());
-            block_start.set_len(block_start.capacity());
-            block_size.set_len(block_size.capacity());
-        }
+        let right = vec![0u64; div_ceil(len, 64)];
+        let block_start = vec![0u32; len * 2];
+        let block_size = vec![0u32; len * 2];
 
         Self {
             trace,
@@ -633,14 +620,14 @@ impl Trace {
         }
     }
 
-    #[inline(always)]
-    pub fn add_trace(&mut self, t: u32) {
+    #[inline]
+    pub fn add_trace(&mut self, t: TraceType) {
         debug_assert!(self.trace_idx < self.trace.len());
         unsafe { *self.trace.get_unchecked_mut(self.trace_idx) = t; }
         self.trace_idx += 1;
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
         debug_assert!(self.block_idx * 2 < self.block_start.len());
         unsafe {
@@ -651,24 +638,21 @@ impl Trace {
 
             let a = self.block_idx / 64;
             let b = self.block_idx % 64;
-            let mut v = if b == 0 { 0 } else { *self.right.get_unchecked(a) };
-            v |= (right as u64) << b;
-            *self.right.get_unchecked_mut(a) = v;
+            *self.right.get_unchecked_mut(a) |= (right as u64) << b;
 
-            self.trace.reserve(width * height / L);
-            self.trace.set_len(self.trace.len() + width * height / L);
+            self.trace.resize(self.trace.len() + width * height / L, 0 as TraceType);
 
             self.block_idx += 1;
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn save_ckpt(&mut self) {
         self.ckpt_trace_idx = self.trace.len();
         self.ckpt_block_idx = self.block_idx;
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn restore_ckpt(&mut self) {
         unsafe { self.trace.set_len(self.ckpt_trace_idx); }
         self.trace_idx = self.ckpt_trace_idx;
@@ -736,19 +720,19 @@ impl Trace {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn convert_char(c: u8, nuc: bool) -> u8 {
     let c = c.to_ascii_uppercase();
     debug_assert!(c >= b'A' && c <= NULL);
     if nuc { c } else { c - b'A' }
 }
 
-#[inline(always)]
+#[inline]
 fn clamp(x: i32) -> i16 {
     cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
 }
 
-#[inline(always)]
+#[inline]
 fn div_ceil(n: usize, d: usize) -> usize {
     (n + d - 1) / d
 }
@@ -759,11 +743,9 @@ pub struct Aligned {
 }
 
 impl Aligned {
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     pub unsafe fn new(block_size: usize) -> Self {
         let layout = alloc::Layout::from_size_align_unchecked(block_size * 2, L_BYTES);
-        let ptr = alloc::alloc(layout) as *const i16;
+        let ptr = alloc::alloc_zeroed(layout) as *const i16;
         let neg_inf = simd_set1_i16(i16::MIN);
         let mut i = 0;
         while i < block_size {
@@ -773,8 +755,6 @@ impl Aligned {
         Self { layout, ptr }
     }
 
-    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), target_feature(enable = "avx2"))]
-    #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
     pub unsafe fn set_all(&mut self, o: &Aligned, len: usize) {
         let o_ptr = o.as_ptr();
         let mut i = 0;
@@ -784,22 +764,22 @@ impl Aligned {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn get(&self, i: usize) -> i16 {
         unsafe { *self.ptr.add(i) }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set(&mut self, i: usize, v: i16) {
         unsafe { ptr::write(self.ptr.add(i) as _, v); }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut i16 {
         self.ptr as _
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn as_ptr(&self) -> *const i16 {
         self.ptr
     }
@@ -818,7 +798,7 @@ pub struct PaddedBytes {
 }
 
 impl PaddedBytes {
-    #[inline(always)]
+    #[inline]
     pub fn from_bytes(b: &[u8], block_size: usize, nuc: bool) -> Self {
         let mut v = b.to_owned();
         let len = v.len();
@@ -828,12 +808,12 @@ impl PaddedBytes {
         Self { s: v, len }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn from_str(s: &str, blocks: usize, nuc: bool) -> Self {
         Self::from_bytes(s.as_bytes(), blocks, nuc)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn from_string(s: String, block_size: usize, nuc: bool) -> Self {
         let mut v = s.into_bytes();
         let len = v.len();
@@ -843,22 +823,22 @@ impl PaddedBytes {
         Self { s: v, len }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn get(&self, i: usize) -> u8 {
         unsafe { *self.s.get_unchecked(i) }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set(&mut self, i: usize, c: u8) {
         unsafe { *self.s.get_unchecked_mut(i) = c; }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn as_ptr(&self, i: usize) -> *const u8 {
         unsafe { self.s.as_ptr().add(i) }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }

@@ -1,4 +1,7 @@
-#![cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "wasm32"))]
+#![cfg(any(
+        all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"),
+        all(target_arch = "wasm32", target_feature = "simd128")
+))]
 
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
@@ -19,7 +22,7 @@ fn main() {
 
     let block_aligner = Block::<RunParams, _, 16, 2048, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 6);
     let scan_score = block_aligner.res().score;
-    let scan_cigar = block_aligner.trace().cigar();
+    let scan_cigar = block_aligner.trace().cigar(q.len(), r.len());
 
     println!(
         "score: {}\nq: {}\nr: {}\ntrace: {}",

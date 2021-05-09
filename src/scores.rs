@@ -59,7 +59,7 @@ impl Matrix for AAMatrix {
         self.scores[idx]
     }
 
-    #[inline(always)]
+    #[inline]
     fn as_ptr(&self, i: usize) -> *const i8 {
         debug_assert!(i < 27);
         unsafe { self.scores.as_ptr().add(i * 32) }
@@ -117,7 +117,7 @@ impl Matrix for NucMatrix {
         self.scores[idx]
     }
 
-    #[inline(always)]
+    #[inline]
     fn as_ptr(&self, i: usize) -> *const i8 {
         unsafe { self.scores.as_ptr().add((i & 0b111) * 16) }
     }
