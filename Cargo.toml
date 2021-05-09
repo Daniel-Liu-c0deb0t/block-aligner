@@ -22,4 +22,6 @@ rand = { version = "^0.8", default-features = false, features = ["std_rng", "all
 
 [dev-dependencies]
 bio = "^0.33"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 parasailors = "^0.3.1"

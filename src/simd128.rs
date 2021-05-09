@@ -75,7 +75,7 @@ macro_rules! simd_sl_i16 {
         {
             debug_assert!($num <= L);
             use std::arch::wasm32::*;
-            v16x8_shuffle::<{ 8 - $num }, { 9 - $num }, { 10 - $num }, { 11 - $num }, { 12 - $num }, { 13 - $num }, { 14 - $num }, { 15 - $num }>($b, $a)
+            i16x8_shuffle::<{ 8 - $num }, { 9 - $num }, { 10 - $num }, { 11 - $num }, { 12 - $num }, { 13 - $num }, { 14 - $num }, { 15 - $num }>($b, $a)
         }
     };
 }
@@ -86,7 +86,7 @@ macro_rules! simd_sr_i16 {
         {
             debug_assert!($num <= L);
             use std::arch::wasm32::*;
-            v16x8_shuffle::<{ 0 + $num }, { 1 + $num }, { 2 + $num }, { 3 + $num }, { 4 + $num }, { 5 + $num }, { 6 + $num }, { 7 + $num }>($b, $a)
+            i16x8_shuffle::<{ 0 + $num }, { 1 + $num }, { 2 + $num }, { 3 + $num }, { 4 + $num }, { 5 + $num }, { 6 + $num }, { 7 + $num }>($b, $a)
         }
     };
 }
@@ -164,16 +164,16 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
     let mask = i8x16_splat(0b1111);
     let v_mask = v128_and(v, mask);
-    let a = v8x16_swizzle(lut1, v_mask);
-    let b = v8x16_swizzle(lut2, v_mask);
+    let a = i8x16_swizzle(lut1, v_mask);
+    let b = i8x16_swizzle(lut2, v_mask);
     let lut_mask = i8x16_gt(v, mask);
     let c = v128_bitselect(b, a, lut_mask);
-    i16x8_widen_low_i8x16(c)
+    i16x8_extend_low_i8x16(c)
 }
 
 #[inline]
 pub unsafe fn halfsimd_lookup1_i16(lut: HalfSimd, v: HalfSimd) -> Simd {
-    i16x8_widen_low_i8x16(v8x16_swizzle(lut, v128_and(v, i8x16_splat(0b1111))))
+    i16x8_extend_low_i8x16(i8x16_swizzle(lut, v128_and(v, i8x16_splat(0b1111))))
 }
 
 #[inline]
@@ -203,7 +203,7 @@ macro_rules! halfsimd_sr_i8 {
             use std::arch::wasm32::*;
             // special indexing to skip over the high 8 bytes that are unused
             const fn get_idx(i: usize) -> usize { if i >= L { i + L } else { i } }
-            v8x16_shuffle::<
+            i8x16_shuffle::<
                 { get_idx(0 + $num) }, { get_idx(1 + $num) }, { get_idx(2 + $num) }, { get_idx(3 + $num) },
                 { get_idx(4 + $num) }, { get_idx(5 + $num) }, { get_idx(6 + $num) }, { get_idx(7 + $num) },
                 8, 9, 10, 11,
