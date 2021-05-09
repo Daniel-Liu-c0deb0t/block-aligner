@@ -37,21 +37,38 @@ pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { _mm256_store_si256(ptr, a) }
 #[inline]
 pub unsafe fn simd_set1_i16(v: i16) -> Simd { _mm256_set1_epi16(v) }
 
-#[inline]
-pub unsafe fn simd_extract_i16<const IDX: usize>(a: Simd) -> i16 {
-    debug_assert!(IDX < L);
-    _mm256_extract_epi16(a, IDX as i32) as i16
+#[macro_export]
+macro_rules! simd_extract_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!($num < L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_extract_epi16($a, $num as i32) as i16
+        }
+    };
 }
 
-#[inline]
-pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
-    debug_assert!(IDX < L);
-    _mm256_insert_epi16(a, v, IDX as i32)
+#[macro_export]
+macro_rules! simd_insert_i16 {
+    ($a:expr, $v:expr, $num:expr) => {
+        {
+            debug_assert!($num < L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_insert_epi16($a, $v, $num as i32)
+        }
+    };
 }
 
 #[inline]
 pub unsafe fn simd_movemask_i8(a: Simd) -> u32 { _mm256_movemask_epi8(a) as u32 }
 
+#[macro_export]
 macro_rules! simd_sl_i16 {
     ($a:expr, $b:expr, $num:expr) => {
         {
@@ -69,7 +86,7 @@ macro_rules! simd_sl_i16 {
     };
 }
 
-#[allow(unused_macros)]
+#[macro_export]
 macro_rules! simd_sr_i16 {
     ($a:expr, $b:expr, $num:expr) => {
         {
@@ -92,9 +109,19 @@ unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
     _mm256_permute2x128_si256(a, b, 0x03)
 }
 
-#[inline]
-unsafe fn simd_sll_i16<const IDX: usize>(a: Simd, b: Simd) -> Simd {
-    _mm256_alignr_epi8(a, b, (L - IDX * 2) as i32)
+
+#[macro_export]
+macro_rules! simd_sll_i16 {
+    ($a:expr, $b:expr, $num:expr) => {
+        {
+            debug_assert!(2 * $num < L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_alignr_epi8($a, $b, (L - $num * 2) as i32)
+        }
+    };
 }
 
 #[inline]
@@ -115,7 +142,7 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
     v2 = _mm256_max_epi16(v2, _mm256_srli_si256(v2, 4));
     v2 = _mm256_max_epi16(v2, _mm256_srli_si256(v2, 8));
     v2 = _mm256_max_epi16(v2, simd_sl_i128(v2, v2));
-    simd_extract_i16::<0>(v2)
+    simd_extract_i16!(v2, 0)
 }
 
 #[inline]
@@ -161,13 +188,13 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 
     // Optimized prefix add and max for every eight elements
     // Note: be very careful to avoid lane-crossing which has a large penalty
-    let mut shift1 = simd_sll_i16::<1>(R_max, neg_inf);
+    let mut shift1 = simd_sll_i16!(R_max, neg_inf, 1);
     shift1 = _mm256_adds_epi16(shift1, gap_cost);
     shift1 = _mm256_max_epi16(R_max, shift1);
-    let mut shift2 = simd_sll_i16::<2>(shift1, neg_inf);
+    let mut shift2 = simd_sll_i16!(shift1, neg_inf, 2);
     shift2 = _mm256_adds_epi16(shift2, _mm256_slli_epi16(gap_cost, 1));
     shift2 = _mm256_max_epi16(shift1, shift2);
-    let mut shift4 = simd_sll_i16::<4>(shift2, neg_inf);
+    let mut shift4 = simd_sll_i16!(shift2, neg_inf, 4);
     shift4 = _mm256_adds_epi16(shift4, _mm256_slli_epi16(gap_cost, 2));
     shift4 = _mm256_max_epi16(shift2, shift4);
 
@@ -214,7 +241,7 @@ pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
 #[inline]
 pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i }
 
-#[allow(unused_macros)]
+#[macro_export]
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:expr) => {
         {

@@ -20,7 +20,7 @@ fn main() {
     let q_padded = PaddedBytes::from_bytes(&q, 2048, false);
     type RunParams = GapParams<-11, -1>;
 
-    let block_aligner = Block::<RunParams, _, 16, 2048, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 6);
+    let block_aligner = Block::<RunParams, _, 16, 2048, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 8);
     let scan_score = block_aligner.res().score;
     let scan_cigar = block_aligner.trace().cigar(q.len(), r.len());
 

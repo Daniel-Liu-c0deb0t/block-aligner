@@ -17,7 +17,7 @@ fn run<const K: usize>(len: usize) -> AlignResult {
     let q = PaddedBytes::from_bytes(&q, 2048, false);
     type RunParams = GapParams<-11, -1>;
 
-    let a = Block::<RunParams, _, 16, 2048, false, false>::align(&q, &r, &BLOSUM62, 0, 6);
+    let a = Block::<RunParams, _, 16, 2048, false, false>::align(&q, &r, &BLOSUM62, 0, 8);
     a.res()
 }
 

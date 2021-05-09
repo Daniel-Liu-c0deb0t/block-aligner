@@ -37,16 +37,26 @@ pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { v128_store(ptr, a) }
 #[inline]
 pub unsafe fn simd_set1_i16(v: i16) -> Simd { i16x8_splat(v) }
 
-#[inline]
-pub unsafe fn simd_extract_i16<const IDX: usize>(a: Simd) -> i16 {
-    debug_assert!(IDX < L);
-    i16x8_extract_lane::<{ IDX }>(a)
+#[macro_export]
+macro_rules! simd_extract_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!($num < L);
+            use std::arch::wasm32::*;
+            i16x8_extract_lane::<{ $num }>($a)
+        }
+    };
 }
 
-#[inline]
-pub unsafe fn simd_insert_i16<const IDX: usize>(a: Simd, v: i16) -> Simd {
-    debug_assert!(IDX < L);
-    i16x8_replace_lane::<{ IDX }>(a, v)
+#[macro_export]
+macro_rules! simd_insert_i16 {
+    ($a:expr, $v:expr, $num:expr) => {
+        {
+            debug_assert!($num < L);
+            use std::arch::wasm32::*;
+            i16x8_replace_lane::<{ $num }>($a, $v)
+        }
+    };
 }
 
 #[inline]
@@ -70,6 +80,7 @@ pub unsafe fn simd_movemask_i8(a: Simd) -> u16 {
     (res1 << 8) | res2*/
 }
 
+#[macro_export]
 macro_rules! simd_sl_i16 {
     ($a:expr, $b:expr, $num:expr) => {
         {
@@ -80,7 +91,7 @@ macro_rules! simd_sl_i16 {
     };
 }
 
-#[allow(unused_macros)]
+#[macro_export]
 macro_rules! simd_sr_i16 {
     ($a:expr, $b:expr, $num:expr) => {
         {
@@ -108,7 +119,7 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
     let mut v2 = i16x8_max(v, simd_sr_i16!(v, v, 1));
     v2 = i16x8_max(v2, simd_sr_i16!(v2, v2, 2));
     v2 = i16x8_max(v2, simd_sr_i16!(v2, v2, 4));
-    simd_extract_i16::<0>(v2)
+    simd_extract_i16!(v2, 0)
 }
 
 #[inline]
@@ -195,7 +206,7 @@ pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i8x16_splat(v) }
 #[inline]
 pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i + i / L * L }
 
-#[allow(unused_macros)]
+#[macro_export]
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:expr) => {
         {

@@ -44,7 +44,8 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, cons
     _phantom: PhantomData<P>
 }
 
-const STEP: usize = L / 2;
+// smaller step size = slightly less efficient and able to use larger y drop value
+const STEP: usize = L / 4;
 impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {
     /// Adaptive banded alignment.
     ///
@@ -554,7 +555,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
             ptr::write(D_row.add(j), *D_col.add(height - 1));
             // must subtract gap_extend from R_insert due to how R_insert is calculated
-            ptr::write(R_row.add(j), simd_extract_i16::<{ L - 1 }>(simd_subs_i16(R_insert, gap_extend)));
+            ptr::write(R_row.add(j), simd_extract_i16!(simd_subs_i16(R_insert, gap_extend), L - 1));
             curr_off_add = simd_set1_i16(0);
 
             if !X_DROP && unlikely(start_i + height > query.len()
