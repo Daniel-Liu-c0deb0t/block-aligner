@@ -46,6 +46,8 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, cons
 
 // smaller step size = slightly less efficient and able to use larger y drop value
 const STEP: usize = L / 4;
+// larger grow step size doesn't seem to affect performance
+const GROW_STEP: usize = L;
 impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {
     /// Adaptive banded alignment.
     ///
@@ -63,6 +65,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         assert!(P::GAP_OPEN <= P::GAP_EXTEND);
         assert!(y_drop >= 0);
         assert!(MIN_SIZE >= L);
+        assert!(MIN_SIZE % L == 0 && MAX_SIZE % L == 0);
 
         if X_DROP {
             assert!(x_drop >= 0);
@@ -217,13 +220,13 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     (D_max, D_argmax, right_max, down_max)
                 },
                 Direction::Grow => {
-                    let prev_size = block_size - L;
+                    let prev_size = block_size - GROW_STEP;
 
                     #[cfg(feature = "debug")]
                     println!("Grow down");
 
                     if TRACE {
-                        self.trace.add_block(self.i + prev_size, self.j, prev_size, L, false);
+                        self.trace.add_block(self.i + prev_size, self.j, prev_size, GROW_STEP, false);
                     }
 
                     // down
@@ -232,7 +235,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                         self.query,
                         self.j,
                         self.i + prev_size,
-                        L,
+                        GROW_STEP,
                         prev_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
@@ -245,7 +248,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     println!("Grow right");
 
                     if TRACE {
-                        self.trace.add_block(self.i, self.j + prev_size, L, block_size, true);
+                        self.trace.add_block(self.i, self.j + prev_size, GROW_STEP, block_size, true);
                     }
 
                     // right
@@ -254,7 +257,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                         self.reference,
                         self.i,
                         self.j + prev_size,
-                        L,
+                        GROW_STEP,
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
@@ -300,7 +303,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                             best_argmax_j = self.j + r;
                         },
                         Direction::Grow => {
-                            let prev_size = block_size - L;
+                            let prev_size = block_size - GROW_STEP;
                             if max >= grow_max {
                                 best_argmax_i = self.i + (idx % (block_size / L)) * L + lane_idx;
                                 best_argmax_j = self.j + prev_size + (idx / (block_size / L));
@@ -352,24 +355,25 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 continue;
             }
 
-            if block_size < MAX_SIZE {
+            if block_size + GROW_STEP <= MAX_SIZE {
                 let y_drop_cond = match dir {
                     Direction::Right | Direction::Down => edge_max < best_max - self.y_drop,
-                    Direction::Grow => edge_max < best_max - self.y_drop * ((L / STEP) as i32)
+                    Direction::Grow => edge_max < best_max - self.y_drop * ((GROW_STEP / STEP) as i32)
                 };
 
                 if unlikely(block_size < MIN_SIZE || y_drop_cond) {
                     // y drop grow block
-                    block_size += L;
+                    block_size += GROW_STEP;
                     dir = Direction::Grow;
 
                     self.i = i_ckpt;
                     self.j = j_ckpt;
                     off = off_ckpt;
-                    D_col.set_all(&D_col_ckpt, block_size - L);
-                    C_col.set_all(&C_col_ckpt, block_size - L);
-                    D_row.set_all(&D_row_ckpt, block_size - L);
-                    R_row.set_all(&R_row_ckpt, block_size - L);
+                    let prev_size = block_size - GROW_STEP;
+                    D_col.set_all(&D_col_ckpt, prev_size);
+                    C_col.set_all(&C_col_ckpt, prev_size);
+                    D_row.set_all(&D_row_ckpt, prev_size);
+                    R_row.set_all(&R_row_ckpt, prev_size);
                     if TRACE {
                         self.trace.restore_ckpt();
                     }
