@@ -42,6 +42,43 @@ impl Cigar {
     pub fn get(&self, i: usize) -> OpLen {
         self.s[self.idx - 1 - i]
     }
+
+    pub fn format(&self, q: &[u8], r: &[u8]) -> (String, String) {
+        let mut a = String::with_capacity(self.s.len());
+        let mut b = String::with_capacity(self.s.len());
+        let mut i = 0;
+        let mut j = 0;
+
+        for &op_len in self.s.iter().rev() {
+            match op_len.op {
+                Operation::M => {
+                    for _k in 0..op_len.len {
+                        a.push(q[i] as char);
+                        b.push(r[j] as char);
+                        i += 1;
+                        j += 1;
+                    }
+                },
+                Operation::I => {
+                    for _k in 0..op_len.len {
+                        a.push(q[i] as char);
+                        b.push('-');
+                        i += 1;
+                    }
+                },
+                Operation::D => {
+                    for _k in 0..op_len.len {
+                        a.push('-');
+                        b.push(r[j] as char);
+                        j += 1;
+                    }
+                },
+                _ => continue
+            }
+        }
+
+        (a, b)
+    }
 }
 
 impl fmt::Display for Cigar {

@@ -44,8 +44,8 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, cons
     _phantom: PhantomData<P>
 }
 
-// smaller step size = slightly less efficient and able to use larger y drop value
-const STEP: usize = L / 4;
+const STEP: usize = 1/*L / 4*/;
+const LARGE_STEP: usize = 4;
 // larger grow step size doesn't seem to affect performance
 const GROW_STEP: usize = L;
 impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {
@@ -96,6 +96,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
         let mut dir = Direction::Grow;
         let mut block_size = L;
+        let mut step = STEP;
 
         let mut off = 0i32;
         let mut prev_off;
@@ -143,7 +144,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                 println!("i: {}", self.i);
                 println!("j: {}", self.j);
                 println!("{:?}", dir);
-                println!("off: {}", off);
                 println!("block size: {}", block_size);
             }
 
@@ -153,18 +153,20 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             let (D_max, D_argmax, right_max, down_max) = match dir {
                 Direction::Right => {
                     off += D_col.get(0) as i32;
+                    #[cfg(feature = "debug")]
+                    println!("off: {}", off);
                     let off_add = simd_set1_i16(clamp(prev_off - off));
 
                     if TRACE {
-                        self.trace.add_block(self.i, self.j + block_size - STEP, STEP, block_size, true);
+                        self.trace.add_block(self.i, self.j + block_size - step, step, block_size, true);
                     }
 
                     let (D_max, D_argmax, right_max) = self.place_block(
                         self.query,
                         self.reference,
                         self.i,
-                        self.j + block_size - STEP,
-                        STEP,
+                        self.j + block_size - step,
+                        step,
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
@@ -180,25 +182,28 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                         R_row.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
-                        off_add
+                        off_add,
+                        step
                     );
 
                     (D_max, D_argmax, right_max, down_max)
                 },
                 Direction::Down => {
                     off += D_row.get(0) as i32;
+                    #[cfg(feature = "debug")]
+                    println!("off: {}", off);
                     let off_add = simd_set1_i16(clamp(prev_off - off));
 
                     if TRACE {
-                        self.trace.add_block(self.i + block_size - STEP, self.j, block_size, STEP, false);
+                        self.trace.add_block(self.i + block_size - step, self.j, block_size, step, false);
                     }
 
                     let (D_max, D_argmax, down_max) = self.place_block(
                         self.reference,
                         self.query,
                         self.j,
-                        self.i + block_size - STEP,
-                        STEP,
+                        self.i + block_size - step,
+                        step,
                         block_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
@@ -214,7 +219,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                         C_col.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
-                        off_add
+                        off_add,
+                        step
                     );
 
                     (D_max, D_argmax, right_max, down_max)
@@ -285,13 +291,15 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             let grow_max = simd_hmax_i16(grow_D_max);
             let max = cmp::max(D_max_max, grow_max);
             let edge_max = off + cmp::max(right_max, down_max) as i32;
+            #[cfg(feature = "debug")]
+            println!("down max: {}, right max: {}", down_max, right_max);
 
             if off + (max as i32) > best_max {
                 if X_DROP {
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     let r = (idx % (block_size / L)) * L + lane_idx;
-                    let c = (block_size - STEP) + (idx / (block_size / L));
+                    let c = (block_size - step) + (idx / (block_size / L));
 
                     match dir {
                         Direction::Right => {
@@ -345,19 +353,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
             // first check if the shift direction is "forced" to avoid going out of bounds
             if unlikely(self.j + block_size > self.reference.len()) {
-                self.i += STEP;
+                self.i += step;
                 dir = Direction::Down;
                 continue;
             }
             if unlikely(self.i + block_size > self.query.len()) {
-                self.j += STEP;
+                self.j += step;
                 dir = Direction::Right;
                 continue;
             }
 
             if block_size + GROW_STEP <= MAX_SIZE {
                 let y_drop_cond = match dir {
-                    Direction::Right | Direction::Down => edge_max < best_max - self.y_drop,
+                    Direction::Right | Direction::Down => edge_max < best_max - self.y_drop * ((step / STEP) as i32),
                     Direction::Grow => edge_max < best_max - self.y_drop * ((GROW_STEP / STEP) as i32)
                 };
 
@@ -365,6 +373,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     // y drop grow block
                     block_size += GROW_STEP;
                     dir = Direction::Grow;
+                    if block_size >= (LARGE_STEP / STEP) * MIN_SIZE {
+                        step = LARGE_STEP;
+                    }
 
                     self.i = i_ckpt;
                     self.j = j_ckpt;
@@ -384,10 +395,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
             // move according to where the max is
             if down_max > right_max {
-                self.i += STEP;
+                self.i += step;
                 dir = Direction::Down;
             } else {
-                self.j += STEP;
+                self.j += step;
                 dir = Direction::Right;
             }
         }
@@ -422,7 +433,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> i16 {
+    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> i16 {
         let neg_inf = simd_set1_i16(i16::MIN);
         let mut curr_max = neg_inf;
         let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
@@ -432,9 +443,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         while i < block_size - L {
             let next1 = simd_adds_i16(simd_load(buf1.add(i + L) as _), off_add);
             let next2 = simd_adds_i16(simd_load(buf2.add(i + L) as _), off_add);
-            simd_store(buf1.add(i) as _, simd_sr_i16!(next1, curr1, STEP));
-            simd_store(buf2.add(i) as _, simd_sr_i16!(next2, curr2, STEP));
-            curr_max = simd_max_i16(curr_max, next1);
+            let shifted = if step == STEP { simd_sr_i16!(next1, curr1, STEP) } else { simd_sr_i16!(next1, curr1, LARGE_STEP) };
+            simd_store(buf1.add(i) as _, shifted);
+            simd_store(buf2.add(i) as _, if step == STEP { simd_sr_i16!(next2, curr2, STEP) } else { simd_sr_i16!(next2, curr2, LARGE_STEP) });
+            curr_max = simd_max_i16(curr_max, shifted);
             curr1 = next1;
             curr2 = next2;
             i += L;
@@ -442,9 +454,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
         let next1 = simd_load(temp_buf1 as _);
         let next2 = simd_load(temp_buf2 as _);
-        simd_store(buf1.add(block_size - L) as _, simd_sr_i16!(next1, curr1, STEP));
-        simd_store(buf2.add(block_size - L) as _, simd_sr_i16!(next2, curr2, STEP));
-        simd_hmax_i16(simd_max_i16(curr_max, next1))
+        let shifted = if step == STEP { simd_sr_i16!(next1, curr1, STEP) } else { simd_sr_i16!(next1, curr1, LARGE_STEP) };
+        simd_store(buf1.add(block_size - L) as _, shifted);
+        simd_store(buf2.add(block_size - L) as _, if step == STEP { simd_sr_i16!(next2, curr2, STEP) } else { simd_sr_i16!(next2, curr2, LARGE_STEP) });
+        curr_max = simd_max_i16(curr_max, shifted);
+        simd_hmax_i16(curr_max)
     }
 
     // Place block right or down.

@@ -59,7 +59,7 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize, insert: bool)
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 2048, false, false>::align(&q, &r, &BLOSUM62, 0, 8);
+        let a = Block::<BenchParams, _, 32, 2048, false, false>::align(&q, &r, &BLOSUM62, 0, 2);
         a.res()
     });
 }
@@ -73,7 +73,7 @@ fn bench_scan_aa_core_small<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0, 8);
+        let a = Block::<BenchParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0, 2);
         a.res()
     });
 }
@@ -87,7 +87,7 @@ fn bench_scan_aa_core_trace<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 2048, true, false>::align(&q, &r, &BLOSUM62, 0, 8);
+        let a = Block::<BenchParams, _, 32, 2048, true, false>::align(&q, &r, &BLOSUM62, 0, 2);
         //a.res()
         (a.res(), a.trace().cigar(q.len(), r.len()))
     });
@@ -102,7 +102,7 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-1, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, 16, 2048, false, false>::align(&q, &r, &NW1, 0, 8);
+        let a = Block::<BenchParams, _, 32, 2048, false, false>::align(&q, &r, &NW1, 0, 2);
         a.res()
     });
 }

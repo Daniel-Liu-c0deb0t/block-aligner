@@ -3,6 +3,9 @@
         all(target_arch = "wasm32", target_feature = "simd128")
 ))]
 
+use bio::alignment::pairwise::*;
+use bio::scores::blosum62;
+
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 
@@ -20,15 +23,26 @@ fn main() {
     let q_padded = PaddedBytes::from_bytes(&q, 2048, false);
     type RunParams = GapParams<-11, -1>;
 
+    let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
+    let bio_alignment = bio_aligner.global(&q, &r);
+    let bio_score = bio_alignment.score;
+
     let block_aligner = Block::<RunParams, _, 16, 2048, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 8);
     let scan_score = block_aligner.res().score;
     let scan_cigar = block_aligner.trace().cigar(q.len(), r.len());
+    let (a, b) = scan_cigar.format(&q, &r);
 
     println!(
-        "score: {}\nq: {}\nr: {}\ntrace: {}",
+        "bio: {}\nours: {}\nq (len = {}): {}\nr (len = {}): {}\nour trace: {}\nour pretty:\n{}\n{}\nbio pretty:\n{}",
+        bio_score,
         scan_score,
+        q.len(),
         str::from_utf8(&q).unwrap(),
+        r.len(),
         str::from_utf8(&r).unwrap(),
-        scan_cigar
+        scan_cigar,
+        a,
+        b,
+        bio_alignment.pretty(&q, &r)
     );
 }
