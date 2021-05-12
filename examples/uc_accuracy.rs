@@ -35,13 +35,8 @@ fn test(file_name: &str, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [i6
         type RunParams = GapParams<-11, -1>;
 
         // ours
-        let scan_score = if cmp::max(q.len(), r.len()) > 500 {
-            let block_aligner = Block::<RunParams, _, 32, 1024, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 2);
-            block_aligner.res().score
-        } else {
-            let block_aligner = Block::<RunParams, _, 32, 1024, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 2);
-            block_aligner.res().score
-        };
+        let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 2);
+        let scan_score = block_aligner.res().score;
 
         if bio_score != scan_score {
             wrong[id_idx] += 1;
@@ -49,11 +44,13 @@ fn test(file_name: &str, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [i6
 
             if verbose {
                 println!(
-                    "seq id: {}, bio: {}, ours: {}\nq: {}\nr: {}\nbio pretty:\n{}",
+                    "seq id: {}, bio: {}, ours: {}\nq (len = {}): {}\nr (len = {}): {}\nbio pretty:\n{}",
                     seq_identity,
                     bio_score,
                     scan_score,
+                    q.len(),
                     q,
+                    r.len(),
                     r,
                     bio_alignment.pretty(q.as_bytes(), r.as_bytes())
                 );
@@ -94,7 +91,7 @@ fn main() {
     let mut wrong_avg = [0i64; 10];
     let mut count = [0usize; 10];
 
-    for file_name in file_names.iter().rev() {
+    for file_name in file_names.iter() {
         test(file_name, verbose, &mut wrong, &mut wrong_avg, &mut count);
     }
 
