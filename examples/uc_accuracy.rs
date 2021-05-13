@@ -14,7 +14,7 @@ use std::{env, cmp};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-fn test(file_name: &str, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [i64], count: &mut [usize]) {
+fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels: &mut [usize], wrong: &mut [usize], wrong_avg: &mut [i64], count: &mut [usize]) {
     let reader = BufReader::new(File::open(file_name).unwrap());
 
     for line in reader.lines() {
@@ -29,23 +29,27 @@ fn test(file_name: &str, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [i6
         let bio_score = bio_alignment.score;
         let seq_identity = seq_id(&bio_alignment);
         let id_idx = cmp::min((seq_identity * 10.0) as usize, 9);
+        let indels = indels(&bio_alignment, cmp::max(q.len(), r.len()));
+        let indels_idx = cmp::min((indels * 10.0) as usize, 9);
 
         let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, false);
         let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, false);
         type RunParams = GapParams<-11, -1>;
 
         // ours
-        let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 2);
+        let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 8);
         let scan_score = block_aligner.res().score;
 
         if bio_score != scan_score {
             wrong[id_idx] += 1;
             wrong_avg[id_idx] += (bio_score - scan_score) as i64;
+            wrong_indels[indels_idx] += 1;
 
             if verbose {
                 println!(
-                    "seq id: {}, bio: {}, ours: {}\nq (len = {}): {}\nr (len = {}): {}\nbio pretty:\n{}",
+                    "seq id: {}, max indel len: {}, bio: {}, ours: {}\nq (len = {}): {}\nr (len = {}): {}\nbio pretty:\n{}",
                     seq_identity,
+                    indels,
                     bio_score,
                     scan_score,
                     q.len(),
@@ -58,7 +62,20 @@ fn test(file_name: &str, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [i6
         }
 
         count[id_idx] += 1;
+        count_indels[indels_idx] += 1;
     }
+}
+
+fn indels(a: &Alignment, len: usize) -> f64 {
+    let mut indels = 0;
+
+    for &op in &a.operations {
+        if op == AlignmentOperation::Ins
+            || op == AlignmentOperation::Del {
+            indels += 1;
+        }
+    }
+    (indels as f64) / (len as f64)
 }
 
 // BLAST sequence identity
@@ -77,37 +94,68 @@ fn seq_id(a: &Alignment) -> f64 {
 fn main() {
     let arg1 = env::args().skip(1).next();
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
-    let file_names = [
-        "data/uc30_30_40.m8",
-        "data/uc30_40_50.m8",
-        "data/uc30_50_60.m8",
-        "data/uc30_60_70.m8",
-        "data/uc30_70_80.m8",
-        "data/uc30_80_90.m8",
-        "data/uc30_90_100.m8"
+    let file_names_arr = [
+        [
+            "data/uc30_30_40.m8",
+            "data/uc30_40_50.m8",
+            "data/uc30_50_60.m8",
+            "data/uc30_60_70.m8",
+            "data/uc30_70_80.m8",
+            "data/uc30_80_90.m8",
+            "data/uc30_90_100.m8"
+        ],
+        [
+            "data/merged_clu_aln_30_40.m8",
+            "data/merged_clu_aln_40_50.m8",
+            "data/merged_clu_aln_50_60.m8",
+            "data/merged_clu_aln_60_70.m8",
+            "data/merged_clu_aln_70_80.m8",
+            "data/merged_clu_aln_80_90.m8",
+            "data/merged_clu_aln_90_100.m8"
+        ]
     ];
+    let strings = ["uc30", "merged_clu_aln"];
 
-    let mut wrong = [0usize; 10];
-    let mut wrong_avg = [0i64; 10];
-    let mut count = [0usize; 10];
+    for (file_names, string) in file_names_arr.iter().zip(&strings) {
+        println!("\n{}", string);
 
-    for file_name in file_names.iter() {
-        test(file_name, verbose, &mut wrong, &mut wrong_avg, &mut count);
+        let mut wrong_indels = [0usize; 10];
+        let mut count_indels = [0usize; 10];
+        let mut wrong = [0usize; 10];
+        let mut wrong_avg = [0i64; 10];
+        let mut count = [0usize; 10];
+
+        for file_name in file_names {
+            test(file_name, verbose, &mut wrong_indels, &mut count_indels, &mut wrong, &mut wrong_avg, &mut count);
+        }
+
+        println!("Seq identity");
+
+        for i in 0..10 {
+            println!(
+                "bin: {}-{}, count: {}, wrong: {}, wrong avg: {}",
+                (i as f64) / 10.0,
+                ((i as f64) + 1.0) / 10.0,
+                count[i],
+                wrong[i],
+                (wrong_avg[i] as f64) / (wrong[i] as f64)
+            );
+        }
+
+        println!("\nIndels");
+
+        for i in 0..10 {
+            println!(
+                "bin: {}-{}, count: {}, wrong: {}",
+                (i as f64) / 10.0,
+                ((i as f64) + 1.0) / 10.0,
+                count_indels[i],
+                wrong_indels[i]
+            );
+        }
+
+        println!("\ntotal: {}, wrong: {}", count.iter().sum::<usize>(), wrong.iter().sum::<usize>());
     }
 
-    println!();
-
-    for i in 0..10 {
-        println!(
-            "bin: {}-{}, count: {}, wrong: {}, wrong avg: {}",
-            (i as f64) / 10.0,
-            ((i as f64) + 1.0) / 10.0,
-            count[i],
-            wrong[i],
-            (wrong_avg[i] as f64) / (wrong[i] as f64)
-        );
-    }
-
-    println!("\ntotal: {}, wrong: {}", count.iter().sum::<usize>(), wrong.iter().sum::<usize>());
     println!("Done!");
 }

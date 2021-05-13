@@ -5,7 +5,8 @@ authors = ["c0deb0t <daniel.liu02@gmail.com>"]
 edition = "2018"
 
 [features]
-debug = []
+debug = ["debug_size"]
+debug_size = []
 
 [profile.release]
 debug-assertions = false
