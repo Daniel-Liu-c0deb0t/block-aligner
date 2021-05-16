@@ -127,6 +127,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         let mut temp_buf1 = Aligned::new(L);
         let mut temp_buf2 = Aligned::new(L);
 
+        let mut y_drop_iter = 0;
         let mut i_ckpt = self.i;
         let mut j_ckpt = self.j;
         let mut off_ckpt = 0i32;
@@ -297,6 +298,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             #[cfg(feature = "debug")]
             println!("down max: {}, right max: {}", down_max, right_max);
 
+            y_drop_iter += 1;
+            let mut grow_no_max = true;
+
             if off + (max as i32) > best_max {
                 if X_DROP {
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
@@ -338,9 +342,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     if TRACE {
                         self.trace.save_ckpt();
                     }
+                    grow_no_max = false;
                 }
 
                 best_max = off + max as i32;
+                y_drop_iter = 0;
             }
 
             if X_DROP && unlikely(edge_max < best_max - self.x_drop) {
@@ -367,12 +373,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
             let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
             if next_size <= MAX_SIZE {
-                let y_drop_cond = match dir {
-                    Direction::Right | Direction::Down => edge_max < best_max - self.y_drop * ((step / STEP) as i32),
-                    Direction::Grow => edge_max < best_max - self.y_drop * ((block_size / STEP) as i32)
-                };
-
-                if unlikely(block_size < MIN_SIZE || y_drop_cond) {
+                if unlikely(block_size < MIN_SIZE || y_drop_iter > block_size / step / 2 || (dir == Direction::Grow && grow_no_max)) {
                     // y drop grow block
                     prev_size = block_size;
                     block_size = next_size;
@@ -392,6 +393,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                         self.trace.restore_ckpt();
                     }
 
+                    y_drop_iter = 0;
                     continue;
                 }
             }

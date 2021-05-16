@@ -81,7 +81,7 @@ fn bench_scan_aa_core(idx: usize) -> i32 {
 
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<BenchParams, _, 32, 2048, false, false>::align(&q, &r, &BLOSUM62, 0, 8);
+        let a = Block::<BenchParams, _, 32, 256, false, false>::align(&q, &r, &BLOSUM62, 0, 8);
         temp = temp.wrapping_add(a.res().score); // prevent optimizations
     }
     temp

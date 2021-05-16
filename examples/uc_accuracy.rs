@@ -37,7 +37,7 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
         type RunParams = GapParams<-11, -1>;
 
         // ours
-        let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 8);
+        let block_aligner = Block::<RunParams, _, 32, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 8);
         let scan_score = block_aligner.res().score;
 
         if bio_score != scan_score {
@@ -96,15 +96,6 @@ fn main() {
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let file_names_arr = [
         [
-            "data/uc30_30_40.m8",
-            "data/uc30_40_50.m8",
-            "data/uc30_50_60.m8",
-            "data/uc30_60_70.m8",
-            "data/uc30_70_80.m8",
-            "data/uc30_80_90.m8",
-            "data/uc30_90_100.m8"
-        ],
-        [
             "data/merged_clu_aln_30_40.m8",
             "data/merged_clu_aln_40_50.m8",
             "data/merged_clu_aln_50_60.m8",
@@ -112,9 +103,18 @@ fn main() {
             "data/merged_clu_aln_70_80.m8",
             "data/merged_clu_aln_80_90.m8",
             "data/merged_clu_aln_90_100.m8"
+        ],
+        [
+            "data/uc30_30_40.m8",
+            "data/uc30_40_50.m8",
+            "data/uc30_50_60.m8",
+            "data/uc30_60_70.m8",
+            "data/uc30_70_80.m8",
+            "data/uc30_80_90.m8",
+            "data/uc30_90_100.m8"
         ]
     ];
-    let strings = ["uc30", "merged_clu_aln"];
+    let strings = ["merged_clu_aln", "uc30"];
 
     for (file_names, string) in file_names_arr.iter().zip(&strings) {
         println!("\n{}", string);
