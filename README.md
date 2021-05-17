@@ -101,6 +101,9 @@ brew install cargo-instruments
 RUSTFLAGS="-g -C target-cpu=native" cargo instruments --example profile --release --open
 ```
 
+## AVX-512 support
+Work in progress.
+
 ## WASM SIMD support
 WASM SIMD support is very buggy. On some nightly versions it works, on some it doesn't.
 Hopefully this will get better as things stabilize.

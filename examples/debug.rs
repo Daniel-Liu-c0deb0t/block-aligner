@@ -27,7 +27,7 @@ fn main() {
     let bio_alignment = bio_aligner.global(&q, &r);
     let bio_score = bio_alignment.score;
 
-    let block_aligner = Block::<RunParams, _, 32, 256, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 0, 8);
+    let block_aligner = Block::<RunParams, _, 32, 256, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
     let scan_score = block_aligner.res().score;
     let scan_cigar = block_aligner.trace().cigar(q.len(), r.len());
     let (a, b) = scan_cigar.format(&q, &r);
