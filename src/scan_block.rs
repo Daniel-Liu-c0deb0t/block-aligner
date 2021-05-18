@@ -43,8 +43,8 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, cons
     _phantom: PhantomData<P>
 }
 
-const STEP: usize = 2;
-const LARGE_STEP: usize = 4;
+const STEP: usize = 4;
+const LARGE_STEP: usize = 4; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
 impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {

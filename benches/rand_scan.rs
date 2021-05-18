@@ -99,7 +99,7 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     let q = black_box(rand_mutate(&r, K, &NUC, &mut rng));
     let r = PaddedBytes::from_bytes(&r, 2048, true);
     let q = PaddedBytes::from_bytes(&q, 2048, true);
-    type BenchParams = GapParams<-1, -1>;
+    type BenchParams = GapParams<-2, -1>;
 
     b.iter(|| {
         let a = Block::<BenchParams, _, 32, 2048, false, false>::align(&q, &r, &NW1, 0);

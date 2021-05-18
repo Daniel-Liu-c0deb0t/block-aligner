@@ -16,23 +16,29 @@ use block_aligner::simulate::*;
 
 use std::{env, str, cmp};
 
-fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>, verbose: bool) -> (usize, f64, i32, i32) {
+fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>, nuc: bool, verbose: bool) -> (usize, f64, i32, i32) {
     let mut wrong = 0usize;
     let mut wrong_avg = 0i64;
     let mut wrong_min = i32::MAX;
     let mut wrong_max = i32::MIN;
     let mut rng = StdRng::seed_from_u64(1234);
+    let nw = |a, b| if a == b { 1 } else { -1 };
 
     for _i in 0..iter {
-        let r = rand_str(len, &AMINO_ACIDS, &mut rng);
+        let r = rand_str(len, if nuc { &NUC } else { &AMINO_ACIDS }, &mut rng);
         let q = match insert_len {
-            Some(len) => rand_mutate_insert(&r, k, &AMINO_ACIDS, len, &mut rng),
-            None => rand_mutate(&r, k, &AMINO_ACIDS, &mut rng)
+            Some(len) => rand_mutate_insert(&r, k, if nuc { &NUC } else { &AMINO_ACIDS }, len, &mut rng),
+            None => rand_mutate(&r, k, if nuc { &NUC } else { &AMINO_ACIDS }, &mut rng)
         };
 
         // rust-bio
-        let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
-        let bio_score = bio_aligner.global(&q, &r).score;
+        let bio_score = if nuc {
+            let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -1, -1, &nw);
+            bio_aligner.global(&q, &r).score
+        } else {
+            let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
+            bio_aligner.global(&q, &r).score
+        };
 
         // parasailors
         /*
@@ -41,16 +47,22 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         let parasail_score = global_alignment_score(&profile, &r, 11, 1);
         */
 
-        let r_padded = PaddedBytes::from_bytes(&r, 2048, false);
-        let q_padded = PaddedBytes::from_bytes(&q, 2048, false);
-        type RunParams = GapParams<-11, -1>;
+        let r_padded = PaddedBytes::from_bytes(&r, 2048, nuc);
+        let q_padded = PaddedBytes::from_bytes(&q, 2048, nuc);
 
         // ours
         let scan_score = if slow {
             slow_align(&q, &r)
         } else {
-            let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
-            block_aligner.res().score
+            if nuc {
+                type RunParams = GapParams<-2, -1>;
+                let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &NW1, 0);
+                block_aligner.res().score
+            } else {
+                type RunParams = GapParams<-11, -1>;
+                let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
+                block_aligner.res().score
+            }
         };
 
         if bio_score != scan_score {
@@ -78,6 +90,7 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
 fn main() {
     let arg1 = env::args().skip(1).next();
     let slow = false;
+    let nuc = true;
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let iters = [100, 100, 10];
     let lens = [100, 1000, 10000];
@@ -91,7 +104,7 @@ fn main() {
         for &rcp_k in &rcp_ks {
             for &insert in &inserts {
                 let insert_len = if insert { Some(len / 10) } else { None };
-                let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, verbose);
+                let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, nuc, verbose);
                 println!(
                     "\nlen: {}, k: {}, insert: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
                     len,
