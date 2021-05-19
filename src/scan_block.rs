@@ -10,6 +10,7 @@ use crate::cigar::*;
 use std::intrinsics::unlikely;
 use std::{cmp, ptr, i16, alloc};
 use std::marker::PhantomData;
+use std::ops::RangeInclusive;
 
 const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
 
@@ -31,13 +32,15 @@ const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids
 //
 // Each block is made up of vertical SIMD vectors of length 8 or 16 16-bit integers.
 
-pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> {
+pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
     trace: Trace,
     query: &'a PaddedBytes,
     i: usize,
     reference: &'a PaddedBytes,
     j: usize,
+    min_size: usize,
+    max_size: usize,
     matrix: &'a M,
     x_drop: i32,
     _phantom: PhantomData<P>
@@ -47,7 +50,7 @@ const STEP: usize = 4;
 const LARGE_STEP: usize = 4; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
-impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: usize, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { MIN_SIZE }, { MAX_SIZE }, { TRACE }, { X_DROP }> {
+impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, P, M, { TRACE }, { X_DROP }> {
     /// Adaptive banded alignment.
     ///
     /// The x drop option indicates whether to terminate the alignment process early when
@@ -60,10 +63,11 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
     /// 2. The reference and the query can only contain uppercase alphabetical characters.
     /// 3. The actual size of the band is K + 1 rounded up to the next multiple of the
     ///    vector length of 16 (for x86 AVX2) or 8 (for WASM SIMD).
-    pub fn align(query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, x_drop: i32) -> Self {
+    pub fn align(query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, size: RangeInclusive<usize>, x_drop: i32) -> Self {
         assert!(P::GAP_OPEN <= P::GAP_EXTEND);
-        assert!(MIN_SIZE >= L);
-        assert!(MIN_SIZE % L == 0 && MAX_SIZE % L == 0);
+        let min_size = if *size.start() < L { L } else { *size.start() };
+        let max_size = if *size.end() < L { L } else { *size.end() };
+        assert!(min_size % L == 0 && max_size % L == 0);
 
         if X_DROP {
             assert!(x_drop >= 0);
@@ -71,11 +75,13 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
         let mut a = Self {
             res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
-            trace: if TRACE { Trace::new(query.len(), reference.len(), MAX_SIZE) } else { Trace::new(0, 0, 0) },
+            trace: if TRACE { Trace::new(query.len(), reference.len(), max_size) } else { Trace::new(0, 0, 0) },
             query,
             i: 0,
             reference,
             j: 0,
+            min_size,
+            max_size,
             matrix,
             x_drop,
             _phantom: PhantomData
@@ -93,21 +99,21 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
 
         let mut dir = Direction::Grow;
         let mut prev_size = 0;
-        let mut block_size = MIN_SIZE;
+        let mut block_size = self.min_size;
         let mut step = STEP;
 
         let mut off = 0i32;
         let mut prev_off;
 
-        let mut D_col = Aligned::new(MAX_SIZE);
-        let mut C_col = Aligned::new(MAX_SIZE);
-        let mut D_row = Aligned::new(MAX_SIZE);
-        let mut R_row = Aligned::new(MAX_SIZE);
+        let mut D_col = Aligned::new(self.max_size);
+        let mut C_col = Aligned::new(self.max_size);
+        let mut D_row = Aligned::new(self.max_size);
+        let mut R_row = Aligned::new(self.max_size);
 
         if TRACE {
-            self.trace.add_block(0, 0, 1, MIN_SIZE, true);
+            self.trace.add_block(0, 0, 1, self.min_size, true);
         }
-        for i in 0..MIN_SIZE {
+        for i in 0..self.min_size {
             let D_insert = if i == 0 {
                 0
             } else {
@@ -128,19 +134,19 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
         let mut i_ckpt = self.i;
         let mut j_ckpt = self.j;
         let mut off_ckpt = 0i32;
-        let mut D_col_ckpt = Aligned::new(MAX_SIZE);
-        let mut C_col_ckpt = Aligned::new(MAX_SIZE);
-        let mut D_row_ckpt = Aligned::new(MAX_SIZE);
-        let mut R_row_ckpt = Aligned::new(MAX_SIZE);
-        D_col_ckpt.set_all(&D_col, MIN_SIZE);
+        let mut D_col_ckpt = Aligned::new(self.max_size);
+        let mut C_col_ckpt = Aligned::new(self.max_size);
+        let mut D_row_ckpt = Aligned::new(self.max_size);
+        let mut R_row_ckpt = Aligned::new(self.max_size);
+        D_col_ckpt.set_all(&D_col, self.min_size);
         let mut i_ckpt2 = self.i;
         let mut j_ckpt2 = self.j;
         let mut off_ckpt2 = 0i32;
-        let mut D_col_ckpt2 = Aligned::new(MAX_SIZE);
-        let mut C_col_ckpt2 = Aligned::new(MAX_SIZE);
-        let mut D_row_ckpt2 = Aligned::new(MAX_SIZE);
-        let mut R_row_ckpt2 = Aligned::new(MAX_SIZE);
-        D_col_ckpt2.set_all(&D_col, MIN_SIZE);
+        let mut D_col_ckpt2 = Aligned::new(self.max_size);
+        let mut C_col_ckpt2 = Aligned::new(self.max_size);
+        let mut D_row_ckpt2 = Aligned::new(self.max_size);
+        let mut R_row_ckpt2 = Aligned::new(self.max_size);
+        D_col_ckpt2.set_all(&D_col, self.min_size);
         if TRACE {
             self.trace.save_ckpt();
         }
@@ -341,7 +347,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
                     }
                 }
 
-                if MIN_SIZE < MAX_SIZE {
+                if self.min_size < self.max_size {
                     i_ckpt2 = i_ckpt;
                     j_ckpt2 = j_ckpt;
                     off_ckpt2 = off_ckpt;
@@ -391,13 +397,13 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const MIN_SIZE: usize, const MAX_SIZE: 
             }
 
             let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
-            if next_size <= MAX_SIZE {
-                if unlikely(block_size < MIN_SIZE || y_drop_iter > (block_size / step) / 2 || grow_no_max) {
+            if next_size <= self.max_size {
+                if unlikely(block_size < self.min_size || y_drop_iter > (block_size / step) / 2 || grow_no_max) {
                     // y drop grow block
                     prev_size = block_size;
                     block_size = next_size;
                     dir = Direction::Grow;
-                    if block_size >= (LARGE_STEP / STEP) * MIN_SIZE {
+                    if block_size >= (LARGE_STEP / STEP) * self.min_size {
                         step = LARGE_STEP;
                     }
 
@@ -943,61 +949,61 @@ mod tests {
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, false);
         let q = PaddedBytes::from_bytes(b"AARA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
         assert_eq!(a.res().score, 11);
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, false);
         let q = PaddedBytes::from_bytes(b"AAAA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
         assert_eq!(a.res().score, 16);
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, false);
         let q = PaddedBytes::from_bytes(b"AARA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
         assert_eq!(a.res().score, 11);
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, false);
         let q = PaddedBytes::from_bytes(b"RRRR", 16, false);
-        let a = Block::<TestParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
         assert_eq!(a.res().score, -4);
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, false);
         let q = PaddedBytes::from_bytes(b"AAA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, false, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
         assert_eq!(a.res().score, 1);
 
         type TestParams2 = GapParams<-1, -1>;
 
         let r = PaddedBytes::from_bytes(b"AAAN", 16, true);
         let q = PaddedBytes::from_bytes(b"ATAA", 16, true);
-        let a = Block::<TestParams2, _, 16, 16, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 16..=16, 0);
         assert_eq!(a.res().score, 1);
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, true);
         let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, true);
-        let a = Block::<TestParams2, _, 16, 16, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 16..=16, 0);
         assert_eq!(a.res().score, 32);
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, true);
         let q = PaddedBytes::from_bytes(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT", 16, true);
-        let a = Block::<TestParams2, _, 16, 16, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 16..=16, 0);
         assert_eq!(a.res().score, -32);
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, true);
         let q = PaddedBytes::from_bytes(b"TATATATATATATATATATATATATATATATA", 16, true);
-        let a = Block::<TestParams2, _, 16, 16, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 16..=16, 0);
         assert_eq!(a.res().score, 0);
 
         let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, true);
         let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 16, true);
-        let a = Block::<TestParams2, _, 16, 16, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 16..=16, 0);
         assert_eq!(a.res().score, 9);
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, true);
         let q = PaddedBytes::from_bytes(b"C", 16, true);
-        let a = Block::<TestParams2, _, 16, 16, false, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, false, false>::align(&q, &r, &NW1, 16..=16, 0);
         assert_eq!(a.res().score, -4);
-        let a = Block::<TestParams2, _, 16, 16, false, false>::align(&r, &q, &NW1, 0);
+        let a = Block::<TestParams2, _, false, false>::align(&r, &q, &NW1, 16..=16, 0);
         assert_eq!(a.res().score, -4);
     }
 
@@ -1007,12 +1013,12 @@ mod tests {
 
         let r = PaddedBytes::from_bytes(b"AAARRA", 16, false);
         let q = PaddedBytes::from_bytes(b"AAAAAA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, false, true>::align(&q, &r, &BLOSUM62, 1);
+        let a = Block::<TestParams, _, false, true>::align(&q, &r, &BLOSUM62, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA", 16, false);
         let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, false, true>::align(&q, &r, &BLOSUM62, 1);
+        let a = Block::<TestParams, _, false, true>::align(&q, &r, &BLOSUM62, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
     }
 
@@ -1022,14 +1028,14 @@ mod tests {
 
         let r = PaddedBytes::from_bytes(b"AAARRA", 16, false);
         let q = PaddedBytes::from_bytes(b"AAAAAA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, true, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, true, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
         assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "6M");
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, false);
         let q = PaddedBytes::from_bytes(b"AAA", 16, false);
-        let a = Block::<TestParams, _, 16, 16, true, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<TestParams, _, true, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 1, query_idx: 3, reference_idx: 4 });
         assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "3M1D");
@@ -1038,7 +1044,7 @@ mod tests {
 
         let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, true);
         let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 16, true);
-        let a = Block::<TestParams2, _, 16, 16, true, false>::align(&q, &r, &NW1, 0);
+        let a = Block::<TestParams2, _, true, false>::align(&q, &r, &NW1, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 9, query_idx: 24, reference_idx: 21 });
         assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");

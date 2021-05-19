@@ -37,7 +37,7 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
         type RunParams = GapParams<-11, -1>;
 
         // ours
-        let block_aligner = Block::<RunParams, _, 32, 256, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
+        let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=256, 0);
         let scan_score = block_aligner.res().score;
 
         if bio_score != scan_score {

@@ -56,7 +56,7 @@ fn get_data(file_names: &[&str]) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn bench_parasailors_aa_core(idx: usize) -> i32 {
+fn bench_parasailors_aa_core(idx: usize) -> (i32, Duration) {
     let file_data = get_data(&FILE_NAMES[idx]);
     let matrix = Matrix::new(MatrixType::Blosum62);
     let data = file_data
@@ -64,14 +64,15 @@ fn bench_parasailors_aa_core(idx: usize) -> i32 {
         .map(|(q, r)| (Profile::new(q, &matrix), r.to_owned()))
         .collect::<Vec<(Profile, Vec<u8>)>>();
 
+    let start = Instant::now();
     let mut temp = 0i32;
     for (p, r) in &data {
         temp = temp.wrapping_add(global_alignment_score(p, r, 11, 1));
     }
-    temp
+    (temp, start.elapsed())
 }
 
-fn bench_scan_aa_core(idx: usize) -> i32 {
+fn bench_scan_aa_core(idx: usize) -> (i32, Duration) {
     let file_data = get_data(&FILE_NAMES[idx]);
     let data = file_data
         .iter()
@@ -79,18 +80,19 @@ fn bench_scan_aa_core(idx: usize) -> i32 {
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     type BenchParams = GapParams<-11, -1>;
 
+    let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<BenchParams, _, 32, 256, false, false>::align(&q, &r, &BLOSUM62, 0);
+        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=256, 0);
         temp = temp.wrapping_add(a.res().score); // prevent optimizations
     }
-    temp
+    (temp, start.elapsed())
 }
 
-fn time(f: fn(usize) -> i32, idx: usize) -> Duration {
-    let start = Instant::now();
-    black_box(f(idx));
-    start.elapsed()
+fn time(f: fn(usize) -> (i32, Duration), idx: usize) -> Duration {
+    let (temp, duration) = f(idx);
+    black_box(temp);
+    duration
 }
 
 fn main() {

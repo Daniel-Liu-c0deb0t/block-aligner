@@ -56,11 +56,11 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         } else {
             if nuc {
                 type RunParams = GapParams<-2, -1>;
-                let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &NW1, 0);
+                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &NW1, 32..=2048, 0);
                 block_aligner.res().score
             } else {
                 type RunParams = GapParams<-11, -1>;
-                let block_aligner = Block::<RunParams, _, 32, 2048, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 0);
+                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=2048, 0);
                 block_aligner.res().score
             }
         };
