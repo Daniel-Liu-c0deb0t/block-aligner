@@ -64,7 +64,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
     /// 3. The actual size of the band is K + 1 rounded up to the next multiple of the
     ///    vector length of 16 (for x86 AVX2) or 8 (for WASM SIMD).
     pub fn align(query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, size: RangeInclusive<usize>, x_drop: i32) -> Self {
-        assert!(P::GAP_OPEN <= P::GAP_EXTEND);
+        // performance is not as good if there is no gap open cost
+        assert!(P::GAP_OPEN < P::GAP_EXTEND);
         let min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
         assert!(min_size % L == 0 && max_size % L == 0);

@@ -18,7 +18,7 @@ debug-assertions = false
 lto = "thin"
 
 [dependencies]
-wee_alloc = "^0.4"
+#wee_alloc = "^0.4"
 rand = { version = "^0.8", default-features = false, features = ["std_rng", "alloc"] }
 
 [dev-dependencies]

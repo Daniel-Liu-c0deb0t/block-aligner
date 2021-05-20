@@ -87,7 +87,7 @@ fn bench_scan_nuc_core(file: bool) -> (i32, Duration) {
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<BenchParams, _, false, true>::align(&q, &r, &NW1, 32..=32, x_drop);
+        let a = Block::<BenchParams, _, true, true>::align(&q, &r, &NW1, 32..=32, x_drop);
         temp = temp.wrapping_add(a.res().score); // prevent optimizations
     }
     (temp, start.elapsed())

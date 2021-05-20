@@ -1,10 +1,10 @@
 #![cfg_attr(target_arch = "wasm32", feature(wasm_simd))]
 #![feature(core_intrinsics)]
 
-use wee_alloc::WeeAlloc;
+//use wee_alloc::WeeAlloc;
 
-#[global_allocator]
-static ALLOC: WeeAlloc = WeeAlloc::INIT;
+//#[global_allocator]
+//static ALLOC: WeeAlloc = WeeAlloc::INIT;
 
 // special SIMD instruction set modules adapted for this library
 // their types and lengths are abstracted out
