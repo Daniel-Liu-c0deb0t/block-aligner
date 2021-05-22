@@ -25,8 +25,8 @@ fn test(iter: usize, len: usize, k: usize, verbose: bool) -> (usize, f64, i32, i
         let mut r = rand_str(len, &AMINO_ACIDS, &mut rng);
         let q = rand_mutate_suffix(&mut r, k, &AMINO_ACIDS, 500, &mut rng);
 
-        let r_padded = PaddedBytes::from_bytes(&r, 2048, false);
-        let q_padded = PaddedBytes::from_bytes(&q, 2048, false);
+        let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
+        let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
         type RunParams = GapParams<-11, -1>;
 
         let slow_res = slow_align(&q, &r, 50);

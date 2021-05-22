@@ -1,12 +1,20 @@
+#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+use crate::avx2::*;
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+use crate::simd128::*;
+
 use std::i8;
 
-pub trait Matrix {
-    const NUC: bool;
+pub const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
 
+pub trait Matrix {
     fn new() -> Self;
     fn set(&mut self, a: u8, b: u8, score: i8);
     fn get(&self, a: u8, b: u8) -> i8;
     fn as_ptr(&self, i: usize) -> *const i8;
+    fn get_scores(&self, c: u8, v: HalfSimd, right: bool) -> Simd;
+    fn convert_char(&self, c: u8) -> u8;
 }
 
 #[repr(align(32))]
@@ -33,8 +41,6 @@ impl AAMatrix {
 }
 
 impl Matrix for AAMatrix {
-    const NUC: bool = false;
-
     fn new() -> Self {
         Self { scores: [i8::MIN; 27 * 32] }
     }
@@ -64,6 +70,24 @@ impl Matrix for AAMatrix {
         debug_assert!(i < 27);
         unsafe { self.scores.as_ptr().add(i * 32) }
     }
+
+    #[inline]
+    fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
+        // efficiently lookup scores for each character in v
+        let matrix_ptr = self.as_ptr(c as usize);
+        unsafe {
+            let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
+            let scores2 = halfsimd_load((matrix_ptr as *const HalfSimd).add(1));
+            halfsimd_lookup2_i16(scores1, scores2, v)
+        }
+    }
+
+    #[inline]
+    fn convert_char(&self, c: u8) -> u8 {
+        let c = c.to_ascii_uppercase();
+        debug_assert!(c >= b'A' && c <= NULL);
+        c - b'A'
+    }
 }
 
 #[repr(align(32))]
@@ -91,8 +115,6 @@ impl NucMatrix {
 }
 
 impl Matrix for NucMatrix {
-    const NUC: bool = true;
-
     fn new() -> Self {
         Self { scores: [i8::MIN; 8 * 16] }
     }
@@ -120,6 +142,23 @@ impl Matrix for NucMatrix {
     #[inline]
     fn as_ptr(&self, i: usize) -> *const i8 {
         unsafe { self.scores.as_ptr().add((i & 0b111) * 16) }
+    }
+
+    #[inline]
+    fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
+        // efficiently lookup scores for each character in v
+        let matrix_ptr = self.as_ptr(c as usize);
+        unsafe {
+            let scores = halfsimd_load(matrix_ptr as *const HalfSimd);
+            halfsimd_lookup1_i16(scores, v)
+        }
+    }
+
+    #[inline]
+    fn convert_char(&self, c: u8) -> u8 {
+        let c = c.to_ascii_uppercase();
+        debug_assert!(c >= b'A' && c <= NULL);
+        c
     }
 }
 

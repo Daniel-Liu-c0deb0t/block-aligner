@@ -47,19 +47,20 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         let parasail_score = global_alignment_score(&profile, &r, 11, 1);
         */
 
-        let r_padded = PaddedBytes::from_bytes(&r, 2048, nuc);
-        let q_padded = PaddedBytes::from_bytes(&q, 2048, nuc);
-
         // ours
         let scan_score = if slow {
             slow_align(&q, &r)
         } else {
             if nuc {
                 type RunParams = GapParams<-2, -1>;
+                let r_padded = PaddedBytes::from_bytes(&r, 2048, &NW1);
+                let q_padded = PaddedBytes::from_bytes(&q, 2048, &NW1);
                 let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &NW1, 32..=2048, 0);
                 block_aligner.res().score
             } else {
                 type RunParams = GapParams<-11, -1>;
+                let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
+                let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
                 let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=2048, 0);
                 block_aligner.res().score
             }

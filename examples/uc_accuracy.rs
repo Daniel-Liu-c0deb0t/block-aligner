@@ -32,8 +32,8 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
         let indels = indels(&bio_alignment, cmp::max(q.len(), r.len()));
         let indels_idx = cmp::min((indels * 10.0) as usize, 9);
 
-        let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, false);
-        let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, false);
+        let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, &BLOSUM62);
+        let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, &BLOSUM62);
         type RunParams = GapParams<-11, -1>;
 
         // ours

@@ -76,7 +76,7 @@ fn bench_scan_aa_core(idx: usize) -> (i32, Duration) {
     let file_data = get_data(&FILE_NAMES[idx]);
     let data = file_data
         .iter()
-        .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, false), PaddedBytes::from_bytes(r, 2048, false)))
+        .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &BLOSUM62), PaddedBytes::from_bytes(r, 2048, &BLOSUM62)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     type BenchParams = GapParams<-11, -1>;
 

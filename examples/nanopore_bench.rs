@@ -80,7 +80,7 @@ fn bench_scan_nuc_core(file: bool) -> (i32, Duration) {
     let x_drop = if file { 50 } else { 100 };
     let data = file_data
         .iter()
-        .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, true), PaddedBytes::from_bytes(r, 2048, true)))
+        .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &NW1), PaddedBytes::from_bytes(r, 2048, &NW1)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     type BenchParams = GapParams<-2, -1>;
 

@@ -13,8 +13,8 @@ fn run<const K: usize>(len: usize) -> AlignResult {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = rand_str(len, &AMINO_ACIDS, &mut rng);
     let q = rand_mutate(&r, K, &AMINO_ACIDS, &mut rng);
-    let r = PaddedBytes::from_bytes(&r, 2048, false);
-    let q = PaddedBytes::from_bytes(&q, 2048, false);
+    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
+    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
     type RunParams = GapParams<-11, -1>;
 
     let a = Block::<RunParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=2048, 0);

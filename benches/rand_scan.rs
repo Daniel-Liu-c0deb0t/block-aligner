@@ -54,8 +54,8 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize, insert: bool)
     } else {
         black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng))
     };
-    let r = PaddedBytes::from_bytes(&r, 2048, false);
-    let q = PaddedBytes::from_bytes(&q, 2048, false);
+    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
+    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
@@ -68,8 +68,8 @@ fn bench_scan_aa_core_small<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 2048, false);
-    let q = PaddedBytes::from_bytes(&q, 2048, false);
+    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
+    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
@@ -82,8 +82,8 @@ fn bench_scan_aa_core_trace<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 2048, false);
-    let q = PaddedBytes::from_bytes(&q, 2048, false);
+    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
+    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
@@ -97,8 +97,8 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &NUC, &mut rng));
     let q = black_box(rand_mutate(&r, K, &NUC, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 2048, true);
-    let q = PaddedBytes::from_bytes(&q, 2048, true);
+    let r = PaddedBytes::from_bytes(&r, 2048, &NW1);
+    let q = PaddedBytes::from_bytes(&q, 2048, &NW1);
     type BenchParams = GapParams<-2, -1>;
 
     b.iter(|| {

@@ -19,8 +19,8 @@ fn main() {
     let mut r = args.next().unwrap();
     r.make_ascii_uppercase();
     let r = r.as_bytes().to_owned();
-    let r_padded = PaddedBytes::from_bytes(&r, 2048, false);
-    let q_padded = PaddedBytes::from_bytes(&q, 2048, false);
+    let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
+    let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
     type RunParams = GapParams<-11, -1>;
 
     let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
