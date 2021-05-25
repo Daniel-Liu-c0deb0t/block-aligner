@@ -14,7 +14,7 @@ use std::{env, cmp};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels: &mut [usize], wrong: &mut [usize], wrong_avg: &mut [i64], count: &mut [usize]) {
+fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels: &mut [usize], wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) {
     let reader = BufReader::new(File::open(file_name).unwrap());
 
     for line in reader.lines() {
@@ -43,7 +43,7 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
 
         if bio_score != scan_score {
             wrong[id_idx] += 1;
-            wrong_avg[id_idx] += (bio_score - scan_score) as i64;
+            wrong_avg[id_idx] += ((bio_score - scan_score) as f64) / (bio_score as f64);
             wrong_indels[indels_idx] += 1;
 
             if verbose {
@@ -135,7 +135,7 @@ fn main() {
         let mut wrong_indels = [0usize; 10];
         let mut count_indels = [0usize; 10];
         let mut wrong = [0usize; 10];
-        let mut wrong_avg = [0i64; 10];
+        let mut wrong_avg = [0f64; 10];
         let mut count = [0usize; 10];
 
         for file_name in file_names {
@@ -167,7 +167,12 @@ fn main() {
             );
         }
 
-        println!("\ntotal: {}, wrong: {}", count.iter().sum::<usize>(), wrong.iter().sum::<usize>());
+        println!(
+            "\ntotal: {}, wrong: {}, wrong avg: {}",
+            count.iter().sum::<usize>(),
+            wrong.iter().sum::<usize>(),
+            wrong_avg.iter().sum::<f64>() / (wrong.iter().sum::<usize>() as f64)
+        );
     }
 
     println!("Done!");
