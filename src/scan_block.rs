@@ -147,7 +147,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         let mut R_row_ckpt2 = Aligned::new(self.max_size);
         D_col_ckpt2.set_all(&D_col, self.min_size);
         if TRACE {
-            self.trace.save_ckpt();
+            self.trace.save_ckpt(true);
         }
 
         loop {
@@ -303,7 +303,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     D_row_ckpt.set_all(&D_row, block_size);
                     R_row_ckpt.set_all(&R_row, block_size);
                     if TRACE {
-                        self.trace.save_ckpt();
+                        self.trace.save_ckpt(true);
                     }
 
                     (D_max2, D_argmax2, right_max, cmp::max(down_max, new_down_max))
@@ -366,7 +366,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     D_row_ckpt.set_all(&D_row, block_size);
                     R_row_ckpt.set_all(&R_row, block_size);
                     if TRACE {
-                        self.trace.save_ckpt();
+                        self.trace.save_ckpt(false);
                     }
 
                     grow_no_max = false;
@@ -712,9 +712,14 @@ impl Trace {
     }
 
     #[inline]
-    pub fn save_ckpt(&mut self) {
-        self.ckpt_trace_idx2 = self.ckpt_trace_idx;
-        self.ckpt_block_idx2 = self.ckpt_block_idx;
+    pub fn save_ckpt(&mut self, set2: bool) {
+        if set2 {
+            self.ckpt_trace_idx2 = self.trace.len();
+            self.ckpt_block_idx2 = self.block_idx;
+        } else {
+            self.ckpt_trace_idx2 = self.ckpt_trace_idx;
+            self.ckpt_block_idx2 = self.ckpt_block_idx;
+        }
         self.ckpt_trace_idx = self.trace.len();
         self.ckpt_block_idx = self.block_idx;
     }

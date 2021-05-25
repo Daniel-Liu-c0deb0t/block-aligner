@@ -37,8 +37,9 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
         type RunParams = GapParams<-11, -1>;
 
         // ours
-        let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=256, 0);
-        let scan_score = block_aligner.res().score;
+        let block_aligner = Block::<RunParams, _, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=256, 0);
+        let scan_res = block_aligner.res();
+        let scan_score = scan_res.score;
 
         if bio_score != scan_score {
             wrong[id_idx] += 1;
@@ -46,8 +47,9 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
             wrong_indels[indels_idx] += 1;
 
             if verbose {
+                let (a_pretty, b_pretty) = block_aligner.trace().cigar(scan_res.query_idx, scan_res.reference_idx).format(q.as_bytes(), r.as_bytes());
                 println!(
-                    "seq id: {}, max indel len: {}, bio: {}, ours: {}\nq (len = {}): {}\nr (len = {}): {}\nbio pretty:\n{}",
+                    "seq id: {}, max indel len: {}, bio: {}, ours: {}\nq (len = {}): {}\nr (len = {}): {}\nbio pretty:\n{}\nours pretty:\n{}\n{}",
                     seq_identity,
                     indels,
                     bio_score,
@@ -56,7 +58,9 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
                     q,
                     r.len(),
                     r,
-                    bio_alignment.pretty(q.as_bytes(), r.as_bytes())
+                    bio_alignment.pretty(q.as_bytes(), r.as_bytes()),
+                    a_pretty,
+                    b_pretty
                 );
             }
         }
@@ -105,6 +109,15 @@ fn main() {
             "data/merged_clu_aln_90_100.m8"
         ],
         [
+            "data/merged_clu_aln_0.95_30_40.m8",
+            "data/merged_clu_aln_0.95_40_50.m8",
+            "data/merged_clu_aln_0.95_50_60.m8",
+            "data/merged_clu_aln_0.95_60_70.m8",
+            "data/merged_clu_aln_0.95_70_80.m8",
+            "data/merged_clu_aln_0.95_80_90.m8",
+            "data/merged_clu_aln_0.95_90_100.m8"
+        ],
+        [
             "data/uc30_30_40.m8",
             "data/uc30_40_50.m8",
             "data/uc30_50_60.m8",
@@ -114,7 +127,7 @@ fn main() {
             "data/uc30_90_100.m8"
         ]
     ];
-    let strings = ["merged_clu_aln", "uc30"];
+    let strings = ["merged_clu_aln", "merged_clu_aln_0.95", "uc30"];
 
     for (file_names, string) in file_names_arr.iter().zip(&strings) {
         println!("\n{}", string);

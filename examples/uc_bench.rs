@@ -15,7 +15,7 @@ use std::io::{BufRead, BufReader};
 use std::time::{Instant, Duration};
 use std::hint::black_box;
 
-static FILE_NAMES: [[&str; 7]; 2] = [
+static FILE_NAMES: [[&str; 7]; 3] = [
     [
         "data/uc30_30_40.m8",
         "data/uc30_40_50.m8",
@@ -33,6 +33,15 @@ static FILE_NAMES: [[&str; 7]; 2] = [
         "data/merged_clu_aln_70_80.m8",
         "data/merged_clu_aln_80_90.m8",
         "data/merged_clu_aln_90_100.m8"
+    ],
+    [
+        "data/merged_clu_aln_0.95_30_40.m8",
+        "data/merged_clu_aln_0.95_40_50.m8",
+        "data/merged_clu_aln_0.95_50_60.m8",
+        "data/merged_clu_aln_0.95_60_70.m8",
+        "data/merged_clu_aln_0.95_70_80.m8",
+        "data/merged_clu_aln_0.95_80_90.m8",
+        "data/merged_clu_aln_0.95_90_100.m8"
     ]
 ];
 
@@ -100,6 +109,8 @@ fn main() {
     println!("scan uc time (s): {}", d.as_secs_f64());
     let d = time(bench_scan_aa_core, 1);
     println!("scan merged time (s): {}", d.as_secs_f64());
+    let d = time(bench_scan_aa_core, 2);
+    println!("scan merged 0.95 time (s): {}", d.as_secs_f64());
 
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -107,5 +118,7 @@ fn main() {
         println!("parasail uc time (s): {}", d.as_secs_f64());
         let d = time(bench_parasailors_aa_core, 1);
         println!("parasail merged time (s): {}", d.as_secs_f64());
+        let d = time(bench_parasailors_aa_core, 2);
+        println!("parasail merged 0.95 time (s): {}", d.as_secs_f64());
     }
 }
