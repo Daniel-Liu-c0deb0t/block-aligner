@@ -1,3 +1,4 @@
+#![feature(bench_black_box)]
 #![cfg(any(
         all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"),
         all(target_arch = "wasm32", target_feature = "simd128")
@@ -9,20 +10,22 @@ use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 use block_aligner::simulate::*;
 
-fn run<const K: usize>(len: usize) -> AlignResult {
+use std::hint::black_box;
+
+fn run(len: usize, k: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = rand_str(len, &AMINO_ACIDS, &mut rng);
-    let q = rand_mutate(&r, K, &AMINO_ACIDS, &mut rng);
+    let q = rand_mutate(&r, k, &AMINO_ACIDS, &mut rng);
     let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
     let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
     type RunParams = GapParams<-11, -1>;
 
-    let a = Block::<RunParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=2048, 0);
-    a.res()
+    for _i in 0..10000 {
+        let a = Block::<RunParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=2048, 0);
+        black_box(a.res());
+    }
 }
 
 fn main() {
-    for _i in 0..10000 {
-        run::<1000>(10000);
-    }
+    run(10000, 1000);
 }

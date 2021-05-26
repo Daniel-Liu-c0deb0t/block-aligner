@@ -44,6 +44,7 @@ pub struct Block<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_
     _phantom: PhantomData<P>
 }
 
+// increasing step size gives a bit extra speed but results in lower accuracy
 const STEP: usize = 4;
 const LARGE_STEP: usize = 4; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
@@ -349,7 +350,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     }
                 }
 
-                if self.min_size < self.max_size {
+                if block_size < self.max_size {
                     i_ckpt2 = i_ckpt;
                     j_ckpt2 = j_ckpt;
                     off_ckpt2 = off_ckpt;
@@ -400,12 +401,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
             if next_size <= self.max_size {
-                if unlikely(block_size < self.min_size || y_drop_iter > (block_size / step) / 2 || grow_no_max) {
+                if unlikely(y_drop_iter > (block_size / step) / 2 || grow_no_max) {
                     // y drop grow block
                     prev_size = block_size;
                     block_size = next_size;
                     dir = Direction::Grow;
-                    if block_size >= (LARGE_STEP / STEP) * self.min_size {
+                    if STEP != LARGE_STEP && block_size >= (LARGE_STEP / STEP) * self.min_size {
                         step = LARGE_STEP;
                     }
 
