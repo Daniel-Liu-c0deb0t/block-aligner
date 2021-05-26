@@ -14,9 +14,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 fn test(file_name: &str, verbose: bool) -> (usize, f64, usize) {
-    let mut wrong = 0;
-    let mut wrong_avg = 0;
-    let mut count = 0;
+    let mut wrong = 0usize;
+    let mut wrong_avg = 0f64;
+    let mut count = 0usize;
     let reader = BufReader::new(File::open(file_name).unwrap());
     let all_lines = reader.lines().collect::<Vec<_>>();
 
@@ -39,7 +39,7 @@ fn test(file_name: &str, verbose: bool) -> (usize, f64, usize) {
 
         if parasail_score != scan_score {
             wrong += 1;
-            wrong_avg += (parasail_score - scan_score) as i64;
+            wrong_avg += ((parasail_score - scan_score) as f64) / (parasail_score as f64);
 
             if verbose {
                 println!(
@@ -57,7 +57,7 @@ fn test(file_name: &str, verbose: bool) -> (usize, f64, usize) {
         count += 1;
     }
 
-    (wrong, (wrong_avg as f64) / (count as f64), count)
+    (wrong, wrong_avg / (wrong as f64), count)
 }
 
 fn main() {

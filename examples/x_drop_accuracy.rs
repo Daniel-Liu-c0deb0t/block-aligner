@@ -15,7 +15,7 @@ use std::{env, str, cmp};
 
 fn test(iter: usize, len: usize, k: usize, verbose: bool) -> (usize, f64, i32, i32, usize) {
     let mut wrong = 0usize;
-    let mut wrong_avg = 0i64;
+    let mut wrong_avg = 0f64;
     let mut wrong_min = i32::MAX;
     let mut wrong_max = i32::MIN;
     let mut diff_idx = 0usize;
@@ -37,7 +37,7 @@ fn test(iter: usize, len: usize, k: usize, verbose: bool) -> (usize, f64, i32, i
         if slow_res.0 != scan_res.score {
             wrong += 1;
             let score_diff = slow_res.0 - scan_res.score;
-            wrong_avg += score_diff as i64;
+            wrong_avg += (score_diff as f64) / (slow_res.0 as f64);
             wrong_min = cmp::min(wrong_min, score_diff);
             wrong_max = cmp::max(wrong_max, score_diff);
 
@@ -73,7 +73,7 @@ fn test(iter: usize, len: usize, k: usize, verbose: bool) -> (usize, f64, i32, i
         }
     }
 
-    (wrong, (wrong_avg as f64) / (wrong as f64), wrong_min, wrong_max, diff_idx)
+    (wrong, wrong_avg / (wrong as f64), wrong_min, wrong_max, diff_idx)
 }
 
 fn main() {

@@ -73,7 +73,7 @@ fn bench_scan_aa_core_small<const K: usize>(b: &mut Bencher, len: usize) {
     type BenchParams = GapParams<-11, -1>;
 
     b.iter(|| {
-        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &BLOSUM62, 16..=16, 0);
+        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=32, 0);
         a.res()
     });
 }

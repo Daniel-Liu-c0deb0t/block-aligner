@@ -18,7 +18,7 @@ use std::{env, str, cmp};
 
 fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>, nuc: bool, verbose: bool) -> (usize, f64, i32, i32) {
     let mut wrong = 0usize;
-    let mut wrong_avg = 0i64;
+    let mut wrong_avg = 0f64;
     let mut wrong_min = i32::MAX;
     let mut wrong_max = i32::MIN;
     let mut rng = StdRng::seed_from_u64(1234);
@@ -69,7 +69,7 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         if bio_score != scan_score {
             wrong += 1;
             let score_diff = bio_score - scan_score;
-            wrong_avg += score_diff as i64;
+            wrong_avg += (score_diff as f64) / (bio_score as f64);
             wrong_min = cmp::min(wrong_min, score_diff);
             wrong_max = cmp::max(wrong_max, score_diff);
 
@@ -85,7 +85,7 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         }
     }
 
-    (wrong, (wrong_avg as f64) / (wrong as f64), wrong_min, wrong_max)
+    (wrong, wrong_avg / (wrong as f64), wrong_min, wrong_max)
 }
 
 fn main() {
