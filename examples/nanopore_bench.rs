@@ -75,9 +75,28 @@ fn bench_parasailors_nuc_core(file: bool) -> (i32, Duration) {
     (temp, start.elapsed())
 }
 
-fn bench_scan_nuc_core(file: bool) -> (i32, Duration) {
-    let file_data = get_data(if file { Some(&FILE_NAME) } else { None });
-    let x_drop = if file { 50 } else { 100 };
+fn bench_scan_nuc_core(_file: bool) -> (i32, Duration) {
+    let file_data = get_data(None);
+    let x_drop = 100;
+    let matrix = NucMatrix::new_simple(2, -3);
+    let data = file_data
+        .iter()
+        .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &matrix), PaddedBytes::from_bytes(r, 2048, &matrix)))
+        .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
+    type BenchParams = GapParams<-5, -1>;
+
+    let start = Instant::now();
+    let mut temp = 0i32;
+    for (q, r) in &data {
+        let a = Block::<BenchParams, _, true, true>::align(&q, &r, &matrix, 32..=32, x_drop);
+        temp = temp.wrapping_add(a.res().score); // prevent optimizations
+    }
+    (temp, start.elapsed())
+}
+
+fn bench_scan_nuc_file(_file: bool) -> (i32, Duration) {
+    let file_data = get_data(Some(&FILE_NAME));
+    let x_drop = 50;
     let data = file_data
         .iter()
         .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &NW1), PaddedBytes::from_bytes(r, 2048, &NW1)))
@@ -100,7 +119,7 @@ fn time(f: fn(bool) -> (i32, Duration), file: bool) -> Duration {
 }
 
 fn main() {
-    let d = time(bench_scan_nuc_core, true);
+    let d = time(bench_scan_nuc_file, true);
     println!("scan nanopore time (s): {}", d.as_secs_f64());
     let d = time(bench_scan_nuc_core, false);
     println!("scan rand time (s): {}", d.as_secs_f64());

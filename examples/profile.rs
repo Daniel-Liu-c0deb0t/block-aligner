@@ -21,7 +21,7 @@ fn run(len: usize, k: usize) {
     type RunParams = GapParams<-11, -1>;
 
     for _i in 0..10000 {
-        let a = Block::<RunParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=2048, 0);
+        let a = Block::<RunParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=32, 0);
         black_box(a.res());
     }
 }
