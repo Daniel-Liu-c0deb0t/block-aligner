@@ -110,23 +110,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         let mut D_row = Aligned::new(self.max_size);
         let mut R_row = Aligned::new(self.max_size);
 
-        if TRACE {
-            self.trace.add_block(0, 0, 1, self.min_size, true);
-        }
-        for i in 0..self.min_size {
-            let D_insert = if i == 0 {
-                0
-            } else {
-                (P::GAP_OPEN as i16) + ((i - 1) as i16) * (P::GAP_EXTEND as i16)
-            };
-            D_col.set(i, D_insert);
-            if TRACE && i % L == 0 {
-                // first column traceback is all inserts
-                self.trace.add_trace(0xAAAAAAAAAAAAAAAAu64 as TraceType);
-            }
-        }
-        self.j += 1;
-
         let mut temp_buf1 = Aligned::new(L);
         let mut temp_buf2 = Aligned::new(L);
 
@@ -138,7 +121,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         let mut C_col_ckpt = Aligned::new(self.max_size);
         let mut D_row_ckpt = Aligned::new(self.max_size);
         let mut R_row_ckpt = Aligned::new(self.max_size);
-        D_col_ckpt.set_all(&D_col, self.min_size);
         let mut i_ckpt2 = self.i;
         let mut j_ckpt2 = self.j;
         let mut off_ckpt2 = 0i32;
@@ -146,10 +128,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
         let mut C_col_ckpt2 = Aligned::new(self.max_size);
         let mut D_row_ckpt2 = Aligned::new(self.max_size);
         let mut R_row_ckpt2 = Aligned::new(self.max_size);
-        D_col_ckpt2.set_all(&D_col, self.min_size);
-        if TRACE {
-            self.trace.save_ckpt(true);
-        }
 
         loop {
             #[cfg(feature = "debug")]
@@ -401,7 +379,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
             if next_size <= self.max_size {
-                if unlikely(y_drop_iter > (block_size / step) / 2 || grow_no_max) {
+                if unlikely(y_drop_iter > (block_size / step) - 1/* / 2*/ || grow_no_max) {
                     // y drop grow block
                     prev_size = block_size;
                     block_size = next_size;
@@ -562,6 +540,10 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
                 let scores = self.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
                 let mut D11 = simd_adds_i16(D00, scores);
+                if unlikely(start_i + i == 0 && start_j + j == 0) {
+                    D11 = simd_insert_i16!(D11, 0i16, 0);
+                }
+
                 let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
                 D11 = simd_max_i16(D11, C11);
 
