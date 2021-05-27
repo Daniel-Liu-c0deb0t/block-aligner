@@ -14,7 +14,7 @@ use std::{env, cmp};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels: &mut [usize], wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) {
+fn test(file_name: &str, max_size: usize, verbose: bool, wrong_indels: &mut [usize], count_indels: &mut [usize], wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) {
     let reader = BufReader::new(File::open(file_name).unwrap());
 
     for line in reader.lines() {
@@ -37,7 +37,7 @@ fn test(file_name: &str, verbose: bool, wrong_indels: &mut [usize], count_indels
         type RunParams = GapParams<-11, -1>;
 
         // ours
-        let block_aligner = Block::<RunParams, _, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=256, 0);
+        let block_aligner = Block::<RunParams, _, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=max_size, 0);
         let scan_res = block_aligner.res();
         let scan_score = scan_res.score;
 
@@ -128,51 +128,54 @@ fn main() {
         ]
     ];
     let strings = ["merged_clu_aln", "merged_clu_aln_0.95", "uc30"];
+    let max_sizes = [32, 256];
 
     for (file_names, string) in file_names_arr.iter().zip(&strings) {
-        println!("\n{}", string);
+        for &max_size in &max_sizes {
+            println!("\ndataset: {}, max size: {}", string, max_size);
 
-        let mut wrong_indels = [0usize; 10];
-        let mut count_indels = [0usize; 10];
-        let mut wrong = [0usize; 10];
-        let mut wrong_avg = [0f64; 10];
-        let mut count = [0usize; 10];
+            let mut wrong_indels = [0usize; 10];
+            let mut count_indels = [0usize; 10];
+            let mut wrong = [0usize; 10];
+            let mut wrong_avg = [0f64; 10];
+            let mut count = [0usize; 10];
 
-        for file_name in file_names {
-            test(file_name, verbose, &mut wrong_indels, &mut count_indels, &mut wrong, &mut wrong_avg, &mut count);
-        }
+            for file_name in file_names {
+                test(file_name, max_size, verbose, &mut wrong_indels, &mut count_indels, &mut wrong, &mut wrong_avg, &mut count);
+            }
 
-        println!("Seq identity");
+            println!("Seq identity");
 
-        for i in 0..10 {
+            for i in 0..10 {
+                println!(
+                    "bin: {}-{}, count: {}, wrong: {}, wrong avg: {}",
+                    (i as f64) / 10.0,
+                    ((i as f64) + 1.0) / 10.0,
+                    count[i],
+                    wrong[i],
+                    (wrong_avg[i] as f64) / (wrong[i] as f64)
+                );
+            }
+
+            println!("\nIndels");
+
+            for i in 0..10 {
+                println!(
+                    "bin: {}-{}, count: {}, wrong: {}",
+                    (i as f64) / 10.0,
+                    ((i as f64) + 1.0) / 10.0,
+                    count_indels[i],
+                    wrong_indels[i]
+                );
+            }
+
             println!(
-                "bin: {}-{}, count: {}, wrong: {}, wrong avg: {}",
-                (i as f64) / 10.0,
-                ((i as f64) + 1.0) / 10.0,
-                count[i],
-                wrong[i],
-                (wrong_avg[i] as f64) / (wrong[i] as f64)
+                "\ntotal: {}, wrong: {}, wrong avg: {}",
+                count.iter().sum::<usize>(),
+                wrong.iter().sum::<usize>(),
+                wrong_avg.iter().sum::<f64>() / (wrong.iter().sum::<usize>() as f64)
             );
         }
-
-        println!("\nIndels");
-
-        for i in 0..10 {
-            println!(
-                "bin: {}-{}, count: {}, wrong: {}",
-                (i as f64) / 10.0,
-                ((i as f64) + 1.0) / 10.0,
-                count_indels[i],
-                wrong_indels[i]
-            );
-        }
-
-        println!(
-            "\ntotal: {}, wrong: {}, wrong avg: {}",
-            count.iter().sum::<usize>(),
-            wrong.iter().sum::<usize>(),
-            wrong_avg.iter().sum::<f64>() / (wrong.iter().sum::<usize>() as f64)
-        );
     }
 
     println!("Done!");

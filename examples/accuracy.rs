@@ -16,7 +16,7 @@ use block_aligner::simulate::*;
 
 use std::{env, str, cmp};
 
-fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>, nuc: bool, verbose: bool) -> (usize, f64, i32, i32) {
+fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>, nuc: bool, max_size: usize, verbose: bool) -> (usize, f64, i32, i32) {
     let mut wrong = 0usize;
     let mut wrong_avg = 0f64;
     let mut wrong_min = i32::MAX;
@@ -55,13 +55,13 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
                 type RunParams = GapParams<-2, -1>;
                 let r_padded = PaddedBytes::from_bytes(&r, 2048, &NW1);
                 let q_padded = PaddedBytes::from_bytes(&q, 2048, &NW1);
-                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &NW1, 32..=2048, 0);
+                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &NW1, 32..=max_size, 0);
                 block_aligner.res().score
             } else {
                 type RunParams = GapParams<-11, -1>;
                 let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
                 let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
-                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=2048, 0);
+                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=max_size, 0);
                 block_aligner.res().score
             }
         };
@@ -97,6 +97,7 @@ fn main() {
     let lens = [100, 1000, 10000];
     let rcp_ks = [10.0, 5.0, 2.0];
     let inserts = [false, true];
+    let max_sizes = [32, 2048];
 
     let mut total_wrong = 0usize;
     let mut total = 0usize;
@@ -104,21 +105,24 @@ fn main() {
     for (&len, &iter) in lens.iter().zip(&iters) {
         for &rcp_k in &rcp_ks {
             for &insert in &inserts {
-                let insert_len = if insert { Some(len / 10) } else { None };
-                let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, nuc, verbose);
-                println!(
-                    "\nlen: {}, k: {}, insert: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
-                    len,
-                    ((len as f64) / rcp_k) as usize,
-                    insert,
-                    iter,
-                    wrong,
-                    wrong_avg,
-                    wrong_min,
-                    wrong_max
-                );
-                total_wrong += wrong;
-                total += iter;
+                for &max_size in &max_sizes {
+                    let insert_len = if insert { Some(len / 10) } else { None };
+                    let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, nuc, max_size, verbose);
+                    println!(
+                        "\nlen: {}, k: {}, insert: {}, iter: {}, max size: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
+                        len,
+                        ((len as f64) / rcp_k) as usize,
+                        insert,
+                        iter,
+                        max_size,
+                        wrong,
+                        wrong_avg,
+                        wrong_min,
+                        wrong_max
+                    );
+                    total_wrong += wrong;
+                    total += iter;
+                }
             }
         }
     }

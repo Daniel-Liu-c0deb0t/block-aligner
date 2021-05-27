@@ -772,21 +772,30 @@ impl Trace {
                     }
                 }
 
-                while i >= block_i && j >= block_j && (i > 0 || j > 0) {
-                    let curr_i = i - block_i;
-                    let curr_j = j - block_j;
-                    let t = if right > 0 {
+                if right > 0 {
+                    while i >= block_i && j >= block_j && (i > 0 || j > 0) {
+                        let curr_i = i - block_i;
+                        let curr_j = j - block_j;
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
-                        ((*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11) as usize
-                    } else {
+                        let t = ((*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
+                        let lut_idx = right | t;
+                        let op = OP_LUT[lut_idx].0;
+                        i -= OP_LUT[lut_idx].1;
+                        j -= OP_LUT[lut_idx].2;
+                        res.add(op);
+                    }
+                } else {
+                    while i >= block_i && j >= block_j && (i > 0 || j > 0) {
+                        let curr_i = i - block_i;
+                        let curr_j = j - block_j;
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
-                        ((*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11) as usize
-                    };
-                    let lut_idx = right | t;
-                    let op = OP_LUT[lut_idx].0;
-                    i -= OP_LUT[lut_idx].1;
-                    j -= OP_LUT[lut_idx].2;
-                    res.add(op);
+                        let t = ((*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
+                        let lut_idx = right | t;
+                        let op = OP_LUT[lut_idx].0;
+                        i -= OP_LUT[lut_idx].1;
+                        j -= OP_LUT[lut_idx].2;
+                        res.add(op);
+                    }
                 }
             }
 
