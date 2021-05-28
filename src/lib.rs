@@ -1,5 +1,6 @@
 #![cfg_attr(target_arch = "wasm32", feature(wasm_simd))]
 #![feature(core_intrinsics)]
+#![feature(asm)]
 
 //use wee_alloc::WeeAlloc;
 

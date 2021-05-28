@@ -533,6 +533,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
             let mut i = 0;
             while i < height {
+                #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "mca"))]
+                asm!("# LLVM-MCA-BEGIN place_block inner loop", options(nomem, nostack, preserves_flags));
+
                 let D10 = simd_adds_i16(simd_load(D_col.add(i) as _), curr_off_add);
                 let C10 = simd_adds_i16(simd_load(C_col.add(i) as _), curr_off_add);
                 let D00 = simd_sl_i16!(D10, D_corner, 1);
@@ -593,6 +596,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 simd_store(D_col.add(i) as _, D11);
                 simd_store(C_col.add(i) as _, C11);
                 i += L;
+
+                #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "mca"))]
+                asm!("# LLVM-MCA-END", options(nomem, nostack, preserves_flags));
             }
 
             ptr::write(D_row.add(j), *D_col.add(height - 1));
