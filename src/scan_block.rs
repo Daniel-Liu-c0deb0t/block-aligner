@@ -152,7 +152,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                         self.trace.add_block(self.i, self.j + block_size - step, step, block_size, true);
                     }
 
-                    let (D_max, D_argmax, right_max) = self.place_block(
+                    self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
+
+                    let (D_max, D_argmax) = self.place_block(
                         self.query,
                         self.reference,
                         self.i,
@@ -161,11 +163,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
-                        off_add,
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
                         true
                     );
+
+                    let right_max = self.max(block_size, D_col.as_ptr());
 
                     // shift and offset bottom row
                     let down_max = self.shift_and_offset(
@@ -190,7 +193,9 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                         self.trace.add_block(self.i + block_size - step, self.j, block_size, step, false);
                     }
 
-                    let (D_max, D_argmax, down_max) = self.place_block(
+                    self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
+
+                    let (D_max, D_argmax) = self.place_block(
                         self.reference,
                         self.query,
                         self.j,
@@ -199,11 +204,12 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                         block_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
-                        off_add,
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
                         false
                     );
+
+                    let down_max = self.max(block_size, D_row.as_ptr());
 
                     // shift and offset last column
                     let right_max = self.shift_and_offset(
@@ -231,7 +237,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     }
 
                     // down
-                    let (D_max1, D_argmax1, down_max) = self.place_block(
+                    let (D_max1, D_argmax1) = self.place_block(
                         self.reference,
                         self.query,
                         self.j,
@@ -240,7 +246,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                         prev_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
-                        simd_set1_i16(0),
                         D_col.as_mut_ptr().add(prev_size),
                         C_col.as_mut_ptr().add(prev_size),
                         false
@@ -254,7 +259,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                     }
 
                     // right
-                    let (D_max2, D_argmax2, right_max) = self.place_block(
+                    let (D_max2, D_argmax2) = self.place_block(
                         self.query,
                         self.reference,
                         self.i,
@@ -263,12 +268,13 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
-                        simd_set1_i16(0),
                         D_row.as_mut_ptr().add(prev_size),
                         R_row.as_mut_ptr().add(prev_size),
                         true
                     );
-                    let new_down_max = simd_hmax_i16(simd_load(D_row.as_ptr().add(prev_size) as _));
+
+                    let right_max = self.max(block_size, D_col.as_ptr());
+                    let down_max = self.max(block_size, D_row.as_ptr());
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
@@ -285,7 +291,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                         self.trace.save_ckpt(true);
                     }
 
-                    (D_max2, D_argmax2, right_max, cmp::max(down_max, new_down_max))
+                    (D_max2, D_argmax2, right_max, down_max)
                 }
             };
 
@@ -453,6 +459,31 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
 
     #[allow(non_snake_case)]
     #[inline]
+    unsafe fn just_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
+        let mut i = 0;
+        while i < block_size {
+            let a = simd_adds_i16(simd_load(buf1.add(i) as _), off_add);
+            let b = simd_adds_i16(simd_load(buf2.add(i) as _), off_add);
+            simd_store(buf1.add(i) as _, a);
+            simd_store(buf2.add(i) as _, b);
+            i += L;
+        }
+    }
+
+    #[allow(non_snake_case)]
+    #[inline]
+    unsafe fn max(&self, block_size: usize, buf: *const i16) -> i16 {
+        let mut curr_max = simd_set1_i16(i16::MIN);
+        let mut i = 0;
+        while i < block_size {
+            curr_max = simd_max_i16(curr_max, simd_load(buf.add(i) as _));
+            i += L;
+        }
+        simd_hmax_i16(curr_max)
+    }
+
+    #[allow(non_snake_case)]
+    #[inline]
     unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> i16 {
         #[inline]
         unsafe fn sr(a: Simd, b: Simd, step: usize) -> Simd {
@@ -497,7 +528,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
     //
     // Assumes all inputs are already relative to the current offset.
     #[allow(non_snake_case)]
-    #[inline]
+    #[inline(never)]
     unsafe fn place_block(&mut self,
                           query: &PaddedBytes,
                           reference: &PaddedBytes,
@@ -507,27 +538,23 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                           height: usize,
                           D_col: *mut i16,
                           C_col: *mut i16,
-                          off_add: Simd,
                           D_row: *mut i16,
                           R_row: *mut i16,
-                          right: bool) -> (Simd, Simd, i16) {
+                          right: bool) -> (Simd, Simd) {
         let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
         let trace_mask = simd_set1_i16(0xFF00u16 as i16);
         let mut D_max = neg_inf;
-        let mut right_max = neg_inf;
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
-        let mut curr_off_add = off_add;
 
         if unlikely(width == 0 || height == 0) {
-            return (D_max, D_argmax, i16::MIN);
+            return (D_max, D_argmax);
         }
 
         // hottest loop in the whole program
         for j in 0..width {
             let mut D_corner = neg_inf;
             let mut R_insert = neg_inf;
-            right_max = neg_inf;
 
             let c = reference.get(start_j + j);
 
@@ -536,8 +563,8 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "mca"))]
                 asm!("# LLVM-MCA-BEGIN place_block inner loop", options(nomem, nostack, preserves_flags));
 
-                let D10 = simd_adds_i16(simd_load(D_col.add(i) as _), curr_off_add);
-                let C10 = simd_adds_i16(simd_load(C_col.add(i) as _), curr_off_add);
+                let D10 = simd_load(D_col.add(i) as _);
+                let C10 = simd_load(C_col.add(i) as _);
                 let D00 = simd_sl_i16!(D10, D_corner, 1);
                 D_corner = D10;
 
@@ -585,7 +612,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
                 }
 
                 D_max = simd_max_i16(D_max, D11);
-                right_max = simd_max_i16(right_max, D11);
 
                 if X_DROP {
                     let mask = simd_cmpeq_i16(D_max, D11);
@@ -604,7 +630,6 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             ptr::write(D_row.add(j), *D_col.add(height - 1));
             // must subtract gap_extend from R_insert due to how R_insert is calculated
             ptr::write(R_row.add(j), simd_extract_i16!(simd_subs_i16(R_insert, gap_extend), L - 1));
-            curr_off_add = simd_set1_i16(0);
 
             if !X_DROP && unlikely(start_i + height > query.len()
                                    && start_j + j >= reference.len()) {
@@ -612,7 +637,7 @@ impl<'a, P: ScoreParams, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> 
             }
         }
 
-        (D_max, D_argmax, simd_hmax_i16(right_max))
+        (D_max, D_argmax)
     }
 
     #[inline]

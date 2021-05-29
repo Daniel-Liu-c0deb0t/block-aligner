@@ -155,7 +155,7 @@ pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
 #[allow(non_snake_case)]
 #[allow(dead_code)]
 pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
-    let (gap_cost, _gap_cost12345678, neg_inf) = get_prefix_scan_consts(gap);
+    let (gap_cost, _gap_cost12345678, neg_inf, _mask) = get_prefix_scan_consts(gap);
     let mut curr = R_max;
 
     for _i in 0..(L - 1) {
@@ -169,7 +169,7 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 }
 
 #[inline]
-unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd) {
+unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd, Simd) {
     let gap_cost = _mm256_set1_epi16(gap);
     let gap_cost12345678 = _mm256_set_epi16(
         gap * 8, gap * 7, gap * 6, gap * 5,
@@ -178,13 +178,17 @@ unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd) {
         gap * 4, gap * 3, gap * 2, gap * 1
     );
     let neg_inf = _mm256_set1_epi16(i16::MIN);
-    (gap_cost, gap_cost12345678, neg_inf)
+    let mask = _mm256_set_epi8(
+        15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14,
+         1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0
+    );
+    (gap_cost, gap_cost12345678, neg_inf, mask)
 }
 
 #[inline]
 #[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
-    let (gap_cost, gap_cost12345678, neg_inf) = get_prefix_scan_consts(gap);
+    let (gap_cost, gap_cost12345678, neg_inf, mask) = get_prefix_scan_consts(gap);
 
     // Optimized prefix add and max for every eight elements
     // Note: be very careful to avoid lane-crossing which has a large penalty
@@ -200,10 +204,6 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 
     // Correct the upper lane using the last element of the lower lane
     let mut correct1 = simd_sl_i128(shift4, neg_inf);
-    let mask = _mm256_set_epi8(
-        15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14,
-         1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0
-    );
     correct1 = _mm256_shuffle_epi8(correct1, mask);
     correct1 = _mm256_adds_epi16(correct1, gap_cost12345678);
     _mm256_max_epi16(shift4, correct1)
