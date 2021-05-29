@@ -21,13 +21,13 @@ fn main() {
     let r = r.as_bytes().to_owned();
     let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
     let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
-    type RunParams = GapParams<-11, -1>;
+    let run_gaps = Gaps { open: -11, extend: -1 };
 
     let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);
     let bio_alignment = bio_aligner.global(&q, &r);
     let bio_score = bio_alignment.score;
 
-    let block_aligner = Block::<RunParams, _, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=256, 0);
+    let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=256, 0);
     let scan_score = block_aligner.res().score;
     let scan_cigar = block_aligner.trace().cigar(q.len(), r.len());
     let (a, b) = scan_cigar.format(&q, &r);

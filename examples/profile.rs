@@ -18,10 +18,10 @@ fn run(len: usize, k: usize) {
     let q = rand_mutate(&r, k, &AMINO_ACIDS, &mut rng);
     let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
     let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
-    type RunParams = GapParams<-11, -1>;
+    let run_gaps = Gaps { open: -11, extend: -1 };
 
     for _i in 0..10000 {
-        let a = Block::<RunParams, _, true, true>::align(&q, &r, &BLOSUM62, 32..=32, 1000);
+        let a = Block::<_, true, true>::align(&q, &r, &BLOSUM62, run_gaps, 32..=32, 1000);
         black_box(a.res());
     }
 }

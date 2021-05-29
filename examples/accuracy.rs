@@ -52,16 +52,16 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
             slow_align(&q, &r)
         } else {
             if nuc {
-                type RunParams = GapParams<-2, -1>;
+                let run_gaps = Gaps { open: -2, extend: -1 };
                 let r_padded = PaddedBytes::from_bytes(&r, 2048, &NW1);
                 let q_padded = PaddedBytes::from_bytes(&q, 2048, &NW1);
-                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &NW1, 32..=max_size, 0);
+                let block_aligner = Block::<_, false, false>::align(&q_padded, &r_padded, &NW1, run_gaps, 32..=max_size, 0);
                 block_aligner.res().score
             } else {
-                type RunParams = GapParams<-11, -1>;
+                let run_gaps = Gaps { open: -11, extend: -1 };
                 let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
                 let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
-                let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=max_size, 0);
+                let block_aligner = Block::<_, false, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=max_size, 0);
                 block_aligner.res().score
             }
         };

@@ -34,10 +34,10 @@ fn test(file_name: &str, max_size: usize, verbose: bool, wrong_indels: &mut [usi
 
         let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, &BLOSUM62);
         let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, &BLOSUM62);
-        type RunParams = GapParams<-11, -1>;
+        let run_gaps = Gaps { open: -11, extend: -1 };
 
         // ours
-        let block_aligner = Block::<RunParams, _, true, false>::align(&q_padded, &r_padded, &BLOSUM62, 32..=max_size, 0);
+        let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=max_size, 0);
         let scan_res = block_aligner.res();
         let scan_score = scan_res.score;
 

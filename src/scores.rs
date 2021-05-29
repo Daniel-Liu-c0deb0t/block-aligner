@@ -166,7 +166,7 @@ pub static NW1: NucMatrix = NucMatrix::new_simple(1, -1);
 
 pub static BLOSUM62: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM62") };
 
-pub trait ScoreParams {
+/*pub trait ScoreParams {
     const GAP_OPEN: i8;
     const GAP_EXTEND: i8;
     const I: usize;
@@ -180,4 +180,10 @@ impl<const GAP_OPEN: i8, const GAP_EXTEND: i8, const I: usize> ScoreParams for P
     const I: usize = I;
 }
 
-pub type GapParams<const GAP_OPEN: i8, const GAP_EXTEND: i8> = Params<{ GAP_OPEN }, { GAP_EXTEND }, 0>;
+pub type GapParams<const GAP_OPEN: i8, const GAP_EXTEND: i8> = Params<{ GAP_OPEN }, { GAP_EXTEND }, 0>;*/
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct Gaps {
+    pub open: i8,
+    pub extend: i8
+}

@@ -31,10 +31,10 @@ fn test(file_name: &str, verbose: bool) -> (usize, f64, usize) {
 
         let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, &NW1);
         let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, &NW1);
-        type RunParams = GapParams<-2, -1>;
+        let run_gaps = Gaps { open: -2, extend: -1 };
 
         // ours
-        let block_aligner = Block::<RunParams, _, false, false>::align(&q_padded, &r_padded, &NW1, 32..=2048, 0);
+        let block_aligner = Block::<_, false, false>::align(&q_padded, &r_padded, &NW1, run_gaps, 32..=2048, 0);
         let scan_score = block_aligner.res().score;
 
         if parasail_score != scan_score {

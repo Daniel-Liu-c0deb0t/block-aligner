@@ -87,12 +87,12 @@ fn bench_scan_aa_core(idx: usize) -> (i32, Duration) {
         .iter()
         .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &BLOSUM62), PaddedBytes::from_bytes(r, 2048, &BLOSUM62)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
-    type BenchParams = GapParams<-11, -1>;
+    let bench_gaps = Gaps { open: -11, extend: -1 };
 
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<BenchParams, _, false, false>::align(&q, &r, &BLOSUM62, 32..=256, 0);
+        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, bench_gaps, 32..=256, 0);
         temp = temp.wrapping_add(a.res().score); // prevent optimizations
     }
     (temp, start.elapsed())

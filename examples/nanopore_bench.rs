@@ -83,12 +83,12 @@ fn bench_scan_nuc_core(_file: bool) -> (i32, Duration) {
         .iter()
         .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &matrix), PaddedBytes::from_bytes(r, 2048, &matrix)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
-    type BenchParams = GapParams<-5, -1>;
+    let bench_gaps = Gaps { open: -5, extend: -1 };
 
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<BenchParams, _, true, true>::align(&q, &r, &matrix, 32..=32, x_drop);
+        let a = Block::<_, true, true>::align(&q, &r, &matrix, bench_gaps, 32..=32, x_drop);
         temp = temp.wrapping_add(a.res().score); // prevent optimizations
     }
     (temp, start.elapsed())
@@ -101,12 +101,12 @@ fn bench_scan_nuc_file(_file: bool) -> (i32, Duration) {
         .iter()
         .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &NW1), PaddedBytes::from_bytes(r, 2048, &NW1)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
-    type BenchParams = GapParams<-2, -1>;
+    let bench_gaps = Gaps { open: -2, extend: -1 };
 
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<BenchParams, _, true, true>::align(&q, &r, &NW1, 32..=32, x_drop);
+        let a = Block::<_, true, true>::align(&q, &r, &NW1, bench_gaps, 32..=32, x_drop);
         temp = temp.wrapping_add(a.res().score); // prevent optimizations
     }
     (temp, start.elapsed())
