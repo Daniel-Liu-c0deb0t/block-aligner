@@ -9,6 +9,8 @@ pub type TraceType = u32;
 pub const L: usize = 16;
 pub const L_BYTES: usize = L * 2;
 pub const HALFSIMD_MUL: usize = 1;
+pub const ZERO: i16 = 1 << 14;
+pub const MIN: i16 = 0;
 
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { _mm256_adds_epi16(a, b) }
@@ -27,6 +29,9 @@ pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { _mm256_cmpgt_epi16(a, b
 
 #[inline]
 pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd { _mm256_blendv_epi8(a, b, mask) }
+
+#[inline]
+pub unsafe fn simd_packus_i16(a: Simd, b: Simd) -> Simd { _mm256_packus_epi16(a, b) }
 
 #[inline]
 pub unsafe fn simd_load(ptr: *const Simd) -> Simd { _mm256_load_si256(ptr) }
@@ -104,6 +109,34 @@ macro_rules! simd_sr_i16 {
     };
 }
 
+#[macro_export]
+macro_rules! simd_slz_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!(2 * $num < L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_alignr_epi8($a, _mm256_permute2x128_si256($a, $a, 0x0F), (L - (2 * $num)) as i32)
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! simd_srz_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!(2 * $num < L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_alignr_epi8(_mm256_permute2x128_si256($a, $a, 0xF3), $a, (2 * $num) as i32)
+        }
+    };
+}
+
 #[inline]
 unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
     _mm256_permute2x128_si256(a, b, 0x03)
@@ -120,6 +153,20 @@ macro_rules! simd_sll_i16 {
             #[cfg(target_arch = "x86_64")]
             use std::arch::x86_64::*;
             _mm256_alignr_epi8($a, $b, (L - $num * 2) as i32)
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! simd_sllz_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!(2 * $num < L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            _mm256_slli_si256($a, (L - $num * 2) as i32)
         }
     };
 }
@@ -155,12 +202,12 @@ pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
 #[allow(non_snake_case)]
 #[allow(dead_code)]
 pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
-    let (gap_cost, _gap_cost12345678, neg_inf, _mask) = get_prefix_scan_consts(gap);
+    let (gap_cost, _gap_cost12345678) = get_prefix_scan_consts(gap);
     let mut curr = R_max;
 
     for _i in 0..(L - 1) {
         let prev = curr;
-        curr = simd_sl_i16!(curr, neg_inf, 1);
+        curr = simd_slz_i16!(curr, 1);
         curr = _mm256_adds_epi16(curr, gap_cost);
         curr = _mm256_max_epi16(curr, prev);
     }
@@ -169,7 +216,7 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 }
 
 #[inline]
-unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd, Simd) {
+unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd) {
     let gap_cost = _mm256_set1_epi16(gap);
     let gap_cost12345678 = _mm256_set_epi16(
         gap * 8, gap * 7, gap * 6, gap * 5,
@@ -177,34 +224,33 @@ unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd, Simd, Simd) {
         gap * 8, gap * 7, gap * 6, gap * 5,
         gap * 4, gap * 3, gap * 2, gap * 1
     );
-    let neg_inf = _mm256_set1_epi16(i16::MIN);
-    let mask = _mm256_set_epi8(
-        15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14,
-         1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0
-    );
-    (gap_cost, gap_cost12345678, neg_inf, mask)
+    (gap_cost, gap_cost12345678)
 }
 
 #[inline]
 #[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
-    let (gap_cost, gap_cost12345678, neg_inf, mask) = get_prefix_scan_consts(gap);
+    let (gap_cost, gap_cost12345678) = get_prefix_scan_consts(gap);
 
     // Optimized prefix add and max for every eight elements
-    // Note: be very careful to avoid lane-crossing which has a large penalty
-    let mut shift1 = simd_sll_i16!(R_max, neg_inf, 1);
+    // Note: be very careful to avoid lane-crossing which has a large penalty.
+    // Also, make sure to use as little registers as possible to avoid
+    // memory loads (latencies really matter since this is critical path).
+    // Keep the CPU busy with instructions!
+    let mut shift1 = simd_sllz_i16!(R_max, 1);
     shift1 = _mm256_adds_epi16(shift1, gap_cost);
     shift1 = _mm256_max_epi16(R_max, shift1);
-    let mut shift2 = simd_sll_i16!(shift1, neg_inf, 2);
+    let mut shift2 = simd_sllz_i16!(shift1, 2);
     shift2 = _mm256_adds_epi16(shift2, _mm256_slli_epi16(gap_cost, 1));
     shift2 = _mm256_max_epi16(shift1, shift2);
-    let mut shift4 = simd_sll_i16!(shift2, neg_inf, 4);
+    let mut shift4 = simd_sllz_i16!(shift2, 4);
     shift4 = _mm256_adds_epi16(shift4, _mm256_slli_epi16(gap_cost, 2));
     shift4 = _mm256_max_epi16(shift2, shift4);
 
     // Correct the upper lane using the last element of the lower lane
-    let mut correct1 = simd_sl_i128(shift4, neg_inf);
-    correct1 = _mm256_shuffle_epi8(correct1, mask);
+    // Make sure that the operation on the bottom lane is essentially nop
+    let mut correct1 = _mm256_shufflehi_epi16(shift4, 0b11111111);
+    correct1 = _mm256_permute4x64_epi64(correct1, 0b01010000);
     correct1 = _mm256_adds_epi16(correct1, gap_cost12345678);
     _mm256_max_epi16(shift4, correct1)
 }
@@ -213,8 +259,8 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
     let a = _mm_shuffle_epi8(lut1, v);
     let b = _mm_shuffle_epi8(lut2, v);
-    let mask = _mm_cmpgt_epi8(_mm_set1_epi8(0b00010000), v);
-    let c = _mm_blendv_epi8(b, a, mask);
+    let mask = _mm_slli_epi16(v, 3);
+    let c = _mm_blendv_epi8(a, b, mask);
     _mm256_cvtepi8_epi16(c)
 }
 

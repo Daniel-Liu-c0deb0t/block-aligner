@@ -138,11 +138,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
             }
 
             prev_off = off;
-            let mut grow_D_max = simd_set1_i16(i16::MIN);
+            let mut grow_D_max = simd_set1_i16(MIN);
             let mut grow_D_argmax = simd_set1_i16(0);
             let (D_max, D_argmax, right_max, down_max) = match dir {
                 Direction::Right => {
-                    off += D_col.get(0) as i32;
+                    off += (D_col.get(0) as i32) - (ZERO as i32);
                     #[cfg(feature = "debug")]
                     println!("off: {}", off);
                     let off_add = simd_set1_i16(clamp(prev_off - off));
@@ -183,7 +183,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     (D_max, D_argmax, right_max, down_max)
                 },
                 Direction::Down => {
-                    off += D_row.get(0) as i32;
+                    off += (D_row.get(0) as i32) - (ZERO as i32);
                     #[cfg(feature = "debug")]
                     println!("off: {}", off);
                     let off_add = simd_set1_i16(clamp(prev_off - off));
@@ -297,13 +297,14 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
             let D_max_max = simd_hmax_i16(D_max);
             let grow_max = simd_hmax_i16(grow_D_max);
             let max = cmp::max(D_max_max, grow_max);
+            let off_max = off + (max as i32) - (ZERO as i32);
             #[cfg(feature = "debug")]
             println!("down max: {}, right max: {}", down_max, right_max);
 
             y_drop_iter += 1;
             let mut grow_no_max = dir == Direction::Grow;
 
-            if off + (max as i32) > best_max {
+            if off_max > best_max {
                 if X_DROP {
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
@@ -356,11 +357,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     grow_no_max = false;
                 }
 
-                best_max = off + max as i32;
+                best_max = off_max;
                 y_drop_iter = 0;
             }
 
-            if X_DROP && unlikely(off + (max as i32) < best_max - self.x_drop) {
+            if X_DROP && unlikely(off_max < best_max - self.x_drop) {
                 // x drop termination
                 break;
             }
@@ -440,12 +441,12 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 Direction::Right | Direction::Grow => {
                     let idx = self.query.len() - self.i;
                     debug_assert!(idx < block_size);
-                    D_col.get(idx) as i32
+                    (D_col.get(idx) as i32) - (ZERO as i32)
                 },
                 Direction::Down => {
                     let idx = self.reference.len() - self.j;
                     debug_assert!(idx < block_size);
-                    D_row.get(idx) as i32
+                    (D_row.get(idx) as i32) - (ZERO as i32)
                 }
             };
             AlignResult {
@@ -472,7 +473,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn max(&self, block_size: usize, buf: *const i16) -> i16 {
-        let mut curr_max = simd_set1_i16(i16::MIN);
+        let mut curr_max = simd_set1_i16(MIN);
         let mut i = 0;
         while i < block_size {
             curr_max = simd_max_i16(curr_max, simd_load(buf.add(i) as _));
@@ -496,8 +497,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 }
             }
         }
-        let neg_inf = simd_set1_i16(i16::MIN);
-        let mut curr_max = neg_inf;
+        let mut curr_max = simd_set1_i16(MIN);
         let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
         let mut curr2 = simd_adds_i16(simd_load(buf2 as _), off_add);
 
@@ -540,9 +540,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                           D_row: *mut i16,
                           R_row: *mut i16,
                           right: bool) -> (Simd, Simd) {
-        let (neg_inf, gap_open, gap_extend) = self.get_const_simd();
-        let trace_mask = simd_set1_i16(0xFF00u16 as i16);
-        let mut D_max = neg_inf;
+        let (gap_open, gap_extend) = self.get_const_simd();
+        let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
 
@@ -552,8 +551,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
         // hottest loop in the whole program
         for j in 0..width {
-            let mut D_corner = neg_inf;
-            let mut R_insert = neg_inf;
+            let mut D_corner = simd_set1_i16(MIN);
+            let mut R_insert = simd_set1_i16(MIN);
 
             let c = reference.get(start_j + j);
 
@@ -570,7 +569,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 let scores = self.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
                 let mut D11 = simd_adds_i16(D00, scores);
                 if unlikely(start_i + i == 0 && start_j + j == 0) {
-                    D11 = simd_insert_i16!(D11, 0i16, 0);
+                    D11 = simd_insert_i16!(D11, ZERO, 0);
                 }
 
                 let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
@@ -606,7 +605,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         print!("D_R: ");
                         simd_dbg_i16(trace_D_R);
                     }
-                    let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, trace_mask));
+                    let trace = simd_movemask_i8(simd_packus_i16(trace_D_C, trace_D_R));
                     self.trace.add_trace(trace);
                 }
 
@@ -651,12 +650,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
     }
 
     #[inline]
-    unsafe fn get_const_simd(&self) -> (Simd, Simd, Simd) {
+    unsafe fn get_const_simd(&self) -> (Simd, Simd) {
         // some useful constant simd vectors
-        let neg_inf = simd_set1_i16(i16::MIN);
         let gap_open = simd_set1_i16(self.gaps.open as i16);
         let gap_extend = simd_set1_i16(self.gaps.extend as i16);
-        (neg_inf, gap_open, gap_extend)
+        (gap_open, gap_extend)
     }
 }
 
@@ -818,7 +816,7 @@ impl Trace {
 
 #[inline]
 fn clamp(x: i32) -> i16 {
-    cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
+    cmp::min(cmp::max(x, MIN as i32), i16::MAX as i32) as i16
 }
 
 #[inline]
@@ -835,10 +833,9 @@ impl Aligned {
     pub unsafe fn new(block_size: usize) -> Self {
         let layout = alloc::Layout::from_size_align_unchecked(block_size * 2, L_BYTES);
         let ptr = alloc::alloc_zeroed(layout) as *const i16;
-        let neg_inf = simd_set1_i16(i16::MIN);
         let mut i = 0;
         while i < block_size {
-            simd_store(ptr.add(i) as _, neg_inf);
+            simd_store(ptr.add(i) as _, simd_set1_i16(MIN));
             i += L;
         }
         Self { layout, ptr }
