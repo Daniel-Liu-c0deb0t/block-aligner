@@ -586,13 +586,13 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     print!("s:   ");
                     simd_dbg_i16(scores);
                     print!("D00: ");
-                    simd_dbg_i16(D00);
+                    simd_dbg_i16(simd_subs_i16(D00, simd_set1_i16(ZERO)));
                     print!("C11: ");
-                    simd_dbg_i16(C11);
+                    simd_dbg_i16(simd_subs_i16(C11, simd_set1_i16(ZERO)));
                     print!("R11: ");
-                    simd_dbg_i16(R11);
+                    simd_dbg_i16(simd_subs_i16(R11, simd_set1_i16(ZERO)));
                     print!("D11: ");
-                    simd_dbg_i16(D11);
+                    simd_dbg_i16(simd_subs_i16(D11, simd_set1_i16(ZERO)));
                 }
 
                 if TRACE {
@@ -605,7 +605,9 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         print!("D_R: ");
                         simd_dbg_i16(trace_D_R);
                     }
-                    let trace = simd_movemask_i8(simd_packus_i16(trace_D_C, trace_D_R));
+                    let trace_D_C = simd_movemask_i8(trace_D_C) & 0x55555555u32;
+                    let trace_D_R = simd_movemask_i8(trace_D_R) & 0xAAAAAAAAu32;
+                    let trace = trace_D_C | trace_D_R;
                     self.trace.add_trace(trace);
                 }
 
@@ -816,7 +818,7 @@ impl Trace {
 
 #[inline]
 fn clamp(x: i32) -> i16 {
-    cmp::min(cmp::max(x, MIN as i32), i16::MAX as i32) as i16
+    cmp::min(cmp::max(x, i16::MIN as i32), i16::MAX as i32) as i16
 }
 
 #[inline]

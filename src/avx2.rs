@@ -31,9 +31,6 @@ pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { _mm256_cmpgt_epi16(a, b
 pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd { _mm256_blendv_epi8(a, b, mask) }
 
 #[inline]
-pub unsafe fn simd_packus_i16(a: Simd, b: Simd) -> Simd { _mm256_packus_epi16(a, b) }
-
-#[inline]
 pub unsafe fn simd_load(ptr: *const Simd) -> Simd { _mm256_load_si256(ptr) }
 
 #[inline]
@@ -142,21 +139,6 @@ unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
     _mm256_permute2x128_si256(a, b, 0x03)
 }
 
-
-#[macro_export]
-macro_rules! simd_sll_i16 {
-    ($a:expr, $b:expr, $num:expr) => {
-        {
-            debug_assert!(2 * $num < L);
-            #[cfg(target_arch = "x86")]
-            use std::arch::x86::*;
-            #[cfg(target_arch = "x86_64")]
-            use std::arch::x86_64::*;
-            _mm256_alignr_epi8($a, $b, (L - $num * 2) as i32)
-        }
-    };
-}
-
 #[macro_export]
 macro_rules! simd_sllz_i16 {
     ($a:expr, $num:expr) => {
@@ -166,7 +148,7 @@ macro_rules! simd_sllz_i16 {
             use std::arch::x86::*;
             #[cfg(target_arch = "x86_64")]
             use std::arch::x86_64::*;
-            _mm256_slli_si256($a, (L - $num * 2) as i32)
+            _mm256_slli_si256($a, ($num * 2) as i32)
         }
     };
 }
