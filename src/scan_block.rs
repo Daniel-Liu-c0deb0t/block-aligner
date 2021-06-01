@@ -527,7 +527,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
     //
     // Assumes all inputs are already relative to the current offset.
     #[allow(non_snake_case)]
-    #[inline]
+    #[inline(never)]
     unsafe fn place_block(&mut self,
                           query: &PaddedBytes,
                           reference: &PaddedBytes,
@@ -553,6 +553,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         for j in 0..width {
             let mut D_corner = simd_set1_i16(MIN);
             let mut R_insert = simd_set1_i16(MIN);
+            let mut D11 = simd_set1_i16(MIN);
+            let mut R11 = simd_set1_i16(MIN);
 
             let c = reference.get(start_j + j);
 
@@ -567,7 +569,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 D_corner = D10;
 
                 let scores = self.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
-                let mut D11 = simd_adds_i16(D00, scores);
+                D11 = simd_adds_i16(D00, scores);
                 if unlikely(start_i + i == 0 && start_j + j == 0) {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
                 }
@@ -576,7 +578,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 D11 = simd_max_i16(D11, C11);
 
                 let D11_open = simd_adds_i16(D11, gap_open);
-                let mut R11 = simd_sl_i16!(D11_open, R_insert, 1);
+                R11 = simd_sl_i16!(D11_open, R_insert, 1);
                 R11 = simd_prefix_scan_i16(R11, self.gaps.extend as i16);
                 D11 = simd_max_i16(D11, R11);
                 R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
@@ -605,9 +607,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         print!("D_R: ");
                         simd_dbg_i16(trace_D_R);
                     }
-                    let trace_D_C = simd_movemask_i8(trace_D_C) & 0x55555555u32;
-                    let trace_D_R = simd_movemask_i8(trace_D_R) & 0xAAAAAAAAu32;
-                    let trace = trace_D_C | trace_D_R;
+                    let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
                     self.trace.add_trace(trace);
                 }
 
@@ -627,9 +627,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 asm!("# LLVM-MCA-END", options(nomem, nostack, preserves_flags));
             }
 
-            ptr::write(D_row.add(j), *D_col.add(height - 1));
-            // must subtract gap_extend from R_insert due to how R_insert is calculated
-            ptr::write(R_row.add(j), simd_extract_i16!(simd_subs_i16(R_insert, gap_extend), L - 1));
+            ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
+            ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
             if !X_DROP && unlikely(start_i + height > query.len()
                                    && start_j + j >= reference.len()) {
