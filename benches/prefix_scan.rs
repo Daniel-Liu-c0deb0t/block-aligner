@@ -16,7 +16,8 @@ fn bench_opt_prefix_scan(b: &mut Bencher) {
         let vec = simd_load(vec.0.as_ptr() as *const Simd);
 
         b.iter(|| {
-            simd_prefix_scan_i16(black_box(vec), -1)
+            let consts = get_prefix_scan_consts(-1);
+            simd_prefix_scan_i16(black_box(vec), consts)
         });
     }
 }
@@ -28,7 +29,8 @@ fn bench_naive_prefix_scan(b: &mut Bencher) {
         let vec = simd_load(vec.0.as_ptr() as *const Simd);
 
         b.iter(|| {
-            simd_naive_prefix_scan_i16(black_box(vec), -1)
+            let consts = get_prefix_scan_consts(-1);
+            simd_naive_prefix_scan_i16(black_box(vec), consts)
         });
     }
 }

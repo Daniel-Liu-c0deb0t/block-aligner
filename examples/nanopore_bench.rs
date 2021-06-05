@@ -119,6 +119,10 @@ fn time(f: fn(bool) -> (i32, Duration), file: bool) -> Duration {
 }
 
 fn main() {
+    for _i in 0..3 {
+        let _d = time(bench_scan_nuc_core, false);
+    }
+
     let d = time(bench_scan_nuc_file, true);
     println!("scan nanopore time (s): {}", d.as_secs_f64());
     let d = time(bench_scan_nuc_core, false);

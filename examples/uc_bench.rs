@@ -105,6 +105,10 @@ fn time(f: fn(usize) -> (i32, Duration), idx: usize) -> Duration {
 }
 
 fn main() {
+    for _i in 0..3 {
+        let _d = time(bench_scan_aa_core, 1);
+    }
+
     let d = time(bench_scan_aa_core, 0);
     println!("scan uc time (s): {}", d.as_secs_f64());
     let d = time(bench_scan_aa_core, 1);

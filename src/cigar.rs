@@ -29,10 +29,10 @@ impl Cigar {
     pub unsafe fn add(&mut self, op: Operation) {
         debug_assert!(self.idx < self.s.len());
         // branchlessly append one operation
-        let add = (op != self.s.get_unchecked(self.idx - 1).op) as usize;
+        let add = (op != (*self.s.as_ptr().add(self.idx - 1)).op) as usize;
         self.idx += add;
-        self.s.get_unchecked_mut(self.idx - 1).op = op;
-        self.s.get_unchecked_mut(self.idx - 1).len += 1;
+        (*self.s.as_mut_ptr().add(self.idx - 1)).op = op;
+        (*self.s.as_mut_ptr().add(self.idx - 1)).len += 1;
     }
 
     pub fn len(&self) -> usize {

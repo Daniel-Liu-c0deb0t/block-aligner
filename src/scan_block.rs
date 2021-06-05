@@ -44,8 +44,8 @@ pub struct Block<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
 }
 
 // increasing step size gives a bit extra speed but results in lower accuracy
-const STEP: usize = 4;
-const LARGE_STEP: usize = 4; // use larger step size when the block size gets large
+const STEP: usize = if L / 2 < 8 { L / 2 } else { 8 };
+const LARGE_STEP: usize = STEP; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
 impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { TRACE }, { X_DROP }> {
@@ -128,6 +128,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let mut D_row_ckpt2 = Aligned::new(self.max_size);
         let mut R_row_ckpt2 = Aligned::new(self.max_size);
 
+        let prefix_scan_consts = get_prefix_scan_consts(self.gaps.extend as i16);
+
         loop {
             #[cfg(feature = "debug")]
             {
@@ -164,7 +166,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         C_col.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
-                        true
+                        true,
+                        prefix_scan_consts
                     );
 
                     let right_max = self.max(block_size, D_col.as_ptr());
@@ -205,7 +208,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         R_row.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
-                        false
+                        false,
+                        prefix_scan_consts
                     );
 
                     let down_max = self.max(block_size, D_row.as_ptr());
@@ -247,7 +251,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         R_row.as_mut_ptr(),
                         D_col.as_mut_ptr().add(prev_size),
                         C_col.as_mut_ptr().add(prev_size),
-                        false
+                        false,
+                        prefix_scan_consts
                     );
 
                     #[cfg(feature = "debug")]
@@ -269,7 +274,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         C_col.as_mut_ptr(),
                         D_row.as_mut_ptr().add(prev_size),
                         R_row.as_mut_ptr().add(prev_size),
-                        true
+                        true,
+                        prefix_scan_consts
                     );
 
                     let right_max = self.max(block_size, D_col.as_ptr());
@@ -527,7 +533,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
     //
     // Assumes all inputs are already relative to the current offset.
     #[allow(non_snake_case)]
-    #[inline(never)]
+    // Want this to be inlined in some places and not others, so let
+    // compiler decide.
     unsafe fn place_block(&mut self,
                           query: &PaddedBytes,
                           reference: &PaddedBytes,
@@ -539,7 +546,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                           C_col: *mut i16,
                           D_row: *mut i16,
                           R_row: *mut i16,
-                          right: bool) -> (Simd, Simd) {
+                          right: bool,
+                          prefix_scan_consts: PrefixScanConsts) -> (Simd, Simd) {
         let (gap_open, gap_extend) = self.get_const_simd();
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
@@ -579,7 +587,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
                 let D11_open = simd_adds_i16(D11, gap_open);
                 R11 = simd_sl_i16!(D11_open, R_insert, 1);
-                R11 = simd_prefix_scan_i16(R11, self.gaps.extend as i16);
+                R11 = simd_prefix_scan_i16(R11, prefix_scan_consts);
                 D11 = simd_max_i16(D11, R11);
                 R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
 
@@ -699,7 +707,7 @@ impl Trace {
     #[inline]
     pub fn add_trace(&mut self, t: TraceType) {
         debug_assert!(self.trace_idx < self.trace.len());
-        unsafe { *self.trace.get_unchecked_mut(self.trace_idx) = t; }
+        unsafe { *self.trace.as_mut_ptr().add(self.trace_idx) = t; }
         self.trace_idx += 1;
     }
 
@@ -707,15 +715,15 @@ impl Trace {
     pub fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
         debug_assert!(self.block_idx * 2 < self.block_start.len());
         unsafe {
-            *self.block_start.get_unchecked_mut(self.block_idx * 2) = i as u32;
-            *self.block_start.get_unchecked_mut(self.block_idx * 2 + 1) = j as u32;
-            *self.block_size.get_unchecked_mut(self.block_idx * 2) = height as u32;
-            *self.block_size.get_unchecked_mut(self.block_idx * 2 + 1) = width as u32;
+            *self.block_start.as_mut_ptr().add(self.block_idx * 2) = i as u32;
+            *self.block_start.as_mut_ptr().add(self.block_idx * 2 + 1) = j as u32;
+            *self.block_size.as_mut_ptr().add(self.block_idx * 2) = height as u32;
+            *self.block_size.as_mut_ptr().add(self.block_idx * 2 + 1) = width as u32;
 
             let a = self.block_idx / 64;
             let b = self.block_idx % 64;
-            let v = *self.right.get_unchecked(a) & !(1 << b); // clear bit
-            *self.right.get_unchecked_mut(a) = v | ((right as u64) << b);
+            let v = *self.right.as_ptr().add(a) & !(1 << b); // clear bit
+            *self.right.as_mut_ptr().add(a) = v | ((right as u64) << b);
 
             self.trace.resize(self.trace.len() + width * height / L, 0 as TraceType);
 
@@ -771,14 +779,14 @@ impl Trace {
             while i > 0 || j > 0 {
                 loop {
                     block_idx -= 1;
-                    block_i = *self.block_start.get_unchecked(block_idx * 2) as usize;
-                    block_j = *self.block_start.get_unchecked(block_idx * 2 + 1) as usize;
-                    block_height = *self.block_size.get_unchecked(block_idx * 2) as usize;
-                    block_width = *self.block_size.get_unchecked(block_idx * 2 + 1) as usize;
+                    block_i = *self.block_start.as_ptr().add(block_idx * 2) as usize;
+                    block_j = *self.block_start.as_ptr().add(block_idx * 2 + 1) as usize;
+                    block_height = *self.block_size.as_ptr().add(block_idx * 2) as usize;
+                    block_width = *self.block_size.as_ptr().add(block_idx * 2 + 1) as usize;
                     trace_idx -= block_width * block_height / L;
 
                     if i >= block_i && j >= block_j {
-                        right = (((*self.right.get_unchecked(block_idx / 64) >> (block_idx % 64)) & 0b1) << 2) as usize;
+                        right = (((*self.right.as_ptr().add(block_idx / 64) >> (block_idx % 64)) & 0b1) << 2) as usize;
                         break;
                     }
                 }
@@ -788,7 +796,7 @@ impl Trace {
                         let curr_i = i - block_i;
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
-                        let t = ((*self.trace.get_unchecked(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
+                        let t = ((*self.trace.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let lut_idx = right | t;
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
@@ -800,7 +808,7 @@ impl Trace {
                         let curr_i = i - block_i;
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
-                        let t = ((*self.trace.get_unchecked(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
+                        let t = ((*self.trace.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let lut_idx = right | t;
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
@@ -912,12 +920,12 @@ impl PaddedBytes {
 
     #[inline]
     pub fn get(&self, i: usize) -> u8 {
-        unsafe { *self.s.get_unchecked(i) }
+        unsafe { *self.s.as_ptr().add(i) }
     }
 
     #[inline]
     pub fn set(&mut self, i: usize, c: u8) {
-        unsafe { *self.s.get_unchecked_mut(i) = c; }
+        unsafe { *self.s.as_mut_ptr().add(i) = c; }
     }
 
     #[inline]
