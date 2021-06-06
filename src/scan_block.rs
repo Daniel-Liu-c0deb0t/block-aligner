@@ -7,7 +7,7 @@ use crate::simd128::*;
 use crate::scores::*;
 use crate::cigar::*;
 
-use std::intrinsics::unlikely;
+use std::intrinsics::{unlikely, unchecked_rem};
 use std::{cmp, ptr, i16, alloc};
 use std::ops::RangeInclusive;
 
@@ -314,7 +314,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 if X_DROP {
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
-                    let r = (idx % (block_size / L)) * L + lane_idx;
+                    let r = unchecked_rem(idx, block_size / L) * L + lane_idx;
                     let c = (block_size - step) + (idx / (block_size / L));
 
                     match dir {
@@ -328,13 +328,13 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         },
                         Direction::Grow => {
                             if max >= grow_max {
-                                best_argmax_i = self.i + (idx % (block_size / L)) * L + lane_idx;
+                                best_argmax_i = self.i + unchecked_rem(idx, block_size / L) * L + lane_idx;
                                 best_argmax_j = self.j + prev_size + (idx / (block_size / L));
                             } else {
                                 let lane_idx = simd_hargmax_i16(grow_D_max, grow_max);
                                 let idx = simd_slow_extract_i16(grow_D_argmax, lane_idx) as usize;
                                 best_argmax_i = self.i + prev_size + (idx / (prev_size / L));
-                                best_argmax_j = self.j + (idx % (prev_size / L)) * L + lane_idx;
+                                best_argmax_j = self.j + unchecked_rem(idx, prev_size / L) * L + lane_idx;
                             }
                         }
                     }

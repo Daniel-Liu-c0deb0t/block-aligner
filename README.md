@@ -101,6 +101,17 @@ brew install cargo-instruments
 RUSTFLAGS="-g -C target-cpu=native" cargo instruments --example profile --release --open
 ```
 
+## Analyzing performance with LLVM-MCA
+Use
+```
+./build_ir_asm.sh
+```
+to generate assembly output and run LLVM-MCA.
+
+## Viewing the assembly
+Use either `./build_ir_asm.sh`, `objdump -d` on a binary (avoids recompiling code in
+some cases), or a more advanced tool like Ghidra (has a decompiler, too).
+
 ## AVX-512 support
 Work in progress.
 
