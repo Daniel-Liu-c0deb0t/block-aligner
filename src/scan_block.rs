@@ -7,7 +7,7 @@ use crate::simd128::*;
 use crate::scores::*;
 use crate::cigar::*;
 
-use std::intrinsics::{unlikely, unchecked_rem};
+use std::intrinsics::{unlikely, unchecked_rem, unchecked_div};
 use std::{cmp, ptr, i16, alloc};
 use std::ops::RangeInclusive;
 
@@ -283,15 +283,21 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
-                    D_col_ckpt2.set_all(&D_col, block_size);
-                    C_col_ckpt2.set_all(&C_col, block_size);
-                    D_row_ckpt2.set_all(&D_row, block_size);
-                    R_row_ckpt2.set_all(&R_row, block_size);
+                    let mut i = 0;
+                    while i < block_size {
+                        D_col_ckpt2.set_vec(&D_col, i);
+                        C_col_ckpt2.set_vec(&C_col, i);
+                        D_row_ckpt2.set_vec(&D_row, i);
+                        R_row_ckpt2.set_vec(&R_row, i);
 
-                    D_col_ckpt.set_all(&D_col, block_size);
-                    C_col_ckpt.set_all(&C_col, block_size);
-                    D_row_ckpt.set_all(&D_row, block_size);
-                    R_row_ckpt.set_all(&R_row, block_size);
+                        D_col_ckpt.set_vec(&D_col, i);
+                        C_col_ckpt.set_vec(&C_col, i);
+                        D_row_ckpt.set_vec(&D_row, i);
+                        R_row_ckpt.set_vec(&R_row, i);
+
+                        i += L;
+                    }
+
                     if TRACE {
                         self.trace.save_ckpt(true);
                     }
@@ -315,7 +321,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     let r = unchecked_rem(idx, block_size / L) * L + lane_idx;
-                    let c = (block_size - step) + (idx / (block_size / L));
+                    let c = (block_size - step) + unchecked_div(idx, block_size / L);
 
                     match dir {
                         Direction::Right => {
@@ -329,11 +335,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         Direction::Grow => {
                             if max >= grow_max {
                                 best_argmax_i = self.i + unchecked_rem(idx, block_size / L) * L + lane_idx;
-                                best_argmax_j = self.j + prev_size + (idx / (block_size / L));
+                                best_argmax_j = self.j + prev_size + unchecked_div(idx, block_size / L);
                             } else {
                                 let lane_idx = simd_hargmax_i16(grow_D_max, grow_max);
                                 let idx = simd_slow_extract_i16(grow_D_argmax, lane_idx) as usize;
-                                best_argmax_i = self.i + prev_size + (idx / (prev_size / L));
+                                best_argmax_i = self.i + prev_size + unchecked_div(idx, prev_size / L);
                                 best_argmax_j = self.j + unchecked_rem(idx, prev_size / L) * L + lane_idx;
                             }
                         }
@@ -344,18 +350,25 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     i_ckpt2 = i_ckpt;
                     j_ckpt2 = j_ckpt;
                     off_ckpt2 = off_ckpt;
-                    D_col_ckpt2.set_all(&D_col_ckpt, block_size);
-                    C_col_ckpt2.set_all(&C_col_ckpt, block_size);
-                    D_row_ckpt2.set_all(&D_row_ckpt, block_size);
-                    R_row_ckpt2.set_all(&R_row_ckpt, block_size);
-
                     i_ckpt = self.i;
                     j_ckpt = self.j;
                     off_ckpt = off;
-                    D_col_ckpt.set_all(&D_col, block_size);
-                    C_col_ckpt.set_all(&C_col, block_size);
-                    D_row_ckpt.set_all(&D_row, block_size);
-                    R_row_ckpt.set_all(&R_row, block_size);
+
+                    let mut i = 0;
+                    while i < block_size {
+                        D_col_ckpt2.set_vec(&D_col_ckpt, i);
+                        C_col_ckpt2.set_vec(&C_col_ckpt, i);
+                        D_row_ckpt2.set_vec(&D_row_ckpt, i);
+                        R_row_ckpt2.set_vec(&R_row_ckpt, i);
+
+                        D_col_ckpt.set_vec(&D_col, i);
+                        C_col_ckpt.set_vec(&C_col, i);
+                        D_row_ckpt.set_vec(&D_row, i);
+                        R_row_ckpt.set_vec(&R_row, i);
+
+                        i += L;
+                    }
+
                     if TRACE {
                         self.trace.save_ckpt(false);
                     }
@@ -406,10 +419,17 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     i_ckpt = i_ckpt2;
                     j_ckpt = j_ckpt2;
                     off_ckpt = off_ckpt2;
-                    D_col.set_all(&D_col_ckpt2, prev_size);
-                    C_col.set_all(&C_col_ckpt2, prev_size);
-                    D_row.set_all(&D_row_ckpt2, prev_size);
-                    R_row.set_all(&R_row_ckpt2, prev_size);
+
+                    let mut i = 0;
+                    while i < prev_size {
+                        D_col.set_vec(&D_col_ckpt2, i);
+                        C_col.set_vec(&C_col_ckpt2, i);
+                        D_row.set_vec(&D_row_ckpt2, i);
+                        R_row.set_vec(&R_row_ckpt2, i);
+
+                        i += L;
+                    }
+
                     if TRACE {
                         self.trace.restore_ckpt();
                     }
@@ -850,13 +870,9 @@ impl Aligned {
         Self { layout, ptr }
     }
 
-    pub unsafe fn set_all(&mut self, o: &Aligned, len: usize) {
-        let o_ptr = o.as_ptr();
-        let mut i = 0;
-        while i < len {
-            simd_store(self.ptr.add(i) as _, simd_load(o_ptr.add(i) as _));
-            i += L;
-        }
+    #[inline]
+    pub unsafe fn set_vec(&mut self, o: &Aligned, idx: usize) {
+        simd_store(self.ptr.add(idx) as _, simd_load(o.as_ptr().add(idx) as _));
     }
 
     #[inline]
