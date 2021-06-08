@@ -569,6 +569,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                           right: bool,
                           prefix_scan_consts: PrefixScanConsts) -> (Simd, Simd) {
         let (gap_open, gap_extend) = self.get_const_simd();
+        let gap_extend16 = get_gap_extend16(self.gaps.extend as i16);
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
@@ -605,11 +606,13 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
                 D11 = simd_max_i16(D11, C11);
 
-                let D11_open = simd_adds_i16(D11, gap_open);
-                R11 = simd_sl_i16!(D11_open, R_insert, 1);
-                R11 = simd_prefix_scan_i16(R11, prefix_scan_consts);
+                let D11_open = simd_adds_i16(D11, simd_subs_i16(gap_open, gap_extend));
+                //R11 = simd_sl_i16!(D11_open, R_insert, 1);
+                R11 = simd_prefix_scan_i16(D11_open, prefix_scan_consts);
+                R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R_insert), gap_extend16));
                 D11 = simd_max_i16(D11, R11);
-                R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
+                //R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
+                R_insert = R11;
 
                 #[cfg(feature = "debug")]
                 {
@@ -636,7 +639,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         simd_dbg_i16(trace_D_R);
                     }
                     let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
-                    self.trace.add_trace(trace);
+                    self.trace.add_trace(trace as TraceType);
                 }
 
                 D_max = simd_max_i16(D_max, D11);
@@ -727,7 +730,7 @@ impl Trace {
     #[inline]
     pub fn add_trace(&mut self, t: TraceType) {
         debug_assert!(self.trace_idx < self.trace.len());
-        unsafe { *self.trace.as_mut_ptr().add(self.trace_idx) = t; }
+        unsafe { store_trace(self.trace.as_mut_ptr().add(self.trace_idx), t); }
         self.trace_idx += 1;
     }
 
@@ -1072,13 +1075,13 @@ mod tests {
         assert_eq!(res, AlignResult { score: 1, query_idx: 3, reference_idx: 4 });
         assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "3M1D");
 
-        let test_gaps2 = Gaps { open: -1, extend: -1 };
+        let test_gaps2 = Gaps { open: -2, extend: -1 };
 
         let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, &NW1);
         let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 16, &NW1);
         let a = Block::<_, true, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         let res = a.res();
-        assert_eq!(res, AlignResult { score: 9, query_idx: 24, reference_idx: 21 });
+        assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
         assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");
     }
 }

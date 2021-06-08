@@ -5,12 +5,16 @@ use std::arch::x86_64::*;
 
 pub type Simd = __m256i;
 pub type HalfSimd = __m128i;
-pub type TraceType = u32;
+pub type TraceType = i32;
 pub const L: usize = 16;
 pub const L_BYTES: usize = L * 2;
 pub const HALFSIMD_MUL: usize = 1;
 pub const ZERO: i16 = 1 << 14;
 pub const MIN: i16 = 0;
+
+// Non-temporal store to avoid cluttering cache with traces
+#[inline]
+pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { _mm_stream_si32(ptr, trace) }
 
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { _mm256_adds_epi16(a, b) }
@@ -154,6 +158,12 @@ macro_rules! simd_sllz_i16 {
 }
 
 #[inline]
+pub unsafe fn simd_broadcasthi_i16(v: Simd) -> Simd {
+    let v = _mm256_shufflehi_epi16(v, 0b11111111);
+    _mm256_permute4x64_epi64(v, 0b11111111)
+}
+
+#[inline]
 pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     debug_assert!(i < L);
 
@@ -194,6 +204,16 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, (gap_cost, _gap_cost123456
     }
 
     curr
+}
+
+#[inline]
+pub unsafe fn get_gap_extend16(gap: i16) -> Simd {
+    _mm256_set_epi16(
+        gap * 16, gap * 15, gap * 14, gap * 13,
+        gap * 12, gap * 11, gap * 10, gap * 9,
+        gap * 8, gap * 7, gap * 6, gap * 5,
+        gap * 4, gap * 3, gap * 2, gap * 1
+    )
 }
 
 pub type PrefixScanConsts = (Simd, Simd);
