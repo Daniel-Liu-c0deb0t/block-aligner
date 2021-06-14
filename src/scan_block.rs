@@ -62,8 +62,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
     /// 3. The actual size of the band is K + 1 rounded up to the next multiple of the
     ///    vector length of 16 (for x86 AVX2) or 8 (for WASM SIMD).
     pub fn align(query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) -> Self {
-        // performance is not as good if there is no gap open cost
-        assert!(gaps.open <= gaps.extend);
+        // there are edge cases with calculating traceback that doesn't work if gap open does not cost more
+        assert!(gaps.open < gaps.extend);
         let min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
         assert!(min_size % L == 0 && max_size % L == 0);
@@ -1011,12 +1011,12 @@ mod tests {
         let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 1);
 
-        let test_gaps2 = Gaps { open: -1, extend: -1 };
+        let test_gaps2 = Gaps { open: -2, extend: -1 };
 
         let r = PaddedBytes::from_bytes(b"AAAN", 16, &NW1);
         let q = PaddedBytes::from_bytes(b"ATAA", 16, &NW1);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
-        assert_eq!(a.res().score, 1);
+        assert_eq!(a.res().score, 0);
 
         let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, &NW1);
         let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, &NW1);
@@ -1036,14 +1036,14 @@ mod tests {
         let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, &NW1);
         let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 16, &NW1);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
-        assert_eq!(a.res().score, 9);
+        assert_eq!(a.res().score, 7);
 
         let r = PaddedBytes::from_bytes(b"AAAA", 16, &NW1);
         let q = PaddedBytes::from_bytes(b"C", 16, &NW1);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
-        assert_eq!(a.res().score, -4);
+        assert_eq!(a.res().score, -5);
         let a = Block::<_, false, false>::align(&r, &q, &NW1, test_gaps2, 16..=16, 0);
-        assert_eq!(a.res().score, -4);
+        assert_eq!(a.res().score, -5);
     }
 
     #[test]
@@ -1087,5 +1087,20 @@ mod tests {
         let res = a.res();
         assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
         assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");
+    }
+
+    #[test]
+    fn test_bytes() {
+        let test_gaps = Gaps { open: -2, extend: -1 };
+
+        let r = PaddedBytes::from_bytes(b"AAAaaA", 16, &BYTES1);
+        let q = PaddedBytes::from_bytes(b"AAAAAA", 16, &BYTES1);
+        let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, 2);
+
+        let r = PaddedBytes::from_bytes(b"abcdefg", 16, &BYTES1);
+        let q = PaddedBytes::from_bytes(b"abdefg", 16, &BYTES1);
+        let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, 4);
     }
 }

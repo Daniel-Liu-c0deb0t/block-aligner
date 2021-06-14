@@ -271,6 +271,13 @@ pub unsafe fn halfsimd_lookup1_i16(lut: HalfSimd, v: HalfSimd) -> Simd {
 }
 
 #[inline]
+pub unsafe fn halfsimd_lookup_bytes_i16(match_scores: HalfSimd, mismatch_scores: HalfSimd, a: HalfSimd, b: HalfSimd) -> Simd {
+    let mask = _mm_cmpeq_epi8(a, b);
+    let c = _mm_blendv_epi8(mismatch_scores, match_scores, mask);
+    _mm256_cvtepi8_epi16(c)
+}
+
+#[inline]
 pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { _mm_load_si128(ptr) }
 
 #[inline]

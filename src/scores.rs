@@ -162,9 +162,56 @@ impl Matrix for NucMatrix {
     }
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub struct ByteMatrix {
+    match_score: i8,
+    mismatch_score: i8
+}
+
+impl ByteMatrix {
+    pub const fn new_simple(match_score: i8, mismatch_score: i8) -> Self {
+        Self { match_score, mismatch_score }
+    }
+}
+
+impl Matrix for ByteMatrix {
+    fn new() -> Self {
+        Self { match_score: i8::MIN, mismatch_score: i8::MIN }
+    }
+
+    fn set(&mut self, _a: u8, _b: u8, _score: i8) {
+        unimplemented!();
+    }
+
+    fn get(&self, a: u8, b: u8) -> i8 {
+        if a == b { self.match_score } else { self.mismatch_score }
+    }
+
+    #[inline]
+    fn as_ptr(&self, _i: usize) -> *const i8 {
+        unimplemented!()
+    }
+
+    #[inline]
+    fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
+        unsafe {
+            let match_scores = halfsimd_set1_i8(self.match_score);
+            let mismatch_scores = halfsimd_set1_i8(self.mismatch_score);
+            halfsimd_lookup_bytes_i16(match_scores, mismatch_scores, halfsimd_set1_i8(c as i8), v)
+        }
+    }
+
+    #[inline]
+    fn convert_char(&self, c: u8) -> u8 {
+        c
+    }
+}
+
 pub static NW1: NucMatrix = NucMatrix::new_simple(1, -1);
 
 pub static BLOSUM62: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM62") };
+
+pub static BYTES1: ByteMatrix = ByteMatrix::new_simple(1, -1);
 
 /*pub trait ScoreParams {
     const GAP_OPEN: i8;
