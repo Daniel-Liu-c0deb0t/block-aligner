@@ -103,6 +103,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
         let mut off = 0i32;
         let mut prev_off;
+        let mut off_max = 0i32;
 
         let mut D_col = Aligned::new(self.max_size);
         let mut C_col = Aligned::new(self.max_size);
@@ -145,7 +146,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
             let mut grow_D_argmax = simd_set1_i16(0);
             let (D_max, D_argmax, right_max, down_max) = match dir {
                 Direction::Right => {
-                    off += (D_col.get(0) as i32) - (ZERO as i32);
+                    off = off_max;
                     #[cfg(feature = "debug")]
                     println!("off: {}", off);
                     let off_add = simd_set1_i16(clamp(prev_off - off));
@@ -188,7 +189,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     (D_max, D_argmax, right_max, down_max)
                 },
                 Direction::Down => {
-                    off += (D_row.get(0) as i32) - (ZERO as i32);
+                    off = off_max;
                     #[cfg(feature = "debug")]
                     println!("off: {}", off);
                     let off_add = simd_set1_i16(clamp(prev_off - off));
@@ -314,7 +315,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
             let D_max_max = simd_hmax_i16(D_max);
             let grow_max = simd_hmax_i16(grow_D_max);
             let max = cmp::max(D_max_max, grow_max);
-            let off_max = off + (max as i32) - (ZERO as i32);
+            off_max = off + (max as i32) - (ZERO as i32);
             #[cfg(feature = "debug")]
             println!("down max: {}, right max: {}", down_max, right_max);
 
