@@ -207,7 +207,7 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, (gap_cost, _gap_cost123456
 }
 
 #[inline]
-pub unsafe fn get_gap_extend16(gap: i16) -> Simd {
+pub unsafe fn get_gap_extend_all(gap: i16) -> Simd {
     _mm256_set_epi16(
         gap * 16, gap * 15, gap * 14, gap * 13,
         gap * 12, gap * 11, gap * 10, gap * 9,

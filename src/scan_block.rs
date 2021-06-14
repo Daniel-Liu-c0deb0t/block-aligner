@@ -129,6 +129,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let mut R_row_ckpt2 = Aligned::new(self.max_size);
 
         let prefix_scan_consts = get_prefix_scan_consts(self.gaps.extend as i16);
+        let gap_extend_all = get_gap_extend_all(self.gaps.extend as i16);
 
         loop {
             #[cfg(feature = "debug")]
@@ -167,7 +168,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
                         true,
-                        prefix_scan_consts
+                        prefix_scan_consts,
+                        gap_extend_all
                     );
 
                     let right_max = self.max(block_size, D_col.as_ptr());
@@ -209,7 +211,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
                         false,
-                        prefix_scan_consts
+                        prefix_scan_consts,
+                        gap_extend_all
                     );
 
                     let down_max = self.max(block_size, D_row.as_ptr());
@@ -252,7 +255,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         D_col.as_mut_ptr().add(prev_size),
                         C_col.as_mut_ptr().add(prev_size),
                         false,
-                        prefix_scan_consts
+                        prefix_scan_consts,
+                        gap_extend_all
                     );
 
                     #[cfg(feature = "debug")]
@@ -275,7 +279,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         D_row.as_mut_ptr().add(prev_size),
                         R_row.as_mut_ptr().add(prev_size),
                         true,
-                        prefix_scan_consts
+                        prefix_scan_consts,
+                        gap_extend_all
                     );
 
                     let right_max = self.max(block_size, D_col.as_ptr());
@@ -567,9 +572,9 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                           D_row: *mut i16,
                           R_row: *mut i16,
                           right: bool,
-                          prefix_scan_consts: PrefixScanConsts) -> (Simd, Simd) {
+                          prefix_scan_consts: PrefixScanConsts,
+                          gap_extend_all: Simd) -> (Simd, Simd) {
         let (gap_open, gap_extend) = self.get_const_simd();
-        let gap_extend16 = get_gap_extend16(self.gaps.extend as i16);
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
@@ -581,7 +586,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         // hottest loop in the whole program
         for j in 0..width {
             let mut D_corner = simd_set1_i16(MIN);
-            let mut R_insert = simd_set1_i16(MIN);
+            let mut R01 = simd_set1_i16(MIN);
             let mut D11 = simd_set1_i16(MIN);
             let mut R11 = simd_set1_i16(MIN);
 
@@ -607,12 +612,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 D11 = simd_max_i16(D11, C11);
 
                 let D11_open = simd_adds_i16(D11, simd_subs_i16(gap_open, gap_extend));
-                //R11 = simd_sl_i16!(D11_open, R_insert, 1);
                 R11 = simd_prefix_scan_i16(D11_open, prefix_scan_consts);
-                R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R_insert), gap_extend16));
+                // Do prefix scan before using R01 to break up dependency chain
+                R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
                 D11 = simd_max_i16(D11, R11);
-                //R_insert = simd_max_i16(D11_open, simd_adds_i16(R11, gap_extend));
-                R_insert = R11;
+                R01 = R11;
 
                 #[cfg(feature = "debug")]
                 {
