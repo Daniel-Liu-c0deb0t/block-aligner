@@ -184,6 +184,30 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
     simd_extract_i16!(v2, 0)
 }
 
+#[macro_export]
+macro_rules! simd_prefix_hmax_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!(2 * $num < L);
+            #[cfg(target_arch = "x86")]
+            use std::arch::x86::*;
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::*;
+            let mut v = $a;
+            if $num > 4 {
+                v = _mm256_max_epi16(v, _mm256_srli_si256(v, 8));
+            }
+            if $num > 2 {
+                v = _mm256_max_epi16(v, _mm256_srli_si256(v, 4));
+            }
+            if $num > 1 {
+                v = _mm256_max_epi16(v, _mm256_srli_si256(v, 2));
+            }
+            simd_extract_i16!(v, 0)
+        }
+    };
+}
+
 #[inline]
 pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
     let v2 = _mm256_cmpeq_epi16(v, _mm256_set1_epi16(max));

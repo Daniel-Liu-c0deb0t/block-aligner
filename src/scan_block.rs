@@ -95,6 +95,9 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let mut best_max = 0i32;
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
+        let mut best_max2 = 0i32;
+        let mut best_argmax2_i = 0usize;
+        let mut best_argmax2_j = 0usize;
 
         let mut dir = Direction::Grow;
         let mut prev_size = 0;
@@ -173,10 +176,10 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         gap_extend_all
                     );
 
-                    let right_max = self.max(block_size, D_col.as_ptr());
+                    let right_max = self.prefix_max(D_col.as_ptr(), step);
 
                     // shift and offset bottom row
-                    let down_max = self.shift_and_offset(
+                    self.shift_and_offset(
                         block_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
@@ -185,6 +188,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         off_add,
                         step
                     );
+                    let down_max = self.prefix_max(D_row.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
                 },
@@ -216,10 +220,10 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         gap_extend_all
                     );
 
-                    let down_max = self.max(block_size, D_row.as_ptr());
+                    let down_max = self.prefix_max(D_row.as_ptr(), step);
 
                     // shift and offset last column
-                    let right_max = self.shift_and_offset(
+                    self.shift_and_offset(
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
@@ -228,6 +232,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         off_add,
                         step
                     );
+                    let right_max = self.prefix_max(D_col.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
                 },
@@ -284,8 +289,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         gap_extend_all
                     );
 
-                    let right_max = self.max(block_size, D_col.as_ptr());
-                    let down_max = self.max(block_size, D_row.as_ptr());
+                    let right_max = self.prefix_max(D_col.as_ptr(), step);
+                    let down_max = self.prefix_max(D_row.as_ptr(), step);
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
@@ -324,6 +329,9 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
             if off_max > best_max {
                 if X_DROP {
+                    best_argmax2_i = best_argmax_i;
+                    best_argmax2_j = best_argmax_j;
+
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     let r = unchecked_rem(idx, block_size / L) * L + lane_idx;
@@ -382,6 +390,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     grow_no_max = false;
                 }
 
+                best_max2 = best_max;
                 best_max = off_max;
                 y_drop_iter = 0;
             }
@@ -410,7 +419,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
             let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
             if next_size <= self.max_size {
-                if unlikely(y_drop_iter > (block_size / step) - 1/* / 2*/ || grow_no_max) {
+                if unlikely(y_drop_iter > (block_size / step) - 1 || grow_no_max) {
                     // y drop grow block
                     prev_size = block_size;
                     block_size = next_size;
@@ -422,6 +431,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     self.i = i_ckpt2;
                     self.j = j_ckpt2;
                     off = off_ckpt2;
+                    best_max = best_max2;
+                    if X_DROP {
+                        best_argmax_i = best_argmax2_i;
+                        best_argmax_j = best_argmax2_j;
+                    }
                     i_ckpt = i_ckpt2;
                     j_ckpt = j_ckpt2;
                     off_ckpt = off_ckpt2;
@@ -504,19 +518,21 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn max(&self, block_size: usize, buf: *const i16) -> i16 {
-        let mut curr_max = simd_set1_i16(MIN);
-        let mut i = 0;
-        while i < block_size {
-            curr_max = simd_max_i16(curr_max, simd_load(buf.add(i) as _));
-            i += L;
+    unsafe fn prefix_max(&self, buf: *const i16, step: usize) -> i16 {
+        if STEP == LARGE_STEP {
+            simd_prefix_hmax_i16!(simd_load(buf as _), STEP)
+        } else {
+            if step == STEP {
+                simd_prefix_hmax_i16!(simd_load(buf as _), STEP)
+            } else {
+                simd_prefix_hmax_i16!(simd_load(buf as _), LARGE_STEP)
+            }
         }
-        simd_hmax_i16(curr_max)
     }
 
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> i16 {
+    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) {
         #[inline]
         unsafe fn sr(a: Simd, b: Simd, step: usize) -> Simd {
             if STEP == LARGE_STEP {
@@ -529,7 +545,6 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 }
             }
         }
-        let mut curr_max = simd_set1_i16(MIN);
         let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
         let mut curr2 = simd_adds_i16(simd_load(buf2 as _), off_add);
 
@@ -540,7 +555,6 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
             let shifted = sr(next1, curr1, step);
             simd_store(buf1.add(i) as _, shifted);
             simd_store(buf2.add(i) as _, sr(next2, curr2, step));
-            curr_max = simd_max_i16(curr_max, shifted);
             curr1 = next1;
             curr2 = next2;
             i += L;
@@ -551,8 +565,6 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let shifted = sr(next1, curr1, step);
         simd_store(buf1.add(block_size - L) as _, shifted);
         simd_store(buf2.add(block_size - L) as _, sr(next2, curr2, step));
-        curr_max = simd_max_i16(curr_max, shifted);
-        simd_hmax_i16(curr_max)
     }
 
     // Place block right or down.
@@ -921,8 +933,8 @@ impl PaddedBytes {
     pub fn from_bytes<M: Matrix>(b: &[u8], block_size: usize, matrix: &M) -> Self {
         let mut v = b.to_owned();
         let len = v.len();
-        v.insert(0, NULL);
-        v.resize(v.len() + block_size, NULL);
+        v.insert(0, M::NULL);
+        v.resize(v.len() + block_size, M::NULL);
         v.iter_mut().for_each(|c| *c = matrix.convert_char(*c));
         Self { s: v, len }
     }
@@ -936,8 +948,8 @@ impl PaddedBytes {
     pub fn from_string<M: Matrix>(s: String, block_size: usize, matrix: &M) -> Self {
         let mut v = s.into_bytes();
         let len = v.len();
-        v.insert(0, NULL);
-        v.resize(v.len() + block_size, NULL);
+        v.insert(0, M::NULL);
+        v.resize(v.len() + block_size, M::NULL);
         v.iter_mut().for_each(|c| *c = matrix.convert_char(*c));
         Self { s: v, len }
     }

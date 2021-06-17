@@ -6,9 +6,8 @@ use crate::simd128::*;
 
 use std::i8;
 
-pub const NULL: u8 = b'A' + 26u8; // this null byte value works for both amino acids and nucleotides
-
 pub trait Matrix {
+    const NULL: u8;
     fn new() -> Self;
     fn set(&mut self, a: u8, b: u8, score: i8);
     fn get(&self, a: u8, b: u8) -> i8;
@@ -41,6 +40,8 @@ impl AAMatrix {
 }
 
 impl Matrix for AAMatrix {
+    const NULL: u8 = b'A' + 26u8;
+
     fn new() -> Self {
         Self { scores: [i8::MIN; 27 * 32] }
     }
@@ -85,7 +86,7 @@ impl Matrix for AAMatrix {
     #[inline]
     fn convert_char(&self, c: u8) -> u8 {
         let c = c.to_ascii_uppercase();
-        debug_assert!(c >= b'A' && c <= NULL);
+        debug_assert!(c >= b'A' && c <= Self::NULL);
         c - b'A'
     }
 }
@@ -115,6 +116,8 @@ impl NucMatrix {
 }
 
 impl Matrix for NucMatrix {
+    const NULL: u8 = b'Z';
+
     fn new() -> Self {
         Self { scores: [i8::MIN; 8 * 16] }
     }
@@ -157,7 +160,7 @@ impl Matrix for NucMatrix {
     #[inline]
     fn convert_char(&self, c: u8) -> u8 {
         let c = c.to_ascii_uppercase();
-        debug_assert!(c >= b'A' && c <= NULL);
+        debug_assert!(c >= b'A' && c <= Self::NULL);
         c
     }
 }
@@ -175,6 +178,11 @@ impl ByteMatrix {
 }
 
 impl Matrix for ByteMatrix {
+    // NULL bytes used as padding.
+    // Leads to inaccurate results with x drop alignment
+    // when the block reaches the ends of the strings.
+    const NULL: u8 = b'\0';
+
     fn new() -> Self {
         Self { match_score: i8::MIN, mismatch_score: i8::MIN }
     }
