@@ -392,6 +392,13 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
                 best_max2 = best_max;
                 best_max = off_max;
+
+                if X_DROP && dir == Direction::Grow {
+                    best_max2 = best_max;
+                    best_argmax2_i = best_argmax_i;
+                    best_argmax2_j = best_argmax_j;
+                }
+
                 y_drop_iter = 0;
             }
 
