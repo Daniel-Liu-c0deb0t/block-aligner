@@ -19,8 +19,8 @@ fn main() {
     let mut r = args.next().unwrap();
     r.make_ascii_uppercase();
     let r = r.as_bytes().to_owned();
-    let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
-    let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
+    let r_padded = PaddedBytes::from_bytes::<AAMatrix>(&r, 2048);
+    let q_padded = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
     let run_gaps = Gaps { open: -11, extend: -1 };
 
     let mut bio_aligner = Aligner::with_capacity(q.len(), r.len(), -10, -1, &blosum62);

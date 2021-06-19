@@ -53,14 +53,14 @@ fn test(iter: usize, len: usize, k: usize, slow: bool, insert_len: Option<usize>
         } else {
             if nuc {
                 let run_gaps = Gaps { open: -2, extend: -1 };
-                let r_padded = PaddedBytes::from_bytes(&r, 2048, &NW1);
-                let q_padded = PaddedBytes::from_bytes(&q, 2048, &NW1);
+                let r_padded = PaddedBytes::from_bytes::<NucMatrix>(&r, 2048);
+                let q_padded = PaddedBytes::from_bytes::<NucMatrix>(&q, 2048);
                 let block_aligner = Block::<_, false, false>::align(&q_padded, &r_padded, &NW1, run_gaps, 32..=max_size, 0);
                 block_aligner.res().score
             } else {
                 let run_gaps = Gaps { open: -11, extend: -1 };
-                let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
-                let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
+                let r_padded = PaddedBytes::from_bytes::<AAMatrix>(&r, 2048);
+                let q_padded = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
                 let block_aligner = Block::<_, false, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=max_size, 0);
                 block_aligner.res().score
             }

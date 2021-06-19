@@ -31,8 +31,8 @@ fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
         let x_drop = 50;
         //let matrix = NucMatrix::new_simple(2, -3);
         let matrix = NucMatrix::new_simple(1, -1);
-        let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, &matrix);
-        let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, &matrix);
+        let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), 2048);
+        let q_padded = PaddedBytes::from_bytes::<NucMatrix>(q.as_bytes(), 2048);
         //let run_gaps = Gaps { open: -5, extend: -1 };
         let run_gaps = Gaps { open: -2, extend: -1 };
 

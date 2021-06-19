@@ -81,7 +81,7 @@ fn bench_scan_nuc_core(_file: bool) -> (i32, Duration) {
     let matrix = NucMatrix::new_simple(2, -3);
     let data = file_data
         .iter()
-        .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &matrix), PaddedBytes::from_bytes(r, 2048, &matrix)))
+        .map(|(q, r)| (PaddedBytes::from_bytes::<NucMatrix>(q, 2048), PaddedBytes::from_bytes::<NucMatrix>(r, 2048)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     let bench_gaps = Gaps { open: -5, extend: -1 };
 
@@ -99,7 +99,7 @@ fn bench_scan_nuc_file(_file: bool) -> (i32, Duration) {
     let x_drop = 50;
     let data = file_data
         .iter()
-        .map(|(q, r)| (PaddedBytes::from_bytes(q, 2048, &NW1), PaddedBytes::from_bytes(r, 2048, &NW1)))
+        .map(|(q, r)| (PaddedBytes::from_bytes::<NucMatrix>(q, 2048), PaddedBytes::from_bytes::<NucMatrix>(r, 2048)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     let bench_gaps = Gaps { open: -2, extend: -1 };
 

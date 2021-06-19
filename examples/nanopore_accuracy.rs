@@ -25,8 +25,8 @@ fn test(file_name: &str, verbose: bool) -> (usize, f64, usize) {
         let profile = Profile::new(q.as_bytes(), &matrix);
         let parasail_score = global_alignment_score(&profile, r.as_bytes(), 2, 1);
 
-        let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, &NW1);
-        let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, &NW1);
+        let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), 2048);
+        let q_padded = PaddedBytes::from_bytes::<NucMatrix>(q.as_bytes(), 2048);
         let run_gaps = Gaps { open: -2, extend: -1 };
 
         // ours

@@ -32,8 +32,8 @@ fn test(file_name: &str, max_size: usize, verbose: bool, wrong_indels: &mut [usi
         let indels = indels(&bio_alignment, cmp::max(q.len(), r.len()));
         let indels_idx = cmp::min((indels * 10.0) as usize, 9);
 
-        let r_padded = PaddedBytes::from_bytes(r.as_bytes(), 2048, &BLOSUM62);
-        let q_padded = PaddedBytes::from_bytes(q.as_bytes(), 2048, &BLOSUM62);
+        let r_padded = PaddedBytes::from_bytes::<AAMatrix>(r.as_bytes(), 2048);
+        let q_padded = PaddedBytes::from_bytes::<AAMatrix>(q.as_bytes(), 2048);
         let run_gaps = Gaps { open: -11, extend: -1 };
 
         // ours

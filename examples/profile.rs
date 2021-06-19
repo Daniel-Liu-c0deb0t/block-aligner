@@ -16,8 +16,8 @@ fn run(len: usize, k: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = rand_str(len, &AMINO_ACIDS, &mut rng);
     let q = rand_mutate(&r, k, &AMINO_ACIDS, &mut rng);
-    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
-    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
+    let r = PaddedBytes::from_bytes::<AAMatrix>(&r, 2048);
+    let q = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
     let run_gaps = Gaps { open: -11, extend: -1 };
 
     for _i in 0..10000 {

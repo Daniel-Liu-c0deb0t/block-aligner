@@ -54,8 +54,8 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize, insert: bool)
     } else {
         black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng))
     };
-    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
-    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
+    let r = PaddedBytes::from_bytes::<AAMatrix>(&r, 2048);
+    let q = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
     let bench_gaps = Gaps { open: -11, extend: -1 };
 
     b.iter(|| {
@@ -68,8 +68,8 @@ fn bench_scan_aa_core_small<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
-    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
+    let r = PaddedBytes::from_bytes::<AAMatrix>(&r, 2048);
+    let q = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
     let bench_gaps = Gaps { open: -11, extend: -1 };
 
     b.iter(|| {
@@ -82,8 +82,8 @@ fn bench_scan_aa_core_trace<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
-    let q = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
+    let r = PaddedBytes::from_bytes::<AAMatrix>(&r, 2048);
+    let q = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
     let bench_gaps = Gaps { open: -11, extend: -1 };
 
     b.iter(|| {
@@ -97,8 +97,8 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &NUC, &mut rng));
     let q = black_box(rand_mutate(&r, K, &NUC, &mut rng));
-    let r = PaddedBytes::from_bytes(&r, 2048, &NW1);
-    let q = PaddedBytes::from_bytes(&q, 2048, &NW1);
+    let r = PaddedBytes::from_bytes::<NucMatrix>(&r, 2048);
+    let q = PaddedBytes::from_bytes::<NucMatrix>(&q, 2048);
     let bench_gaps = Gaps { open: -2, extend: -1 };
 
     b.iter(|| {

@@ -937,27 +937,27 @@ pub struct PaddedBytes {
 
 impl PaddedBytes {
     #[inline]
-    pub fn from_bytes<M: Matrix>(b: &[u8], block_size: usize, matrix: &M) -> Self {
+    pub fn from_bytes<M: Matrix>(b: &[u8], block_size: usize) -> Self {
         let mut v = b.to_owned();
         let len = v.len();
         v.insert(0, M::NULL);
         v.resize(v.len() + block_size, M::NULL);
-        v.iter_mut().for_each(|c| *c = matrix.convert_char(*c));
+        v.iter_mut().for_each(|c| *c = M::convert_char(*c));
         Self { s: v, len }
     }
 
     #[inline]
-    pub fn from_str<M: Matrix>(s: &str, block_size: usize, matrix: &M) -> Self {
-        Self::from_bytes(s.as_bytes(), block_size, matrix)
+    pub fn from_str<M: Matrix>(s: &str, block_size: usize) -> Self {
+        Self::from_bytes::<M>(s.as_bytes(), block_size)
     }
 
     #[inline]
-    pub fn from_string<M: Matrix>(s: String, block_size: usize, matrix: &M) -> Self {
+    pub fn from_string<M: Matrix>(s: String, block_size: usize) -> Self {
         let mut v = s.into_bytes();
         let len = v.len();
         v.insert(0, M::NULL);
         v.resize(v.len() + block_size, M::NULL);
-        v.iter_mut().for_each(|c| *c = matrix.convert_char(*c));
+        v.iter_mut().for_each(|c| *c = M::convert_char(*c));
         Self { s: v, len }
     }
 
@@ -1006,60 +1006,60 @@ mod tests {
     fn test_no_x_drop() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
-        let r = PaddedBytes::from_bytes(b"AAAA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AARA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 11);
 
-        let r = PaddedBytes::from_bytes(b"AAAA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AAAA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 16);
 
-        let r = PaddedBytes::from_bytes(b"AAAA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AARA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 11);
 
-        let r = PaddedBytes::from_bytes(b"AAAA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"RRRR", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"RRRR", 16);
         let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, -4);
 
-        let r = PaddedBytes::from_bytes(b"AAAA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AAA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 1);
 
         let test_gaps2 = Gaps { open: -2, extend: -1 };
 
-        let r = PaddedBytes::from_bytes(b"AAAN", 16, &NW1);
-        let q = PaddedBytes::from_bytes(b"ATAA", 16, &NW1);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAN", 16);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"ATAA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 0);
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, &NW1);
-        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, &NW1);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 32);
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, &NW1);
-        let q = PaddedBytes::from_bytes(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT", 16, &NW1);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT", 16);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -32);
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, &NW1);
-        let q = PaddedBytes::from_bytes(b"TATATATATATATATATATATATATATATATA", 16, &NW1);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"TATATATATATATATATATATATATATATATA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 0);
 
-        let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, &NW1);
-        let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 16, &NW1);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTAAAAAAATTTTTTTTTTTT", 16);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 7);
 
-        let r = PaddedBytes::from_bytes(b"AAAA", 16, &NW1);
-        let q = PaddedBytes::from_bytes(b"C", 16, &NW1);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"C", 16);
         let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -5);
         let a = Block::<_, false, false>::align(&r, &q, &NW1, test_gaps2, 16..=16, 0);
@@ -1070,13 +1070,13 @@ mod tests {
     fn test_x_drop() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
-        let r = PaddedBytes::from_bytes(b"AAARRA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AAAAAA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAARRA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAA", 16);
         let a = Block::<_, false, true>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
 
-        let r = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let a = Block::<_, false, true>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
     }
@@ -1085,15 +1085,15 @@ mod tests {
     fn test_trace() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
-        let r = PaddedBytes::from_bytes(b"AAARRA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AAAAAA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAARRA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAA", 16);
         let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
         assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "6M");
 
-        let r = PaddedBytes::from_bytes(b"AAAA", 16, &BLOSUM62);
-        let q = PaddedBytes::from_bytes(b"AAA", 16, &BLOSUM62);
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAA", 16);
         let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 1, query_idx: 3, reference_idx: 4 });
@@ -1101,8 +1101,8 @@ mod tests {
 
         let test_gaps2 = Gaps { open: -2, extend: -1 };
 
-        let r = PaddedBytes::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, &NW1);
-        let q = PaddedBytes::from_bytes(b"TTTTTTTTAAAAAAATTTTTTTTT", 16, &NW1);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTAAAAAAATTTTTTTTTTTT", 16);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
         let a = Block::<_, true, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
@@ -1113,13 +1113,13 @@ mod tests {
     fn test_bytes() {
         let test_gaps = Gaps { open: -2, extend: -1 };
 
-        let r = PaddedBytes::from_bytes(b"AAAaaA", 16, &BYTES1);
-        let q = PaddedBytes::from_bytes(b"AAAAAA", 16, &BYTES1);
+        let r = PaddedBytes::from_bytes::<ByteMatrix>(b"AAAaaA", 16);
+        let q = PaddedBytes::from_bytes::<ByteMatrix>(b"AAAAAA", 16);
         let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 2);
 
-        let r = PaddedBytes::from_bytes(b"abcdefg", 16, &BYTES1);
-        let q = PaddedBytes::from_bytes(b"abdefg", 16, &BYTES1);
+        let r = PaddedBytes::from_bytes::<ByteMatrix>(b"abcdefg", 16);
+        let q = PaddedBytes::from_bytes::<ByteMatrix>(b"abdefg", 16);
         let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 4);
     }

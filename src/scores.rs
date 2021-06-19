@@ -13,7 +13,7 @@ pub trait Matrix {
     fn get(&self, a: u8, b: u8) -> i8;
     fn as_ptr(&self, i: usize) -> *const i8;
     fn get_scores(&self, c: u8, v: HalfSimd, right: bool) -> Simd;
-    fn convert_char(&self, c: u8) -> u8;
+    fn convert_char(c: u8) -> u8;
 }
 
 #[repr(align(32))]
@@ -84,7 +84,7 @@ impl Matrix for AAMatrix {
     }
 
     #[inline]
-    fn convert_char(&self, c: u8) -> u8 {
+    fn convert_char(c: u8) -> u8 {
         let c = c.to_ascii_uppercase();
         debug_assert!(c >= b'A' && c <= Self::NULL);
         c - b'A'
@@ -158,7 +158,7 @@ impl Matrix for NucMatrix {
     }
 
     #[inline]
-    fn convert_char(&self, c: u8) -> u8 {
+    fn convert_char(c: u8) -> u8 {
         let c = c.to_ascii_uppercase();
         debug_assert!(c >= b'A' && c <= Self::NULL);
         c
@@ -210,7 +210,7 @@ impl Matrix for ByteMatrix {
     }
 
     #[inline]
-    fn convert_char(&self, c: u8) -> u8 {
+    fn convert_char(c: u8) -> u8 {
         c
     }
 }
@@ -238,6 +238,7 @@ impl<const GAP_OPEN: i8, const GAP_EXTEND: i8, const I: usize> ScoreParams for P
 pub type GapParams<const GAP_OPEN: i8, const GAP_EXTEND: i8> = Params<{ GAP_OPEN }, { GAP_EXTEND }, 0>;*/
 
 #[derive(Copy, Clone, PartialEq, Debug)]
+#[repr(C)]
 pub struct Gaps {
     pub open: i8,
     pub extend: i8

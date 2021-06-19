@@ -46,8 +46,8 @@ fn test(iter: usize, len: usize, k: usize, insert_len: Option<usize>) -> usize {
             None => rand_mutate(&r, k, &AMINO_ACIDS, &mut rng)
         };
 
-        let r_padded = PaddedBytes::from_bytes(&r, 2048, &BLOSUM62);
-        let q_padded = PaddedBytes::from_bytes(&q, 2048, &BLOSUM62);
+        let r_padded = PaddedBytes::from_bytes::<AAMatrix>(&r, 2048);
+        let q_padded = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
         let run_gaps = Gaps { open: -11, extend: -1 };
 
         let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=2048, 0);

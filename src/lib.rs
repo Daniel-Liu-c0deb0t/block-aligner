@@ -32,3 +32,6 @@ pub mod scores;
 
 pub mod cigar;
 pub mod simulate;
+
+#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+pub mod ffi;
