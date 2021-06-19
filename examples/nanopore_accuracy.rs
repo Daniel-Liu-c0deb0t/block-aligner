@@ -1,9 +1,5 @@
-#![cfg(any(
-        all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"),
-        all(target_arch = "wasm32", target_feature = "simd128")
-))]
+#![cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
 
-#[cfg(not(target_arch = "wasm32"))]
 use parasailors::{Matrix, *};
 
 use block_aligner::scan_block::*;

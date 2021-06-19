@@ -14,7 +14,7 @@ pub const MIN: i16 = 0;
 
 // Non-temporal store to avoid cluttering cache with traces
 #[inline]
-pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { _mm_stream_si32(ptr, trace) }
+pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { _mm_stream_si32(ptr, trace); }
 
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { _mm256_adds_epi16(a, b) }
@@ -110,40 +110,11 @@ macro_rules! simd_sr_i16 {
     };
 }
 
-#[macro_export]
-macro_rules! simd_slz_i16 {
-    ($a:expr, $num:expr) => {
-        {
-            debug_assert!(2 * $num < L);
-            #[cfg(target_arch = "x86")]
-            use std::arch::x86::*;
-            #[cfg(target_arch = "x86_64")]
-            use std::arch::x86_64::*;
-            _mm256_alignr_epi8($a, _mm256_permute2x128_si256($a, $a, 0x0F), (L - (2 * $num)) as i32)
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! simd_srz_i16 {
-    ($a:expr, $num:expr) => {
-        {
-            debug_assert!(2 * $num < L);
-            #[cfg(target_arch = "x86")]
-            use std::arch::x86::*;
-            #[cfg(target_arch = "x86_64")]
-            use std::arch::x86_64::*;
-            _mm256_alignr_epi8(_mm256_permute2x128_si256($a, $a, 0xF3), $a, (2 * $num) as i32)
-        }
-    };
-}
-
 #[inline]
 unsafe fn simd_sl_i128(a: Simd, b: Simd) -> Simd {
     _mm256_permute2x128_si256(a, b, 0x03)
 }
 
-#[macro_export]
 macro_rules! simd_sllz_i16 {
     ($a:expr, $num:expr) => {
         {
@@ -188,7 +159,7 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
 macro_rules! simd_prefix_hmax_i16 {
     ($a:expr, $num:expr) => {
         {
-            debug_assert!(2 * $num < L);
+            debug_assert!(2 * $num <= L);
             #[cfg(target_arch = "x86")]
             use std::arch::x86::*;
             #[cfg(target_arch = "x86_64")]
@@ -222,7 +193,7 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, (gap_cost, _gap_cost123456
 
     for _i in 0..(L - 1) {
         let prev = curr;
-        curr = simd_slz_i16!(curr, 1);
+        curr = simd_sl_i16!(curr, _mm256_setzero_si256(), 1);
         curr = _mm256_adds_epi16(curr, gap_cost);
         curr = _mm256_max_epi16(curr, prev);
     }

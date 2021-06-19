@@ -3,12 +3,18 @@ use std::arch::wasm32::*;
 pub type Simd = v128;
 // no v64 type, so HalfSimd is just v128 with upper half ignored
 pub type HalfSimd = v128;
-pub type TraceType = u16;
-pub const HALFSIMD_MUL: usize = 2;
+pub type TraceType = i16;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
+pub const HALFSIMD_MUL: usize = 2;
+pub const ZERO: i16 = 1 << 14;
+pub const MIN: i16 = 0;
 
 // Note: SIMD vectors treated as little-endian
+
+// No non-temporal store in WASM
+#[inline]
+pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { *ptr = trace; }
 
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { i16x8_add_sat(a, b) }
@@ -102,6 +108,19 @@ macro_rules! simd_sr_i16 {
     };
 }
 
+macro_rules! simd_sllz_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            simd_sl_i16!($a, simd_set1_i16(0), $num)
+        }
+    };
+}
+
+#[inline]
+pub unsafe fn simd_broadcasthi_i16(v: Simd) -> Simd {
+    i16x8_shuffle::<7, 7, 7, 7, 7, 7, 7, 7>(v, v)
+}
+
 #[inline]
 pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     debug_assert!(i < L);
@@ -111,7 +130,7 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
 
     let mut a = A([0i16; L]);
     simd_store(a.0.as_mut_ptr() as *mut Simd, v);
-    *a.0.get_unchecked(i)
+    *a.0.as_ptr().add(i)
 }
 
 #[inline]
@@ -120,6 +139,27 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
     v2 = i16x8_max(v2, simd_sr_i16!(v2, v2, 2));
     v2 = i16x8_max(v2, simd_sr_i16!(v2, v2, 4));
     simd_extract_i16!(v2, 0)
+}
+
+#[macro_export]
+macro_rules! simd_prefix_hmax_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!($num <= L);
+            use std::arch::wasm32::*;
+            let mut v = $a;
+            if $num > 4 {
+                v = i16x8_max(v, simd_sr_i16!(v, v, 4));
+            }
+            if $num > 2 {
+                v = i16x8_max(v, simd_sr_i16!(v, v, 2));
+            }
+            if $num > 1 {
+                v = i16x8_max(v, simd_sr_i16!(v, v, 1));
+            }
+            simd_extract_i16!(v, 0)
+        }
+    };
 }
 
 #[inline]
@@ -131,13 +171,12 @@ pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
 #[inline]
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
-    let (gap_cost, neg_inf) = get_prefix_scan_consts(gap);
+pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts) -> Simd {
     let mut curr = R_max;
 
     for _i in 0..(L - 1) {
         let prev = curr;
-        curr = simd_sl_i16!(curr, neg_inf, 1);
+        curr = simd_sllz_i16!(curr, 1);
         curr = i16x8_add_sat(curr, gap_cost);
         curr = i16x8_max(curr, prev);
     }
@@ -146,25 +185,31 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 }
 
 #[inline]
-unsafe fn get_prefix_scan_consts(gap: i16) -> (Simd, Simd) {
+pub unsafe fn get_gap_extend_all(gap: i16) -> Simd {
+    i16x8(
+        gap * 8, gap * 7, gap * 6, gap * 5,
+        gap * 4, gap * 3, gap * 2, gap * 1
+    )
+}
+
+pub type PrefixScanConsts = Simd;
+
+#[inline]
+pub unsafe fn get_prefix_scan_consts(gap: i16) -> PrefixScanConsts {
     let gap_cost = i16x8_splat(gap);
-    let neg_inf = i16x8_splat(i16::MIN);
-    (gap_cost, neg_inf)
+    gap_cost
 }
 
 #[inline]
 #[allow(non_snake_case)]
-pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
-    let (gap_cost, neg_inf) = get_prefix_scan_consts(gap);
-
-    // Optimized prefix add and max for every four elements
-    let mut shift1 = simd_sl_i16!(R_max, neg_inf, 1);
+pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts) -> Simd {
+    let mut shift1 = simd_sllz_i16!(R_max, 1);
     shift1 = i16x8_add_sat(shift1, gap_cost);
     shift1 = i16x8_max(shift1, R_max);
-    let mut shift2 = simd_sl_i16!(shift1, neg_inf, 2);
+    let mut shift2 = simd_sllz_i16!(shift1, 2);
     shift2 = i16x8_add_sat(shift2, i16x8_shl(gap_cost, 1));
     shift2 = i16x8_max(shift1, shift2);
-    let mut shift4 = simd_sl_i16!(shift2, neg_inf, 4);
+    let mut shift4 = simd_sllz_i16!(shift2, 4);
     shift4 = i16x8_add_sat(shift4, i16x8_shl(gap_cost, 2));
     shift4 = i16x8_max(shift2, shift4);
 
@@ -173,6 +218,7 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap: i16) -> Simd {
 
 #[inline]
 pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
+    // must use a mask to avoid zeroing lanes that are too large
     let mask = i8x16_splat(0b1111);
     let v_mask = v128_and(v, mask);
     let a = i8x16_swizzle(lut1, v_mask);
@@ -188,10 +234,17 @@ pub unsafe fn halfsimd_lookup1_i16(lut: HalfSimd, v: HalfSimd) -> Simd {
 }
 
 #[inline]
+pub unsafe fn halfsimd_lookup_bytes_i16(match_scores: HalfSimd, mismatch_scores: HalfSimd, a: HalfSimd, b: HalfSimd) -> Simd {
+    let mask = i8x16_eq(a, b);
+    let c = v128_bitselect(match_scores, mismatch_scores, mask);
+    i16x8_extend_low_i8x16(c)
+}
+
+#[inline]
 pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
 
 #[inline]
-pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { ptr.read_unaligned() }
+pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
 
 #[inline]
 pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, a) }
@@ -313,11 +366,13 @@ mod tests {
             struct A([i16; L]);
 
             let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), 0);
+            let consts = get_prefix_scan_consts(0);
+            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), consts);
             simd_assert_vec_eq(res, [8, 9, 10, 15, 15, 15, 15, 15]);
 
             let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), -1);
+            let consts = get_prefix_scan_consts(-1);
+            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), consts);
             simd_assert_vec_eq(res, [8, 9, 10, 15, 14, 13, 14, 13]);
         }
     }
