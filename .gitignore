@@ -1,3 +1,5 @@
 /target
 Cargo.lock
 /data
+/c/block_aligner.h
+/c/a.out

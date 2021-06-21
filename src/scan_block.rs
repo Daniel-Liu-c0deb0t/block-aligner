@@ -982,6 +982,7 @@ impl PaddedBytes {
     }
 }
 
+#[repr(C)]
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct AlignResult {
     pub score: i32,

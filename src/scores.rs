@@ -16,7 +16,7 @@ pub trait Matrix {
     fn convert_char(c: u8) -> u8;
 }
 
-#[repr(align(32))]
+#[repr(C, align(32))]
 #[derive(Clone, PartialEq, Debug)]
 pub struct AAMatrix {
     scores: [i8; 27 * 32]
@@ -91,7 +91,7 @@ impl Matrix for AAMatrix {
     }
 }
 
-#[repr(align(32))]
+#[repr(C, align(32))]
 #[derive(Clone, PartialEq, Debug)]
 pub struct NucMatrix {
     scores: [i8; 8 * 16]
@@ -165,6 +165,7 @@ impl Matrix for NucMatrix {
     }
 }
 
+#[repr(C)]
 #[derive(Clone, PartialEq, Debug)]
 pub struct ByteMatrix {
     match_score: i8,
@@ -215,10 +216,13 @@ impl Matrix for ByteMatrix {
     }
 }
 
+#[no_mangle]
 pub static NW1: NucMatrix = NucMatrix::new_simple(1, -1);
 
+#[no_mangle]
 pub static BLOSUM62: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM62") };
 
+#[no_mangle]
 pub static BYTES1: ByteMatrix = ByteMatrix::new_simple(1, -1);
 
 /*pub trait ScoreParams {
