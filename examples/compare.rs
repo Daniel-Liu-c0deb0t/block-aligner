@@ -6,7 +6,7 @@
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 
-use std::env;
+use std::{env, cmp};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -49,6 +49,11 @@ fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
         if scan_score < other_score {
             other_better += 1;
             other_better_avg += ((other_score - scan_score) as f64) / (other_score as f64);
+
+            let slow_score = slow_align(q.as_bytes(), r.as_bytes(), x_drop);
+            println!("ours: {}, other: {}", scan_score, other_score);
+            println!("slow: {}", slow_score);
+            //panic!();
         }
 
         count += 1;
@@ -77,4 +82,103 @@ fn main() {
     }
 
     println!("Done!");
+}
+
+#[allow(non_snake_case)]
+fn slow_align(q: &[u8], r: &[u8], x_drop: i32) -> i32 {
+    let block_size = 32usize;
+    let step = 8usize;
+
+    let mut D = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
+    let mut R = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
+    let mut C = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
+    D[0 + 0 * (q.len() + 1 + block_size)] = 0;
+    let mut i = 0usize;
+    let mut j = 0usize;
+    let mut dir = 0;
+    let mut best_max = 0;
+
+    loop {
+        let max = match dir {
+            0 => { // right
+                calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+            },
+            _ => { // down
+                calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+            }
+        };
+
+        let right_max = block_max(&D, q.len() + 1 + block_size, i, j + block_size - 1, 1, step);
+        let down_max = block_max(&D, q.len() + 1 + block_size, i + block_size - 1, j, step, 1);
+        best_max = cmp::max(best_max, max);
+
+        if max < best_max - x_drop {
+            return best_max;
+        }
+
+        if i + block_size > q.len() && j + block_size > r.len() {
+            return best_max;
+        }
+
+        if j + block_size > r.len() {
+            i += step;
+            dir = 1;
+            continue;
+        }
+        if i + block_size > q.len() {
+            j += step;
+            dir = 0;
+            continue;
+        }
+        if down_max > right_max {
+            i += step;
+            dir = 1;
+        } else {
+            j += step;
+            dir = 0;
+        }
+    }
+}
+
+#[allow(non_snake_case)]
+fn block_max(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_width: usize, block_height: usize) -> i32 {
+    let mut max = i32::MIN;
+    for i in start_i..start_i + block_height {
+        for j in start_j..start_j + block_width {
+            max = cmp::max(max, D[i + j * col_len]);
+        }
+    }
+    max
+}
+
+#[allow(non_snake_case)]
+fn calc_block(q: &[u8], r: &[u8], D: &mut [i32], R: &mut [i32], C: &mut [i32], start_i: usize, start_j: usize, block_width: usize, block_height: usize, block_size: usize, gap_open: i32, gap_extend: i32) -> i32 {
+    let idx = |i: usize, j: usize| { i + j * (q.len() + 1 + block_size) };
+    let mut max = i32::MIN;
+
+    for i in start_i..start_i + block_height {
+        for j in start_j..start_j + block_width {
+            if D[idx(i, j)] != i32::MIN {
+                continue;
+            }
+
+            R[idx(i, j)] = if i == 0 { i32::MIN } else { cmp::max(
+                R[idx(i - 1, j)].saturating_add(gap_extend),
+                D[idx(i - 1, j)].saturating_add(gap_open)
+            ) };
+            C[idx(i, j)] = if j == 0 { i32::MIN } else { cmp::max(
+                C[idx(i, j - 1)].saturating_add(gap_extend),
+                D[idx(i, j - 1)].saturating_add(gap_open)
+            ) };
+            D[idx(i, j)] = cmp::max(
+                if i == 0 || j == 0 || i > q.len() || j > r.len() { i32::MIN } else {
+                    D[idx(i - 1, j - 1)].saturating_add(if q[i - 1] == r[j - 1] { 1 } else { -1 })
+                },
+                cmp::max(R[idx(i, j)], C[idx(i, j)])
+            );
+            max = cmp::max(max, D[idx(i, j)]);
+        }
+    }
+
+    max
 }
