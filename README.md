@@ -86,10 +86,11 @@ It's not on crates.io yet.
 ## Test
 1. `./test_avx2.sh` or `./test_wasm.sh`
 
-For assessing the accuracy of the aligner, run `./accuracy_avx2.sh`.
+For assessing the accuracy of the aligner, run `./accuracy_avx2.sh` or `./accuracy_wasm.sh`.
 
-For debugging, there exists a feature `debug` feature flag that prints out a lot of
+For debugging, there exists a `debug` feature flag that prints out a lot of
 useful info about the internal state of the aligner while it runs.
+There is another feature flag, `debug_size`, that prints the sizes of blocks after they grow.
 
 ## Benchmark
 1. `./bench_avx2.sh` or `./bench_wasm.sh`
@@ -112,28 +113,28 @@ to generate assembly output and run LLVM-MCA.
 Use either `./build_ir_asm.sh`, `objdump -d` on a binary (avoids recompiling code in
 some cases), or a more advanced tool like Ghidra (has a decompiler, too).
 
-## AVX-512 support
-Work in progress.
+## Other SIMD instruction sets
+* [ ] SSE4.1 (Depends on demand.)
+* [ ] AVX-512 (I don't have a machine to test.)
+* [ ] NEON (I don't have a machine to test.)
 
 ## WASM SIMD support
-WASM SIMD support is very buggy. On some nightly versions it works, on some it doesn't.
-Hopefully this will get better as things stabilize.
+WASM SIMD has been stabilizing recently, so WASM support should be better than before.
+To run WASM programs, you will need `wasmtime` on your `$PATH`. Other runtimes like
+`wasmer` should work, too. There doesn't seem to be a large difference in speed between
+them.
 
-You will probably need these programs on your `$PATH`:
-* wasmtime
-* binaryen wasm-opt
-* wabt wasm2wat
-
-* [ ] Use bitmask instruction instead of workaround.
-* [x] Make sure functions without target feature attribute are inlined correctly.
-Easy fix: run binaryen wasm-opt pass with lots of inlining (currently done in the benchmark
-script).
-* [x] Try wasmer and wavm. Result: they don't offer much performance improvement over wasmtime.
+## C API
+There are C bindings for block aligner. More information on how to use them is located in
+the [C readme](c/README.md).
 
 ## A Little History of Failed Ideas
 1. What if we took Daily's prefix scan idea and made it faster and made it banded using
 ring buffers and had tons of 32-bit offsets for intervals of the band to prevent overflow?
-(this actually works, but it is soooooo complex)
+(This actually works, but it is soooooo complex.)
 2. What if we took that banded idea (a single thin vertical band) and made it adaptive?
 3. What if we placed blocks like Minecraft, where there is no overlap between blocks?
-4. ...
+4. What if we compared the rightmost column and bottommost row in each block to decide
+which direction to shift? (Surprisingly, using the first couple of values in each column
+or row is better than using the whole column/row.)
+5. ...

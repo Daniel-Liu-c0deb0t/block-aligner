@@ -187,8 +187,8 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts
 #[inline]
 pub unsafe fn get_gap_extend_all(gap: i16) -> Simd {
     i16x8(
-        gap * 8, gap * 7, gap * 6, gap * 5,
-        gap * 4, gap * 3, gap * 2, gap * 1
+        gap * 1, gap * 2, gap * 3, gap * 4,
+        gap * 5, gap * 6, gap * 7, gap * 8
     )
 }
 

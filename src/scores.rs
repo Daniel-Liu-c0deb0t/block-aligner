@@ -216,13 +216,13 @@ impl Matrix for ByteMatrix {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(all(target_arch = "wasm32", target_feature = "simd128")), no_mangle)]
 pub static NW1: NucMatrix = NucMatrix::new_simple(1, -1);
 
-#[no_mangle]
+#[cfg_attr(not(all(target_arch = "wasm32", target_feature = "simd128")), no_mangle)]
 pub static BLOSUM62: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM62") };
 
-#[no_mangle]
+#[cfg_attr(not(all(target_arch = "wasm32", target_feature = "simd128")), no_mangle)]
 pub static BYTES1: ByteMatrix = ByteMatrix::new_simple(1, -1);
 
 /*pub trait ScoreParams {
