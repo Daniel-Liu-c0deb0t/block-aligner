@@ -28,7 +28,7 @@ rand = { version = "^0.8", default-features = false, features = ["std_rng", "all
 [dev-dependencies]
 bio = "^0.33"
 
-[target.'cfg(not(target_arch = "wasm32"))'.build-dependencies]
+[build-dependencies]
 cbindgen = "^0.19.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

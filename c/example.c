@@ -17,4 +17,6 @@ int main() {
     printf("a: %s\nb: %s\nscore: %d\nidx: (%lu, %lu)\n", a_str, b_str, res.score, res.query_idx, res.reference_idx);
 
     block_free_aa(block);
+    block_free_padded_aa(a);
+    block_free_padded_aa(b);
 }

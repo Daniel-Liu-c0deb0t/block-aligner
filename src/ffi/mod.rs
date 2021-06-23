@@ -1,5 +1,3 @@
-#![cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
-
 use std::ffi::{CStr, c_void};
 use std::os::raw::c_char;
 
@@ -21,6 +19,11 @@ pub unsafe extern fn block_make_padded_aa(s: *const c_char, max_size: usize) -> 
     let c_str = CStr::from_ptr(s);
     let padded_bytes = Box::new(PaddedBytes::from_bytes::<AAMatrix>(c_str.to_bytes(), max_size));
     Box::into_raw(padded_bytes)
+}
+
+#[no_mangle]
+pub unsafe extern fn block_free_padded_aa(padded: *mut PaddedBytes) {
+    drop(Box::from_raw(padded));
 }
 
 #[no_mangle]

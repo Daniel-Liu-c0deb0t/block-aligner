@@ -7,3 +7,6 @@ after_includes = "#define ALIGNED(n) __attribute__ ((aligned(n)))"
 
 [layout]
 aligned_n = "ALIGNED"
+
+[parse]
+expand = ["block-aligner"]
