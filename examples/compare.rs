@@ -87,29 +87,37 @@ fn main() {
 #[allow(non_snake_case)]
 fn slow_align(q: &[u8], r: &[u8], x_drop: i32) -> i32 {
     let block_size = 32usize;
-    let step = 8usize;
+    //let step = 8usize;
+    let step = 1usize;
 
     let mut D = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
     let mut R = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
     let mut C = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
     D[0 + 0 * (q.len() + 1 + block_size)] = 0;
+    let max = calc_block(q, r, &mut D, &mut R, &mut C, 0, 0, block_size, block_size, block_size, -2, -1);
     let mut i = 0usize;
     let mut j = 0usize;
     let mut dir = 0;
-    let mut best_max = 0;
+    let mut best_max = max;
+    //let mut best_max = 0;
 
     loop {
         let max = match dir {
             0 => { // right
-                calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+                //calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+                calc_diag(q, r, &mut D, &mut R, &mut C, i, j, block_size, -2, -1)
             },
             _ => { // down
-                calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+                //calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+                calc_diag(q, r, &mut D, &mut R, &mut C, i, j, block_size, -2, -1)
             }
         };
 
-        let right_max = block_max(&D, q.len() + 1 + block_size, i, j + block_size - 1, 1, step);
-        let down_max = block_max(&D, q.len() + 1 + block_size, i + block_size - 1, j, step, 1);
+        let max = block_max(&D, q.len() + 1 + block_size, i + block_size / 2 - 1, j + block_size / 2, 1, 1);
+        //let right_max = block_max(&D, q.len() + 1 + block_size, i, j + block_size - 1, 1, step);
+        let right_max = block_max(&D, q.len() + 1 + block_size, i, j + block_size - 1, 1, 1);
+        //let down_max = block_max(&D, q.len() + 1 + block_size, i + block_size - 1, j, step, 1);
+        let down_max = block_max(&D, q.len() + 1 + block_size, i + block_size - 1, j, 1, 1);
         best_max = cmp::max(best_max, max);
 
         if max < best_max - x_drop {
@@ -148,6 +156,39 @@ fn block_max(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_wi
             max = cmp::max(max, D[i + j * col_len]);
         }
     }
+    max
+}
+
+#[allow(non_snake_case)]
+fn calc_diag(q: &[u8], r: &[u8], D: &mut [i32], R: &mut [i32], C: &mut [i32], start_i: usize, start_j: usize, block_size: usize, gap_open: i32, gap_extend: i32) -> i32 {
+    let idx = |i: usize, j: usize| { i + j * (q.len() + 1 + block_size) };
+    let mut max = i32::MIN;
+
+    for off in 0..block_size {
+        let i = start_i + block_size - 1 - off;
+        let j = start_j + off;
+
+        if D[idx(i, j)] != i32::MIN {
+            continue;
+        }
+
+        R[idx(i, j)] = if i == 0 { i32::MIN } else { cmp::max(
+            R[idx(i - 1, j)].saturating_add(gap_extend),
+            D[idx(i - 1, j)].saturating_add(gap_open)
+        ) };
+        C[idx(i, j)] = if j == 0 { i32::MIN } else { cmp::max(
+            C[idx(i, j - 1)].saturating_add(gap_extend),
+            D[idx(i, j - 1)].saturating_add(gap_open)
+        ) };
+        D[idx(i, j)] = cmp::max(
+            if i == 0 || j == 0 || i > q.len() || j > r.len() { i32::MIN } else {
+                D[idx(i - 1, j - 1)].saturating_add(if q[i - 1] == r[j - 1] { 1 } else { -1 })
+            },
+            cmp::max(R[idx(i, j)], C[idx(i, j)])
+        );
+        max = cmp::max(max, D[idx(i, j)]);
+    }
+
     max
 }
 
