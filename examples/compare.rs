@@ -91,10 +91,11 @@ fn main() {
     println!("Done!");
 }
 
+#[allow(dead_code)]
 #[allow(non_snake_case)]
 fn slow_align(q: &[u8], r: &[u8], x_drop: i32) -> i32 {
     let block_size = 32usize;
-    let step = 4usize;
+    let step = 8usize;
     //let step = 1usize;
 
     let mut D = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
@@ -153,6 +154,7 @@ fn slow_align(q: &[u8], r: &[u8], x_drop: i32) -> i32 {
     }
 }
 
+#[allow(dead_code)]
 #[allow(non_snake_case)]
 fn block_max(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_width: usize, block_height: usize) -> i32 {
     let mut max = i32::MIN;
@@ -164,6 +166,7 @@ fn block_max(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_wi
     max
 }
 
+#[allow(dead_code)]
 #[allow(non_snake_case)]
 fn block_sum(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_width: usize, block_height: usize) -> i32 {
     let mut sum = 0;
@@ -175,6 +178,7 @@ fn block_sum(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_wi
     sum
 }
 
+#[allow(dead_code)]
 #[allow(non_snake_case)]
 fn calc_diag(q: &[u8], r: &[u8], D: &mut [i32], R: &mut [i32], C: &mut [i32], start_i: usize, start_j: usize, block_size: usize, gap_open: i32, gap_extend: i32) -> i32 {
     let idx = |i: usize, j: usize| { i + j * (q.len() + 1 + block_size) };
@@ -208,6 +212,7 @@ fn calc_diag(q: &[u8], r: &[u8], D: &mut [i32], R: &mut [i32], C: &mut [i32], st
     max
 }
 
+#[allow(dead_code)]
 #[allow(non_snake_case)]
 fn calc_block(q: &[u8], r: &[u8], D: &mut [i32], R: &mut [i32], C: &mut [i32], start_i: usize, start_j: usize, block_width: usize, block_height: usize, block_size: usize, gap_open: i32, gap_extend: i32) -> i32 {
     let idx = |i: usize, j: usize| { i + j * (q.len() + 1 + block_size) };

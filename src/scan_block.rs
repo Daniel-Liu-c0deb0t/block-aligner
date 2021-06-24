@@ -44,7 +44,7 @@ pub struct Block<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
 }
 
 // increasing step size gives a bit extra speed but results in lower accuracy
-const STEP: usize = 4;
+const STEP: usize = 8;
 const LARGE_STEP: usize = 8; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
