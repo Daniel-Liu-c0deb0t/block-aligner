@@ -136,5 +136,8 @@ ring buffers and had tons of 32-bit offsets for intervals of the band to prevent
 3. What if we placed blocks like Minecraft, where there is no overlap between blocks?
 4. What if we compared the rightmost column and bottommost row in each block to decide
 which direction to shift? (Surprisingly, using the first couple of values in each column
-or row is better than using the whole column/row.)
-5. ...
+or row is better than using the whole column/row. Also, comparing the sum of scores worked
+better than comparing the max.)
+5. Use a branch-predictor-like scheme to predict which direction to shift as a tie-breaker
+when shifting right or down seem equally good.
+6. ...

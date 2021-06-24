@@ -44,8 +44,8 @@ pub struct Block<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
 }
 
 // increasing step size gives a bit extra speed but results in lower accuracy
-const STEP: usize = if L / 2 < 8 { L / 2 } else { 8 };
-const LARGE_STEP: usize = STEP; // use larger step size when the block size gets large
+const STEP: usize = 4;
+const LARGE_STEP: usize = 8; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
 impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { TRACE }, { X_DROP }> {
@@ -95,10 +95,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let mut best_max = 0i32;
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
-        let mut best_max2 = 0i32;
-        let mut best_argmax2_i = 0usize;
-        let mut best_argmax2_j = 0usize;
 
+        let mut prev_dir = Direction::Grow;
         let mut dir = Direction::Grow;
         let mut prev_size = 0;
         let mut block_size = self.min_size;
@@ -124,16 +122,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let mut C_col_ckpt = Aligned::new(self.max_size);
         let mut D_row_ckpt = Aligned::new(self.max_size);
         let mut R_row_ckpt = Aligned::new(self.max_size);
-        let mut i_ckpt2 = self.i;
-        let mut j_ckpt2 = self.j;
-        let mut off_ckpt2 = 0i32;
-        let mut D_col_ckpt2 = Aligned::new(self.max_size);
-        let mut C_col_ckpt2 = Aligned::new(self.max_size);
-        let mut D_row_ckpt2 = Aligned::new(self.max_size);
-        let mut R_row_ckpt2 = Aligned::new(self.max_size);
 
         let prefix_scan_consts = get_prefix_scan_consts(self.gaps.extend as i16);
         let gap_extend_all = get_gap_extend_all(self.gaps.extend as i16);
+
+        let mut D_corner = simd_set1_i16(MIN);
 
         loop {
             #[cfg(feature = "debug")]
@@ -171,6 +164,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         C_col.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
+                        if prev_dir == Direction::Down { simd_adds_i16(D_corner, off_add) } else { simd_set1_i16(MIN) },
                         true,
                         prefix_scan_consts,
                         gap_extend_all
@@ -179,7 +173,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     let right_max = self.prefix_max(D_col.as_ptr(), step);
 
                     // shift and offset bottom row
-                    self.shift_and_offset(
+                    D_corner = self.shift_and_offset(
                         block_size,
                         D_row.as_mut_ptr(),
                         R_row.as_mut_ptr(),
@@ -215,6 +209,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         R_row.as_mut_ptr(),
                         temp_buf1.as_mut_ptr(),
                         temp_buf2.as_mut_ptr(),
+                        if prev_dir == Direction::Right { simd_adds_i16(D_corner, off_add) } else { simd_set1_i16(MIN) },
                         false,
                         prefix_scan_consts,
                         gap_extend_all
@@ -223,7 +218,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     let down_max = self.prefix_max(D_row.as_ptr(), step);
 
                     // shift and offset last column
-                    self.shift_and_offset(
+                    D_corner = self.shift_and_offset(
                         block_size,
                         D_col.as_mut_ptr(),
                         C_col.as_mut_ptr(),
@@ -237,6 +232,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     (D_max, D_argmax, right_max, down_max)
                 },
                 Direction::Grow => {
+                    D_corner = simd_set1_i16(MIN);
                     let grow_step = block_size - prev_size;
 
                     #[cfg(feature = "debug")]
@@ -260,6 +256,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         R_row.as_mut_ptr(),
                         D_col.as_mut_ptr().add(prev_size),
                         C_col.as_mut_ptr().add(prev_size),
+                        simd_set1_i16(MIN),
                         false,
                         prefix_scan_consts,
                         gap_extend_all
@@ -284,6 +281,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         C_col.as_mut_ptr(),
                         D_row.as_mut_ptr().add(prev_size),
                         R_row.as_mut_ptr().add(prev_size),
+                        simd_set1_i16(MIN),
                         true,
                         prefix_scan_consts,
                         gap_extend_all
@@ -296,27 +294,22 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
                     let mut i = 0;
                     while i < block_size {
-                        D_col_ckpt2.set_vec(&D_col, i);
-                        C_col_ckpt2.set_vec(&C_col, i);
-                        D_row_ckpt2.set_vec(&D_row, i);
-                        R_row_ckpt2.set_vec(&R_row, i);
-
                         D_col_ckpt.set_vec(&D_col, i);
                         C_col_ckpt.set_vec(&C_col, i);
                         D_row_ckpt.set_vec(&D_row, i);
                         R_row_ckpt.set_vec(&R_row, i);
-
                         i += L;
                     }
 
                     if TRACE {
-                        self.trace.save_ckpt(true);
+                        self.trace.save_ckpt();
                     }
 
                     (D_max2, D_argmax2, right_max, down_max)
                 }
             };
 
+            prev_dir = dir;
             let D_max_max = simd_hmax_i16(D_max);
             let grow_max = simd_hmax_i16(grow_D_max);
             let max = cmp::max(D_max_max, grow_max);
@@ -329,9 +322,6 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
             if off_max > best_max {
                 if X_DROP {
-                    best_argmax2_i = best_argmax_i;
-                    best_argmax2_j = best_argmax_j;
-
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     let r = unchecked_rem(idx, block_size / L) * L + lane_idx;
@@ -361,43 +351,27 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 }
 
                 if block_size < self.max_size {
-                    i_ckpt2 = i_ckpt;
-                    j_ckpt2 = j_ckpt;
-                    off_ckpt2 = off_ckpt;
                     i_ckpt = self.i;
                     j_ckpt = self.j;
                     off_ckpt = off;
 
                     let mut i = 0;
                     while i < block_size {
-                        D_col_ckpt2.set_vec(&D_col_ckpt, i);
-                        C_col_ckpt2.set_vec(&C_col_ckpt, i);
-                        D_row_ckpt2.set_vec(&D_row_ckpt, i);
-                        R_row_ckpt2.set_vec(&R_row_ckpt, i);
-
                         D_col_ckpt.set_vec(&D_col, i);
                         C_col_ckpt.set_vec(&C_col, i);
                         D_row_ckpt.set_vec(&D_row, i);
                         R_row_ckpt.set_vec(&R_row, i);
-
                         i += L;
                     }
 
                     if TRACE {
-                        self.trace.save_ckpt(false);
+                        self.trace.save_ckpt();
                     }
 
                     grow_no_max = false;
                 }
 
-                best_max2 = best_max;
                 best_max = off_max;
-
-                if X_DROP && dir == Direction::Grow {
-                    best_max2 = best_max;
-                    best_argmax2_i = best_argmax_i;
-                    best_argmax2_j = best_argmax_j;
-                }
 
                 y_drop_iter = 0;
             }
@@ -435,25 +409,16 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         step = LARGE_STEP;
                     }
 
-                    self.i = i_ckpt2;
-                    self.j = j_ckpt2;
-                    off = off_ckpt2;
-                    best_max = best_max2;
-                    if X_DROP {
-                        best_argmax_i = best_argmax2_i;
-                        best_argmax_j = best_argmax2_j;
-                    }
-                    i_ckpt = i_ckpt2;
-                    j_ckpt = j_ckpt2;
-                    off_ckpt = off_ckpt2;
+                    self.i = i_ckpt;
+                    self.j = j_ckpt;
+                    off = off_ckpt;
 
                     let mut i = 0;
                     while i < prev_size {
-                        D_col.set_vec(&D_col_ckpt2, i);
-                        C_col.set_vec(&C_col_ckpt2, i);
-                        D_row.set_vec(&D_row_ckpt2, i);
-                        R_row.set_vec(&R_row_ckpt2, i);
-
+                        D_col.set_vec(&D_col_ckpt, i);
+                        C_col.set_vec(&C_col_ckpt, i);
+                        D_row.set_vec(&D_row_ckpt, i);
+                        R_row.set_vec(&R_row_ckpt, i);
                         i += L;
                     }
 
@@ -527,19 +492,19 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
     #[inline]
     unsafe fn prefix_max(&self, buf: *const i16, step: usize) -> i16 {
         if STEP == LARGE_STEP {
-            simd_prefix_hmax_i16!(simd_load(buf as _), STEP)
+            simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
         } else {
             if step == STEP {
-                simd_prefix_hmax_i16!(simd_load(buf as _), STEP)
+                simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
             } else {
-                simd_prefix_hmax_i16!(simd_load(buf as _), LARGE_STEP)
+                simd_prefix_hadd_i16!(simd_load(buf as _), LARGE_STEP)
             }
         }
     }
 
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) {
+    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> Simd {
         #[inline]
         unsafe fn sr(a: Simd, b: Simd, step: usize) -> Simd {
             if STEP == LARGE_STEP {
@@ -553,6 +518,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
             }
         }
         let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
+        let D_corner = simd_set1_i16(simd_extract_i16!(curr1, STEP - 1));
         let mut curr2 = simd_adds_i16(simd_load(buf2 as _), off_add);
 
         let mut i = 0;
@@ -572,6 +538,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let shifted = sr(next1, curr1, step);
         simd_store(buf1.add(block_size - L) as _, shifted);
         simd_store(buf2.add(block_size - L) as _, sr(next2, curr2, step));
+        D_corner
     }
 
     // Place block right or down.
@@ -591,6 +558,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                           C_col: *mut i16,
                           D_row: *mut i16,
                           R_row: *mut i16,
+                          mut D_corner: Simd,
                           right: bool,
                           prefix_scan_consts: PrefixScanConsts,
                           gap_extend_all: Simd) -> (Simd, Simd) {
@@ -605,7 +573,6 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
         // hottest loop in the whole program
         for j in 0..width {
-            let mut D_corner = simd_set1_i16(MIN);
             let mut R01 = simd_set1_i16(MIN);
             let mut D11 = simd_set1_i16(MIN);
             let mut R11 = simd_set1_i16(MIN);
@@ -681,6 +648,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "mca"))]
                 asm!("# LLVM-MCA-END", options(nomem, nostack, preserves_flags));
             }
+
+            D_corner = simd_set1_i16(MIN);
 
             ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
             ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
@@ -779,25 +748,16 @@ impl Trace {
     }
 
     #[inline]
-    pub fn save_ckpt(&mut self, set2: bool) {
-        if set2 {
-            self.ckpt_trace_idx2 = self.trace.len();
-            self.ckpt_block_idx2 = self.block_idx;
-        } else {
-            self.ckpt_trace_idx2 = self.ckpt_trace_idx;
-            self.ckpt_block_idx2 = self.ckpt_block_idx;
-        }
+    pub fn save_ckpt(&mut self) {
         self.ckpt_trace_idx = self.trace.len();
         self.ckpt_block_idx = self.block_idx;
     }
 
     #[inline]
     pub fn restore_ckpt(&mut self) {
-        unsafe { self.trace.set_len(self.ckpt_trace_idx2); }
-        self.trace_idx = self.ckpt_trace_idx2;
-        self.block_idx = self.ckpt_block_idx2;
-        self.ckpt_trace_idx = self.ckpt_trace_idx2;
-        self.ckpt_block_idx = self.ckpt_block_idx2;
+        unsafe { self.trace.set_len(self.ckpt_trace_idx); }
+        self.trace_idx = self.ckpt_trace_idx;
+        self.block_idx = self.ckpt_block_idx;
     }
 
     pub fn cigar(&self, mut i: usize, mut j: usize) -> Cigar {

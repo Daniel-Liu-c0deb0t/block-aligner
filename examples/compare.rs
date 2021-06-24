@@ -17,6 +17,8 @@ fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
     let mut other_better_avg = 0f64;
     let mut us_better = 0;
     let mut us_better_avg = 0f64;
+    //let mut slow_better = 0;
+    //let mut slow_equal = 0;
 
     for line in reader.lines() {
         let line = line.unwrap();
@@ -37,7 +39,7 @@ fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
         let run_gaps = Gaps { open: -2, extend: -1 };
 
         // ours
-        let block_aligner = Block::<_, true, true>::align(&q_padded, &r_padded, &matrix, run_gaps, max_size..=max_size, x_drop);
+        let block_aligner = Block::<_, true, true>::align(&q_padded, &r_padded, &matrix, run_gaps, 32..=max_size, x_drop);
         let scan_res = block_aligner.res();
         let scan_score = scan_res.score;
 
@@ -50,14 +52,19 @@ fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
             other_better += 1;
             other_better_avg += ((other_score - scan_score) as f64) / (other_score as f64);
 
-            let slow_score = slow_align(q.as_bytes(), r.as_bytes(), x_drop);
-            println!("ours: {}, other: {}", scan_score, other_score);
-            println!("slow: {}", slow_score);
-            //panic!();
+            /*let slow_score = slow_align(q.as_bytes(), r.as_bytes(), x_drop);
+            if slow_score > other_score {
+                slow_better += 1;
+            }
+            if slow_score == other_score {
+                slow_equal += 1;
+            }
+            println!("ours: {}, other: {}, slow: {}", scan_score, other_score, slow_score);*/
         }
 
         count += 1;
     }
+    //println!("slow better: {}, slow equal: {}", slow_better, slow_equal);
 
     (count, other_better, other_better_avg / (other_better as f64), us_better, us_better_avg / (us_better as f64))
 }
@@ -87,37 +94,35 @@ fn main() {
 #[allow(non_snake_case)]
 fn slow_align(q: &[u8], r: &[u8], x_drop: i32) -> i32 {
     let block_size = 32usize;
-    //let step = 8usize;
-    let step = 1usize;
+    let step = 4usize;
+    //let step = 1usize;
 
     let mut D = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
     let mut R = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
     let mut C = vec![i32::MIN; (q.len() + 1 + block_size) * (r.len() + 1 + block_size)];
     D[0 + 0 * (q.len() + 1 + block_size)] = 0;
-    let max = calc_block(q, r, &mut D, &mut R, &mut C, 0, 0, block_size, block_size, block_size, -2, -1);
+    //let max = calc_block(q, r, &mut D, &mut R, &mut C, 0, 0, block_size, block_size, block_size, -2, -1);
     let mut i = 0usize;
     let mut j = 0usize;
     let mut dir = 0;
-    let mut best_max = max;
-    //let mut best_max = 0;
+    //let mut best_max = max;
+    let mut best_max = 0;
 
     loop {
         let max = match dir {
             0 => { // right
-                //calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
-                calc_diag(q, r, &mut D, &mut R, &mut C, i, j, block_size, -2, -1)
+                calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+                //calc_diag(q, r, &mut D, &mut R, &mut C, i, j, block_size, -2, -1)
             },
             _ => { // down
-                //calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
-                calc_diag(q, r, &mut D, &mut R, &mut C, i, j, block_size, -2, -1)
+                calc_block(q, r, &mut D, &mut R, &mut C, i, j, block_size, block_size, block_size, -2, -1)
+                //calc_diag(q, r, &mut D, &mut R, &mut C, i, j, block_size, -2, -1)
             }
         };
 
-        let max = block_max(&D, q.len() + 1 + block_size, i + block_size / 2 - 1, j + block_size / 2, 1, 1);
-        //let right_max = block_max(&D, q.len() + 1 + block_size, i, j + block_size - 1, 1, step);
-        let right_max = block_max(&D, q.len() + 1 + block_size, i, j + block_size - 1, 1, 1);
-        //let down_max = block_max(&D, q.len() + 1 + block_size, i + block_size - 1, j, step, 1);
-        let down_max = block_max(&D, q.len() + 1 + block_size, i + block_size - 1, j, 1, 1);
+        //let max = block_max(&D, q.len() + 1 + block_size, i + block_size / 2 - 1, j + block_size / 2, 1, 1);
+        let right_max = block_sum(&D, q.len() + 1 + block_size, i, j + block_size - 1, 1, step);
+        let down_max = block_sum(&D, q.len() + 1 + block_size, i + block_size - 1, j, step, 1);
         best_max = cmp::max(best_max, max);
 
         if max < best_max - x_drop {
@@ -157,6 +162,17 @@ fn block_max(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_wi
         }
     }
     max
+}
+
+#[allow(non_snake_case)]
+fn block_sum(D: &[i32], col_len: usize, start_i: usize, start_j: usize, block_width: usize, block_height: usize) -> i32 {
+    let mut sum = 0;
+    for i in start_i..start_i + block_height {
+        for j in start_j..start_j + block_width {
+            sum += D[i + j * col_len];
+        }
+    }
+    sum
 }
 
 #[allow(non_snake_case)]

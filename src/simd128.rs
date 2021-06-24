@@ -142,6 +142,27 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
 }
 
 #[macro_export]
+macro_rules! simd_prefix_hadd_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!($num <= L);
+            use std::arch::wasm32::*;
+            let mut v = i16x8_sub_sat($a, i16x8_splat(ZERO));
+            if $num > 4 {
+                v = i16x8_add_sat(v, simd_sr_i16!(v, v, 4));
+            }
+            if $num > 2 {
+                v = i16x8_add_sat(v, simd_sr_i16!(v, v, 2));
+            }
+            if $num > 1 {
+                v = i16x8_add_sat(v, simd_sr_i16!(v, v, 1));
+            }
+            simd_extract_i16!(v, 0)
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! simd_prefix_hmax_i16 {
     ($a:expr, $num:expr) => {
         {
