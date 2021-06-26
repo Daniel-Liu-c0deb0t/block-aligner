@@ -220,7 +220,34 @@ impl Matrix for ByteMatrix {
 pub static NW1: NucMatrix = NucMatrix::new_simple(1, -1);
 
 #[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static BLOSUM45: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM45") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static BLOSUM50: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM50") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
 pub static BLOSUM62: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM62") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static BLOSUM80: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM80") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static BLOSUM90: AAMatrix = AAMatrix { scores: include!("../matrices/BLOSUM90") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static PAM100: AAMatrix = AAMatrix { scores: include!("../matrices/PAM100") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static PAM120: AAMatrix = AAMatrix { scores: include!("../matrices/PAM120") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static PAM160: AAMatrix = AAMatrix { scores: include!("../matrices/PAM160") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static PAM200: AAMatrix = AAMatrix { scores: include!("../matrices/PAM200") };
+
+#[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
+pub static PAM250: AAMatrix = AAMatrix { scores: include!("../matrices/PAM250") };
 
 #[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
 pub static BYTES1: ByteMatrix = ByteMatrix::new_simple(1, -1);

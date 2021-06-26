@@ -1,11 +1,21 @@
 import os
-import sys
 
 import pandas as pd
 
 base_remote_path = "ftp://ftp.ncbi.nlm.nih.gov/blast/matrices/"
 base_local_path = "../matrices/"
-names = sys.argv[1:] # BLOSUM62, etc.
+names = [
+    "BLOSUM45",
+    "BLOSUM50",
+    "BLOSUM62",
+    "BLOSUM80",
+    "BLOSUM90",
+    "PAM100",
+    "PAM120",
+    "PAM160",
+    "PAM200",
+    "PAM250"
+]
 
 os.makedirs(base_local_path, exist_ok = True)
 
