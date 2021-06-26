@@ -83,6 +83,10 @@ up scores out of the innermost loop. This means that we do a prefix scan in
 
 It's not on crates.io yet.
 
+## Data
+Some Nanopore (DNA) and Uniclust30 (protein) data are used in some tests and benchmarks.
+More information on how to download them is in the [data readme](data/README.md).
+
 ## Test
 1. `./test_avx2.sh` or `./test_wasm.sh`
 

@@ -99,7 +99,7 @@ fn main() {
     let arg1 = env::args().skip(1).next();
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let file_names_arr = [
-        [
+        /*[
             "data/merged_clu_aln_30_40.m8",
             "data/merged_clu_aln_40_50.m8",
             "data/merged_clu_aln_50_60.m8",
@@ -107,15 +107,15 @@ fn main() {
             "data/merged_clu_aln_70_80.m8",
             "data/merged_clu_aln_80_90.m8",
             "data/merged_clu_aln_90_100.m8"
-        ],
+        ],*/
         [
-            "data/merged_clu_aln_0.95_30_40.m8",
-            "data/merged_clu_aln_0.95_40_50.m8",
-            "data/merged_clu_aln_0.95_50_60.m8",
-            "data/merged_clu_aln_0.95_60_70.m8",
-            "data/merged_clu_aln_0.95_70_80.m8",
-            "data/merged_clu_aln_0.95_80_90.m8",
-            "data/merged_clu_aln_0.95_90_100.m8"
+            "data/uc30_0.95_30_40.m8",
+            "data/uc30_0.95_40_50.m8",
+            "data/uc30_0.95_50_60.m8",
+            "data/uc30_0.95_60_70.m8",
+            "data/uc30_0.95_70_80.m8",
+            "data/uc30_0.95_80_90.m8",
+            "data/uc30_0.95_90_100.m8"
         ],
         [
             "data/uc30_30_40.m8",
@@ -127,7 +127,7 @@ fn main() {
             "data/uc30_90_100.m8"
         ]
     ];
-    let strings = ["merged_clu_aln", "merged_clu_aln_0.95", "uc30"];
+    let strings = [/*"merged_clu_aln", */"uc30_0.95", "uc30"];
     let max_sizes = [32, 256];
 
     for (file_names, string) in file_names_arr.iter().zip(&strings) {

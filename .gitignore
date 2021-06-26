@@ -1,5 +1,8 @@
 /target
 Cargo.lock
-/data
-/c/block_aligner.h
-/c/a.out
+data/*
+!data/README.md
+!data/uc30_pairwise_aln.sh
+!data/uc30_0.95_pairwise_aln.sh
+c/block_aligner.h
+c/a.out

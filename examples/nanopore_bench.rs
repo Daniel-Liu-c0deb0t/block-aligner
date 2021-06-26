@@ -20,7 +20,7 @@ use std::iter;
 
 use block_aligner::simulate::*;
 
-static FILE_NAME: &str = "data/supplementary_data/sequences.txt";
+static FILE_NAME: &str = "data/sequences.txt";
 const ITER: usize = 10000;
 const LEN: usize = 10000;
 const K: usize = 1000;

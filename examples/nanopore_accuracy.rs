@@ -59,7 +59,7 @@ fn test(file_name: &str, verbose: bool) -> (usize, f64, usize) {
 fn main() {
     let arg1 = env::args().skip(1).next();
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
-    let (wrong, wrong_avg, count) = test("data/supplementary_data/sequences.txt", verbose);
+    let (wrong, wrong_avg, count) = test("data/sequences.txt", verbose);
     println!("\ntotal: {}, wrong: {}, wrong avg: {}", count, wrong, wrong_avg);
     println!("Done!");
 }

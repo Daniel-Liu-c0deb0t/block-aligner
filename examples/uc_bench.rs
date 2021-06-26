@@ -15,7 +15,7 @@ use std::io::{BufRead, BufReader};
 use std::time::{Instant, Duration};
 use std::hint::black_box;
 
-static FILE_NAMES: [[&str; 7]; 3] = [
+static FILE_NAMES: [[&str; 7]; 2] = [
     [
         "data/uc30_30_40.m8",
         "data/uc30_40_50.m8",
@@ -25,7 +25,7 @@ static FILE_NAMES: [[&str; 7]; 3] = [
         "data/uc30_80_90.m8",
         "data/uc30_90_100.m8"
     ],
-    [
+    /*[
         "data/merged_clu_aln_30_40.m8",
         "data/merged_clu_aln_40_50.m8",
         "data/merged_clu_aln_50_60.m8",
@@ -33,15 +33,15 @@ static FILE_NAMES: [[&str; 7]; 3] = [
         "data/merged_clu_aln_70_80.m8",
         "data/merged_clu_aln_80_90.m8",
         "data/merged_clu_aln_90_100.m8"
-    ],
+    ],*/
     [
-        "data/merged_clu_aln_0.95_30_40.m8",
-        "data/merged_clu_aln_0.95_40_50.m8",
-        "data/merged_clu_aln_0.95_50_60.m8",
-        "data/merged_clu_aln_0.95_60_70.m8",
-        "data/merged_clu_aln_0.95_70_80.m8",
-        "data/merged_clu_aln_0.95_80_90.m8",
-        "data/merged_clu_aln_0.95_90_100.m8"
+        "data/uc30_0.95_30_40.m8",
+        "data/uc30_0.95_40_50.m8",
+        "data/uc30_0.95_50_60.m8",
+        "data/uc30_0.95_60_70.m8",
+        "data/uc30_0.95_70_80.m8",
+        "data/uc30_0.95_80_90.m8",
+        "data/uc30_0.95_90_100.m8"
     ]
 ];
 
@@ -105,24 +105,24 @@ fn time(f: fn(usize) -> (i32, Duration), idx: usize) -> Duration {
 }
 
 fn main() {
-    for _i in 0..3 {
+    for _i in 0..2 {
         let _d = time(bench_scan_aa_core, 1);
     }
 
     let d = time(bench_scan_aa_core, 0);
-    println!("scan uc time (s): {}", d.as_secs_f64());
+    println!("scan uc30 time (s): {}", d.as_secs_f64());
+    /*let d = time(bench_scan_aa_core, 1);
+    println!("scan merged time (s): {}", d.as_secs_f64());*/
     let d = time(bench_scan_aa_core, 1);
-    println!("scan merged time (s): {}", d.as_secs_f64());
-    let d = time(bench_scan_aa_core, 2);
-    println!("scan merged 0.95 time (s): {}", d.as_secs_f64());
+    println!("scan uc30 0.95 time (s): {}", d.as_secs_f64());
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         let d = time(bench_parasailors_aa_core, 0);
-        println!("parasail uc time (s): {}", d.as_secs_f64());
+        println!("parasail uc30 time (s): {}", d.as_secs_f64());
+        /*let d = time(bench_parasailors_aa_core, 1);
+        println!("parasail merged time (s): {}", d.as_secs_f64());*/
         let d = time(bench_parasailors_aa_core, 1);
-        println!("parasail merged time (s): {}", d.as_secs_f64());
-        let d = time(bench_parasailors_aa_core, 2);
-        println!("parasail merged 0.95 time (s): {}", d.as_secs_f64());
+        println!("parasail uc30 0.95 time (s): {}", d.as_secs_f64());
     }
 }
