@@ -96,6 +96,19 @@ For debugging, there exists a `debug` feature flag that prints out a lot of
 useful info about the internal state of the aligner while it runs.
 There is another feature flag, `debug_size`, that prints the sizes of blocks after they grow.
 
+## Compare
+Edits were made to [Hajime Suzuki](https://github.com/ocxtal)'s adaptive banding benchmark code
+and difference recurrence benchmark code. These edits are available [here](https://github.com/Daniel-Liu-c0deb0t/adaptivebandbench)
+and [here](https://github.com/Daniel-Liu-c0deb0t/diff-bench-paper), respectively.
+Go to those repos, then follow the instructions for installing and running the code.
+
+If you run the scripts in those repos for comparing scores produced by different algorithms,
+you should get `.tsv` generated files. Then, in this repo's directory, run
+```
+./compare.sh /path/to/file.tsv
+```
+to get the comparisons.
+
 ## Benchmark
 1. `./bench_avx2.sh` or `./bench_wasm.sh`
 

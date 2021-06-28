@@ -1,6 +1,7 @@
 use std::fmt;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
+#[repr(C)]
 pub enum Operation {
     Sentinel,
     M,
@@ -9,6 +10,7 @@ pub enum Operation {
 }
 
 #[derive(Debug, Copy, Clone)]
+#[repr(C)]
 pub struct OpLen {
     pub op: Operation,
     pub len: usize

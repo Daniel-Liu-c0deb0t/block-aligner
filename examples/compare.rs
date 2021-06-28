@@ -189,6 +189,7 @@ fn calc_diag(q: &[u8], r: &[u8], D: &mut [i32], R: &mut [i32], C: &mut [i32], st
         let j = start_j + off;
 
         if D[idx(i, j)] != i32::MIN {
+            max = cmp::max(max, D[idx(i, j)]);
             continue;
         }
 
