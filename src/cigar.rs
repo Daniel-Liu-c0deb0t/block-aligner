@@ -1,12 +1,12 @@
 use std::fmt;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-#[repr(C)]
+#[repr(u8)]
 pub enum Operation {
-    Sentinel,
-    M,
-    I,
-    D
+    Sentinel = 0u8,
+    M = 1u8,
+    I = 2u8,
+    D = 3u8
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -80,6 +80,15 @@ impl Cigar {
         }
 
         (a, b)
+    }
+
+    pub fn to_vec(&self) -> Vec<OpLen> {
+        self.s
+            .iter()
+            .rev()
+            .filter(|op_len| op_len.op != Operation::Sentinel)
+            .map(|&op_len| op_len)
+            .collect::<Vec<OpLen>>()
     }
 }
 
