@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ${{matrix.os}}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        target: wasm32-wasi
+
+    - name: Test AVX2
+      run: RUSTFLAGS="-C target-cpu=native" cargo test --all-targets
+
+    - name: Test WASM
+      # needs wasmtime to actually run
+      run: RUSTFLAGS="-C target-feature=+simd128" cargo test --target=wasm32-wasi --all-targets --no-run -- --nocapture
