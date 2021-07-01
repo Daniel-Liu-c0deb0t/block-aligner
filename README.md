@@ -60,6 +60,11 @@ useful info about the internal state of the aligner while it runs.
 There is another feature flag, `debug_size`, that prints the sizes of blocks after they grow.
 To manually inspect alignments, run `./debug_avx2.sh` with two sequences as arguments.
 
+## Docs
+1. `./doc_avx2.sh` or `./doc_wasm.sh`
+
+This will build the docs locally.
+
 ## Compare
 Edits were made to [Hajime Suzuki](https://github.com/ocxtal)'s adaptive banding benchmark code
 and difference recurrence benchmark code. These edits are available [here](https://github.com/Daniel-Liu-c0deb0t/adaptivebandbench)

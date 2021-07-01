@@ -44,6 +44,7 @@ pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { _mm256_store_si256(ptr, a) }
 pub unsafe fn simd_set1_i16(v: i16) -> Simd { _mm256_set1_epi16(v) }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_extract_i16 {
     ($a:expr, $num:expr) => {
         {
@@ -58,6 +59,7 @@ macro_rules! simd_extract_i16 {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_insert_i16 {
     ($a:expr, $v:expr, $num:expr) => {
         {
@@ -75,6 +77,7 @@ macro_rules! simd_insert_i16 {
 pub unsafe fn simd_movemask_i8(a: Simd) -> u32 { _mm256_movemask_epi8(a) as u32 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_sl_i16 {
     ($a:expr, $b:expr, $num:expr) => {
         {
@@ -93,6 +96,7 @@ macro_rules! simd_sl_i16 {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_sr_i16 {
     ($a:expr, $b:expr, $num:expr) => {
         {
@@ -156,6 +160,7 @@ pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_prefix_hadd_i16 {
     ($a:expr, $num:expr) => {
         {
@@ -180,6 +185,7 @@ macro_rules! simd_prefix_hadd_i16 {
 }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! simd_prefix_hmax_i16 {
     ($a:expr, $num:expr) => {
         {
@@ -315,6 +321,7 @@ pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { _mm_set1_epi8(v) }
 pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i }
 
 #[macro_export]
+#[doc(hidden)]
 macro_rules! halfsimd_sr_i8 {
     ($a:expr, $b:expr, $num:expr) => {
         {

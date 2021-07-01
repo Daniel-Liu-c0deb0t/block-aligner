@@ -699,7 +699,7 @@ pub struct Trace {
 
 impl Trace {
     #[inline]
-    pub fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
+    fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
         let len = query_len + reference_len;
         let trace = Vec::with_capacity(len * (block_size / L));
         let right = vec![0u64; div_ceil(len, 64)];
@@ -721,14 +721,14 @@ impl Trace {
     }
 
     #[inline]
-    pub fn add_trace(&mut self, t: TraceType) {
+    fn add_trace(&mut self, t: TraceType) {
         debug_assert!(self.trace_idx < self.trace.len());
         unsafe { store_trace(self.trace.as_mut_ptr().add(self.trace_idx), t); }
         self.trace_idx += 1;
     }
 
     #[inline]
-    pub fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
+    fn add_block(&mut self, i: usize, j: usize, width: usize, height: usize, right: bool) {
         debug_assert!(self.block_idx * 2 < self.block_start.len());
         unsafe {
             *self.block_start.as_mut_ptr().add(self.block_idx * 2) = i as u32;
@@ -748,13 +748,13 @@ impl Trace {
     }
 
     #[inline]
-    pub fn save_ckpt(&mut self) {
+    fn save_ckpt(&mut self) {
         self.ckpt_trace_idx = self.trace.len();
         self.ckpt_block_idx = self.block_idx;
     }
 
     #[inline]
-    pub fn restore_ckpt(&mut self) {
+    fn restore_ckpt(&mut self) {
         unsafe { self.trace.set_len(self.ckpt_trace_idx); }
         self.trace_idx = self.ckpt_trace_idx;
         self.block_idx = self.ckpt_block_idx;
@@ -865,7 +865,7 @@ fn div_ceil(n: usize, d: usize) -> usize {
     (n + d - 1) / d
 }
 
-pub struct Aligned {
+struct Aligned {
     layout: alloc::Layout,
     ptr: *const i16
 }

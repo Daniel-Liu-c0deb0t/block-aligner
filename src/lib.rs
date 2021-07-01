@@ -12,11 +12,13 @@
 
 #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
 #[macro_use]
+#[doc(hidden)]
 /// cbindgen:ignore
 pub mod avx2;
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[macro_use]
+#[doc(hidden)]
 /// cbindgen:ignore
 pub mod simd128;
 
@@ -36,4 +38,5 @@ pub mod cigar;
 pub mod simulate;
 
 #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+#[doc(hidden)]
 pub mod ffi;
