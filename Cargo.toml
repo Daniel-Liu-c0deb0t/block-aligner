@@ -1,6 +1,6 @@
 [package]
 name = "block-aligner"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["c0deb0t <daniel.liu02@gmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -12,7 +12,7 @@ keywords = ["SIMD", "string-distance", "alignment", "biology", "edit-distance"]
 categories = ["algorithms", "hardware-support", "science", "text-processing"]
 
 [package.metadata.docs.rs]
-rustc-args = ["-C target-cpu=native"]
+rustc-args = ["-C", "target-cpu=native"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
