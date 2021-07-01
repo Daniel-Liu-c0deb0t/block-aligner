@@ -828,6 +828,31 @@ impl Trace {
             res
         }
     }
+
+    pub fn blocks(&self) -> Vec<Rectangle> {
+        let mut res = Vec::with_capacity(self.block_idx);
+
+        for i in 0..self.block_idx {
+            unsafe {
+                res.push(Rectangle {
+                    row: *self.block_start.as_ptr().add(i * 2) as usize,
+                    col: *self.block_start.as_ptr().add(i * 2 + 1) as usize,
+                    width: *self.block_size.as_ptr().add(i * 2) as usize,
+                    height: *self.block_size.as_ptr().add(i * 2 + 1) as usize
+                });
+            }
+        }
+
+        res
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct Rectangle {
+    row: usize,
+    col: usize,
+    width: usize,
+    height: usize
 }
 
 #[inline]
