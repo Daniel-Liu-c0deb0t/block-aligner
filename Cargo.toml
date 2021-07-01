@@ -3,6 +3,13 @@ name = "block-aligner"
 version = "0.1.0"
 authors = ["c0deb0t <daniel.liu02@gmail.com>"]
 edition = "2018"
+license = "MIT"
+description = "SIMD-accelerated library for computing global and X-drop affine gap sequence alignments using an adaptive block-based algorithm."
+homepage = "https://github.com/Daniel-Liu-c0deb0t/block-aligner"
+repository = "https://github.com/Daniel-Liu-c0deb0t/block-aligner"
+readme = "README.md"
+keywords = ["SIMD", "string-distance", "alignment", "biology", "edit-distance"]
+categories = ["algorithms", "hardware-support", "science", "text-processing"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
