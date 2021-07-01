@@ -1,5 +1,8 @@
 # block aligner
 [![CI](https://github.com/Daniel-Liu-c0deb0t/block-aligner/actions/workflows/ci.yaml/badge.svg)](https://github.com/Daniel-Liu-c0deb0t/block-aligner/actions/workflows/ci.yaml)
+[![License](https://img.shields.io/github/license/Daniel-Liu-c0deb0t/block-aligner)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/block-aligner)](https://crates.io/crates/block_aligner)
+[![Docs.rs](https://docs.rs/block-aligner/badge.svg)](https://docs.rs/block-aligner)
 
 SIMD-accelerated library for computing global and X-drop affine gap sequence alignments using
 an adaptive block-based algorithm.
