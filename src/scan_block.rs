@@ -74,7 +74,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
         let mut a = Self {
             res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
-            trace: if TRACE { Trace::new(query.len(), reference.len(), max_size) } else { Trace::new(0, 0, 0) },
+            trace: if TRACE { Trace::new(query.len(), reference.len()) } else { Trace::new(0, 0) },
             query,
             i: 0,
             reference,
@@ -241,6 +241,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     println!("Grow down");
 
                     if TRACE {
+                        self.trace.resize_trace(self.i, self.j, self.query.len(), self.reference.len(), block_size);
                         self.trace.add_block(self.i + prev_size, self.j, prev_size, grow_step, false);
                     }
 
@@ -656,6 +657,9 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
             if !X_DROP && unlikely(start_i + height > query.len()
                                    && start_j + j >= reference.len()) {
+                if TRACE {
+                    self.trace.add_trace_idx((width - 1 - j) * (height / L));
+                }
                 break;
             }
         }
@@ -699,9 +703,9 @@ pub struct Trace {
 
 impl Trace {
     #[inline]
-    fn new(query_len: usize, reference_len: usize, block_size: usize) -> Self {
+    fn new(query_len: usize, reference_len: usize) -> Self {
         let len = query_len + reference_len;
-        let trace = Vec::with_capacity(len * (block_size / L));
+        let trace = Vec::new();
         let right = vec![0u64; div_ceil(len, 64)];
         let block_start = vec![0u32; len * 2];
         let block_size = vec![0u32; len * 2];
@@ -741,15 +745,23 @@ impl Trace {
             let v = *self.right.as_ptr().add(a) & !(1 << b); // clear bit
             *self.right.as_mut_ptr().add(a) = v | ((right as u64) << b);
 
-            self.trace.resize(self.trace.len() + width * height / L, 0 as TraceType);
-
             self.block_idx += 1;
         }
     }
 
     #[inline]
+    fn resize_trace(&mut self, i: usize, j: usize, q_len: usize, r_len: usize, block_size: usize) {
+        self.trace.resize(self.trace_idx + (block_size / L) * (q_len + block_size - i + r_len + block_size - j), 0 as TraceType);
+    }
+
+    #[inline]
+    fn add_trace_idx(&mut self, add: usize) {
+        self.trace_idx += add;
+    }
+
+    #[inline]
     fn save_ckpt(&mut self) {
-        self.ckpt_trace_idx = self.trace.len();
+        self.ckpt_trace_idx = self.trace_idx;
         self.ckpt_block_idx = self.block_idx;
     }
 
@@ -764,7 +776,7 @@ impl Trace {
         unsafe {
             let mut res = Cigar::new(i + j + 5);
             let mut block_idx = self.block_idx;
-            let mut trace_idx = self.trace.len();
+            let mut trace_idx = self.trace_idx;
             let mut block_i;
             let mut block_j;
             let mut block_width;
@@ -892,6 +904,7 @@ impl Aligned {
         unsafe { *self.ptr.add(i) }
     }
 
+    #[allow(dead_code)]
     #[inline]
     pub fn set(&mut self, i: usize, v: i16) {
         unsafe { ptr::write(self.ptr.add(i) as _, v); }
