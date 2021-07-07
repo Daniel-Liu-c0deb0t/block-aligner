@@ -31,4 +31,3 @@ jobs:
       # needs wasmtime to actually run
       run: |
         RUSTFLAGS="-C target-feature=+simd128" cargo test --target=wasm32-wasi --all-targets --no-run -- --nocapture
-        RUSTFLAGS="-C target-feature=+simd128" cargo test --target=wasm32-wasi --doc --no-run -- --nocapture
