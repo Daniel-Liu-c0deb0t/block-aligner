@@ -131,6 +131,9 @@ fn main() {
     println!("Done!");
 }
 
+// Scalar version of the block aligner algorithm for testing
+// purposes. May not exactly match the implementation of the
+// vectorized version.
 #[allow(non_snake_case)]
 fn slow_align(q: &[u8], r: &[u8]) -> i32 {
     let mut block_width = 16usize;

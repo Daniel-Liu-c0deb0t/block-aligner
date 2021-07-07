@@ -10,11 +10,13 @@ use crate::cigar::*;
 use std::intrinsics::{unlikely, unchecked_rem, unchecked_div};
 use std::{cmp, ptr, i16, alloc};
 use std::ops::RangeInclusive;
+use std::any::TypeId;
 
 // Notes:
 //
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11 (includes extension), gap extend = -1
 //
+// Dynamic programming formula:
 // R[i][j] = max(R[i - 1][j] + gap_extend, D[i - 1][j] + gap_open)
 // C[i][j] = max(C[i][j - 1] + gap_extend, D[i][j - 1] + gap_open)
 // D[i][j] = max(D[i - 1][j - 1] + matrix[query[i]][reference[j]], R[i][j], C[i][j])
@@ -27,9 +29,16 @@ use std::ops::RangeInclusive;
 //
 // note that 'x' represents any bit
 //
-// Each block is made up of vertical SIMD vectors of length 8 or 16 16-bit integers.
+// The term "block" gets used in two contexts:
+// 1. A square region of the DP matrix, which is helpful for conceptually visualizing
+// the algorithm.
+// 2. A rectangular region representing only cells in the DP matrix that are calculated
+// due to shifting or growing. Since the step size is smaller than the block size, the
+// square blocks overlap. Only the non-overlapping new cells (a rectangular block) are
+// computed in each step.
 
-pub struct Block<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
+/// Data structure storing the settings for block aligner.
+pub struct Block<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> {
     res: AlignResult,
     trace: Trace,
     query: &'a PaddedBytes,
@@ -44,32 +53,51 @@ pub struct Block<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> {
 }
 
 // increasing step size gives a bit extra speed but results in lower accuracy
+// current settings are fast, at the expense of some accuracy, and step size does not grow
 const STEP: usize = if L / 2 < 8 { L / 2 } else { 8 };
 const LARGE_STEP: usize = STEP; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
-impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { TRACE }, { X_DROP }> {
-    /// Adaptive banded alignment.
+impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { TRACE }, { X_DROP }> {
+    /// Align two strings with block aligner.
     ///
-    /// The x drop option indicates whether to terminate the alignment process early when
-    /// the max score in the current band drops below the max score encountered so far. If
-    /// x drop is not enabled, then the band will keep shifting until the end of the reference
-    /// string is reached.
+    /// If `TRACE` is true, then information for computing the traceback will be stored.
+    /// After alignment, the traceback CIGAR string can then be computed.
+    /// This will slow down alignment and use a lot more memory.
     ///
-    /// Limitations:
-    /// 1. Requires x86 AVX2 or WASM SIMD support.
-    /// 2. The reference and the query can only contain uppercase alphabetical characters.
-    /// 3. The actual size of the band is K + 1 rounded up to the next multiple of the
-    ///    vector length of 16 (for x86 AVX2) or 8 (for WASM SIMD).
+    /// If `X_DROP` is true, then the alignment process will be terminated early when
+    /// the max score in the current block drops by `x_drop` below the max score encountered
+    /// so far. If `X_DROP` is false, then global alignment is done.
+    ///
+    /// Since larger scores are better, gap and mismatches penalties should be negative.
+    ///
+    /// The minimum and maximum sizes of the block must be powers of 2 that are greater than the
+    /// number of 16-bit lanes in a SIMD vector.
+    ///
+    /// The block aligner algorithm will dynamically shift a block down or right and grow its size
+    /// to efficiently calculate the alignment between two strings.
+    /// This is fast, but it may be slightly less accurate than computing the entire the alignment
+    /// dynamic programming matrix. Growing the size of the block allows larger gaps and
+    /// other potentially difficult regions to be handled correctly.
+    /// 16-bit deltas and 32-bit offsets are used to ensure that accurate scores are
+    /// computed, even when the the strings are long.
     pub fn align(query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) -> Self {
-        // there are edge cases with calculating traceback that doesn't work if gap open does not cost more
-        assert!(gaps.open < gaps.extend);
+        // check invariants so bad stuff doesn't happen later
+        assert!(gaps.open < 0 && gaps.extend < 0, "Gap costs must be negative!");
+        // there are edge cases with calculating traceback that doesn't work if
+        // gap open does not cost more than gap extend
+        assert!(gaps.open < gaps.extend, "Gap open must cost more than gap extend!");
         let min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
-        assert!(min_size % L == 0 && max_size % L == 0);
-
+        assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
+        if GROW_EXP {
+            assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
+        } else {
+            assert!(min_size % L == 0 && max_size % L == 0, "Block sizes must be multiples of {}!", L);
+        }
         if X_DROP {
-            assert!(x_drop >= 0);
+            assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
+            assert!(TypeId::of::<M>() != TypeId::of::<ByteMatrix>(), "X-drop alignment with ByteMatrix is not fully supported!");
         }
 
         let mut a = Self {
@@ -92,6 +120,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
     #[allow(non_snake_case)]
     unsafe fn align_core(&mut self) {
+        // store the best alignment ending location for x drop alignment
         let mut best_max = 0i32;
         let mut best_argmax_i = 0usize;
         let mut best_argmax_j = 0usize;
@@ -102,19 +131,26 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let mut block_size = self.min_size;
         let mut step = STEP;
 
+        // 32-bit score offsets
         let mut off = 0i32;
         let mut prev_off;
         let mut off_max = 0i32;
 
+        // bottom and right borders of the current block
         let mut D_col = Aligned::new(self.max_size);
         let mut C_col = Aligned::new(self.max_size);
         let mut D_row = Aligned::new(self.max_size);
         let mut R_row = Aligned::new(self.max_size);
 
+        // reused buffers for storing values that must be shifted
+        // into the other border when the block moves in one direction
         let mut temp_buf1 = Aligned::new(L);
         let mut temp_buf2 = Aligned::new(L);
 
+        // how many steps since the latest best score was encountered
         let mut y_drop_iter = 0;
+
+        // the state at the previous checkpoint (where latest best score was encountered)
         let mut i_ckpt = self.i;
         let mut j_ckpt = self.j;
         let mut off_ckpt = 0i32;
@@ -126,6 +162,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         let prefix_scan_consts = get_prefix_scan_consts(self.gaps.extend as i16);
         let gap_extend_all = get_gap_extend_all(self.gaps.extend as i16);
 
+        // corner value that affects the score when shifting down then right, or right then down
         let mut D_corner = simd_set1_i16(MIN);
 
         loop {
@@ -151,8 +188,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         self.trace.add_block(self.i, self.j + block_size - step, step, block_size, true);
                     }
 
+                    // offset previous columns with newly computed offset
                     self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
 
+                    // compute new elements in the block as a result of shifting by the step size
+                    // this region should be block_size x step
                     let (D_max, D_argmax) = self.place_block(
                         self.query,
                         self.reference,
@@ -170,6 +210,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         gap_extend_all
                     );
 
+                    // sum of a couple elements on the right border
                     let right_max = self.prefix_max(D_col.as_ptr(), step);
 
                     // shift and offset bottom row
@@ -182,6 +223,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         off_add,
                         step
                     );
+                    // sum of a couple elements on the bottom border
                     let down_max = self.prefix_max(D_row.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
@@ -196,8 +238,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         self.trace.add_block(self.i + block_size - step, self.j, block_size, step, false);
                     }
 
+                    // offset previous rows with newly computed offset
                     self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
 
+                    // compute new elements in the block as a result of shifting by the step size
+                    // this region should be step x block_size
                     let (D_max, D_argmax) = self.place_block(
                         self.reference,
                         self.query,
@@ -215,6 +260,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         gap_extend_all
                     );
 
+                    // sum of a couple elements on the bottom border
                     let down_max = self.prefix_max(D_row.as_ptr(), step);
 
                     // shift and offset last column
@@ -227,6 +273,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         off_add,
                         step
                     );
+                    // sum of a couple elements on the right border
                     let right_max = self.prefix_max(D_col.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
@@ -241,11 +288,14 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     println!("Grow down");
 
                     if TRACE {
+                        // with a larger block, the size of the trace array might need to be
+                        // increased
                         self.trace.resize_trace(self.i, self.j, self.query.len(), self.reference.len(), block_size);
                         self.trace.add_block(self.i + prev_size, self.j, prev_size, grow_step, false);
                     }
 
                     // down
+                    // this region should be prev_size x prev_size
                     let (D_max1, D_argmax1) = self.place_block(
                         self.reference,
                         self.query,
@@ -271,6 +321,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     }
 
                     // right
+                    // this region should be block_size x prev_size
                     let (D_max2, D_argmax2) = self.place_block(
                         self.query,
                         self.reference,
@@ -293,6 +344,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
+                    // must update the checkpoint saved values just in case
+                    // the block must grow again from this position
                     let mut i = 0;
                     while i < block_size {
                         D_col_ckpt.set_vec(&D_col, i);
@@ -312,17 +365,22 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
             prev_dir = dir;
             let D_max_max = simd_hmax_i16(D_max);
+            // grow max is an auxiliary value used when growing because it requires two separate
+            // place_block steps
             let grow_max = simd_hmax_i16(grow_D_max);
+            // max score of the entire block
             let max = cmp::max(D_max_max, grow_max);
             off_max = off + (max as i32) - (ZERO as i32);
             #[cfg(feature = "debug")]
             println!("down max: {}, right max: {}", down_max, right_max);
 
             y_drop_iter += 1;
+            // if block grows but the best score does not improve, then the block must grow again
             let mut grow_no_max = dir == Direction::Grow;
 
             if off_max > best_max {
                 if X_DROP {
+                    // calculate location with the best score
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                     let r = unchecked_rem(idx, block_size / L) * L + lane_idx;
@@ -338,6 +396,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                             best_argmax_j = self.j + r;
                         },
                         Direction::Grow => {
+                            // max could be in either block
                             if max >= grow_max {
                                 best_argmax_i = self.i + unchecked_rem(idx, block_size / L) * L + lane_idx;
                                 best_argmax_j = self.j + prev_size + unchecked_div(idx, block_size / L);
@@ -352,6 +411,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 }
 
                 if block_size < self.max_size {
+                    // if able to grow in the future, then save the current location
+                    // as a checkpoint
                     i_ckpt = self.i;
                     j_ckpt = self.j;
                     off_ckpt = off;
@@ -399,8 +460,11 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 continue;
             }
 
+            // check if it is possible to grow
             let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
             if next_size <= self.max_size {
+                // if approximately (block_size / step) iterations has passed since the last best
+                // max, then it is time to grow
                 if unlikely(y_drop_iter > (block_size / step) - 1 || grow_no_max) {
                     // y drop grow block
                     prev_size = block_size;
@@ -410,6 +474,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         step = LARGE_STEP;
                     }
 
+                    // return to checkpoint
                     self.i = i_ckpt;
                     self.j = j_ckpt;
                     off = off_ckpt;
@@ -542,9 +607,13 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         D_corner
     }
 
-    // Place block right or down.
-    //
-    // Assumes all inputs are already relative to the current offset.
+    /// Place block right or down.
+    ///
+    /// Assumes all inputs are already relative to the current offset.
+    ///
+    /// Inside this function, everything will be treated as shifting right,
+    /// conceptually. The same process can be trivially used for shifting
+    /// down by calling this function with different parameters.
     #[allow(non_snake_case)]
     // Want this to be inlined in some places and not others, so let
     // compiler decide.
@@ -598,11 +667,14 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
 
                 let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
                 D11 = simd_max_i16(D11, C11);
+                // at this point, C11 is fully calculated and D11 is partially calculated
 
                 let D11_open = simd_adds_i16(D11, simd_subs_i16(gap_open, gap_extend));
                 R11 = simd_prefix_scan_i16(D11_open, prefix_scan_consts);
-                // Do prefix scan before using R01 to break up dependency chain
+                // do prefix scan before using R01 to break up dependency chain that depends on
+                // the last element of R01 from the previous loop iteration
                 R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
+                // fully calculate D11 using R11
                 D11 = simd_max_i16(D11, R11);
                 R01 = R11;
 
@@ -630,6 +702,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                         print!("D_R: ");
                         simd_dbg_i16(trace_D_R);
                     }
+                    // compress trace with movemask to save space
                     let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
                     self.trace.add_trace(trace as TraceType);
                 }
@@ -637,6 +710,7 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
                 D_max = simd_max_i16(D_max, D11);
 
                 if X_DROP {
+                    // keep track of the best score and its location
                     let mask = simd_cmpeq_i16(D_max, D11);
                     D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
                     curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
@@ -658,6 +732,8 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
             if !X_DROP && unlikely(start_i + height > query.len()
                                    && start_j + j >= reference.len()) {
                 if TRACE {
+                    // make sure that the trace index is updated since the rest of the loop
+                    // iterations are skipped
                     self.trace.add_trace_idx((width - 1 - j) * (height / L));
                 }
                 break;
@@ -667,11 +743,13 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
         (D_max, D_argmax)
     }
 
+    /// Get the resulting score and ending location of the alignment.
     #[inline]
     pub fn res(&self) -> AlignResult {
         self.res
     }
 
+    /// Get the trace of the alignment, assuming `TRACE` is true.
     #[inline]
     pub fn trace(&self) -> &Trace {
         assert!(TRACE);
@@ -687,18 +765,19 @@ impl<'a, M: 'a + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { T
     }
 }
 
+/// Holds the trace generated by block aligner.
 #[derive(Clone)]
 pub struct Trace {
     trace: Vec<TraceType>,
     right: Vec<u64>,
     block_start: Vec<u32>,
-    block_size: Vec<u32>,
+    block_size: Vec<u16>,
     trace_idx: usize,
     block_idx: usize,
     ckpt_trace_idx: usize,
     ckpt_block_idx: usize,
-    ckpt_trace_idx2: usize,
-    ckpt_block_idx2: usize
+    query_len: usize,
+    reference_len: usize
 }
 
 impl Trace {
@@ -708,7 +787,7 @@ impl Trace {
         let trace = Vec::new();
         let right = vec![0u64; div_ceil(len, 64)];
         let block_start = vec![0u32; len * 2];
-        let block_size = vec![0u32; len * 2];
+        let block_size = vec![0u16; len * 2];
 
         Self {
             trace,
@@ -719,8 +798,8 @@ impl Trace {
             block_idx: 0,
             ckpt_trace_idx: 0,
             ckpt_block_idx: 0,
-            ckpt_trace_idx2: 0,
-            ckpt_block_idx2: 0
+            query_len,
+            reference_len
         }
     }
 
@@ -737,8 +816,8 @@ impl Trace {
         unsafe {
             *self.block_start.as_mut_ptr().add(self.block_idx * 2) = i as u32;
             *self.block_start.as_mut_ptr().add(self.block_idx * 2 + 1) = j as u32;
-            *self.block_size.as_mut_ptr().add(self.block_idx * 2) = height as u32;
-            *self.block_size.as_mut_ptr().add(self.block_idx * 2 + 1) = width as u32;
+            *self.block_size.as_mut_ptr().add(self.block_idx * 2) = height as u16;
+            *self.block_size.as_mut_ptr().add(self.block_idx * 2 + 1) = width as u16;
 
             let a = self.block_idx / 64;
             let b = self.block_idx % 64;
@@ -749,6 +828,7 @@ impl Trace {
         }
     }
 
+    /// This must be used before adding new traces to make sure the trace array is large enough.
     #[inline]
     fn resize_trace(&mut self, i: usize, j: usize, q_len: usize, r_len: usize, block_size: usize) {
         self.trace.resize(self.trace_idx + (block_size / L) * (q_len + block_size - i + r_len + block_size - j), 0 as TraceType);
@@ -765,6 +845,8 @@ impl Trace {
         self.ckpt_block_idx = self.block_idx;
     }
 
+    /// The trace data structure is like a stack, so all trace values and blocks after the
+    /// checkpoint is essentially popped off the stack.
     #[inline]
     fn restore_ckpt(&mut self) {
         unsafe { self.trace.set_len(self.ckpt_trace_idx); }
@@ -772,7 +854,11 @@ impl Trace {
         self.block_idx = self.ckpt_block_idx;
     }
 
+    /// Create a CIGAR string that represents a single traceback path ending on the specified
+    /// location.
     pub fn cigar(&self, mut i: usize, mut j: usize) -> Cigar {
+        assert!(i <= self.query_len && j <= self.reference_len, "Traceback cigar end position must be in bounds!");
+
         unsafe {
             let mut res = Cigar::new(i + j + 5);
             let mut block_idx = self.block_idx;
@@ -841,6 +927,8 @@ impl Trace {
         }
     }
 
+    /// Return all of the rectangular regions that were calculated separately as
+    /// block aligner shifts and grows.
     pub fn blocks(&self) -> Vec<Rectangle> {
         let mut res = Vec::with_capacity(self.block_idx);
 
@@ -859,12 +947,13 @@ impl Trace {
     }
 }
 
+/// A rectangular region.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Rectangle {
-    row: usize,
-    col: usize,
-    width: usize,
-    height: usize
+    pub row: usize,
+    pub col: usize,
+    pub width: usize,
+    pub height: usize
 }
 
 #[inline]
@@ -877,6 +966,7 @@ fn div_ceil(n: usize, d: usize) -> usize {
     (n + d - 1) / d
 }
 
+/// Same alignment as SIMD vectors.
 struct Aligned {
     layout: alloc::Layout,
     ptr: *const i16
@@ -884,6 +974,7 @@ struct Aligned {
 
 impl Aligned {
     pub unsafe fn new(block_size: usize) -> Self {
+        // custom alignment
         let layout = alloc::Layout::from_size_align_unchecked(block_size * 2, L_BYTES);
         let ptr = alloc::alloc_zeroed(layout) as *const i16;
         let mut i = 0;
@@ -927,6 +1018,10 @@ impl Drop for Aligned {
     }
 }
 
+/// A padded string that helps avoid out of bounds access when using SIMD.
+///
+/// A single padding byte in inserted before the start of the string,
+/// and `block_size` bytes are inserted after the end of the string.
 #[derive(Clone, PartialEq, Debug)]
 pub struct PaddedBytes {
     s: Vec<u8>,
@@ -934,6 +1029,7 @@ pub struct PaddedBytes {
 }
 
 impl PaddedBytes {
+    /// Create from a byte slice.
     #[inline]
     pub fn from_bytes<M: Matrix>(b: &[u8], block_size: usize) -> Self {
         let mut v = b.to_owned();
@@ -944,11 +1040,13 @@ impl PaddedBytes {
         Self { s: v, len }
     }
 
+    /// Create from the bytes in a string slice.
     #[inline]
     pub fn from_str<M: Matrix>(s: &str, block_size: usize) -> Self {
         Self::from_bytes::<M>(s.as_bytes(), block_size)
     }
 
+    /// Create from the bytes in a string.
     #[inline]
     pub fn from_string<M: Matrix>(s: String, block_size: usize) -> Self {
         let mut v = s.into_bytes();
@@ -959,27 +1057,32 @@ impl PaddedBytes {
         Self { s: v, len }
     }
 
+    /// Get the byte at a certain index.
     #[inline]
     pub fn get(&self, i: usize) -> u8 {
         unsafe { *self.s.as_ptr().add(i) }
     }
 
+    /// Set the byte at a certain index.
     #[inline]
     pub fn set(&mut self, i: usize, c: u8) {
         unsafe { *self.s.as_mut_ptr().add(i) = c; }
     }
 
+    /// Create a pointer to a specific index.
     #[inline]
     pub fn as_ptr(&self, i: usize) -> *const u8 {
         unsafe { self.s.as_ptr().add(i) }
     }
 
+    /// Length of the original string (no padding).
     #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 }
 
+/// Resulting score and alignment end position.
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct AlignResult {

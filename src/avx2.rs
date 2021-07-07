@@ -6,6 +6,7 @@ use std::arch::x86_64::*;
 pub type Simd = __m256i;
 pub type HalfSimd = __m128i;
 pub type TraceType = i32;
+/// Number of 16-bit lanes in a SIMD vector.
 pub const L: usize = 16;
 pub const L_BYTES: usize = L * 2;
 pub const HALFSIMD_MUL: usize = 1;

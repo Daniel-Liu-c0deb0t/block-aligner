@@ -4,6 +4,7 @@ pub type Simd = v128;
 // no v64 type, so HalfSimd is just v128 with upper half ignored
 pub type HalfSimd = v128;
 pub type TraceType = i16;
+/// Number of 16-bit lanes in a SIMD vector.
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 pub const HALFSIMD_MUL: usize = 2;

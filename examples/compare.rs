@@ -91,6 +91,11 @@ fn main() {
     println!("Done!");
 }
 
+// Scalar version of the block aligner algorithm for testing
+// purposes. May not exactly match the implementation of the
+// vectorized version.
+//
+// Also possible to simulate diagonal adaptive banding methods.
 #[allow(dead_code)]
 #[allow(non_snake_case)]
 fn slow_align(q: &[u8], r: &[u8], x_drop: i32) -> i32 {

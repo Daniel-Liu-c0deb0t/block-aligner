@@ -7,8 +7,24 @@
 SIMD-accelerated library for computing global and X-drop affine gap sequence alignments using
 an adaptive block-based algorithm.
 
-*Status: Internal algorithms are pretty much finalized, though there may be more API
-improvements.*
+## Example
+```rust
+use block_aligner::scan_block::*;
+use block_aligner::scores::*;
+use block_aligner::cigar::*;
+
+let block_size = 16;
+let gaps = Gaps { open: -2, extend: -1 };
+let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTAAAAAAATTTTTTTTTTTT", block_size);
+let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", block_size);
+
+// Align with traceback, but no x drop threshold.
+let a = Block::<_, true, false>::align(&q, &r, &NW1, gaps, block_size..=block_size, 0);
+let res = a.res();
+
+assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
+assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");
+```
 
 ## Algorithm
 Pairwise alignment (weighted edit distance) involves computing the scores for each cell of a
@@ -41,6 +57,23 @@ You can directly clone this repo, or add the following to your `Cargo.toml`:
 block-aligner = "*"
 ```
 Your computer needs to have a CPU that supports AVX2.
+
+When building your code that uses this library, it is important to specify the
+correct flags to turn on specific target features that this library uses.
+
+For x86 AVX2:
+```
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+```
+or
+```
+RUSTFLAGS="-C target-feature=+avx2" cargo build --release
+```
+
+For WASM SIMD:
+```
+RUSTFLAGS="-C target-feature=+simd128" cargo build --target=wasm32-wasi --release
+```
 
 ## Data
 Some Nanopore (DNA) and Uniclust30 (protein) data are used in some tests and benchmarks.

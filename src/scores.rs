@@ -7,15 +7,26 @@ use crate::simd128::*;
 use std::i8;
 
 pub trait Matrix {
+    /// Byte to use as padding.
     const NULL: u8;
+    /// Create a new matrix with default (usually nonsense) values.
+    ///
+    /// Use `new_simple` to create a sensible scoring matrix.
     fn new() -> Self;
+    /// Set the score for a pair of bytes.
     fn set(&mut self, a: u8, b: u8, score: i8);
+    /// Get the score for a pair of bytes.
     fn get(&self, a: u8, b: u8) -> i8;
+    /// Get the pointer for a specific index.
     fn as_ptr(&self, i: usize) -> *const i8;
+    /// Get the scores for a certain byte and a certain SIMD vector of bytes.
     fn get_scores(&self, c: u8, v: HalfSimd, right: bool) -> Simd;
+    /// Convert a byte to a better storage format that makes retrieving scores
+    /// easier.
     fn convert_char(c: u8) -> u8;
 }
 
+/// Amino acid scoring matrix.
 #[repr(C, align(32))]
 #[derive(Clone, PartialEq, Debug)]
 pub struct AAMatrix {
@@ -23,6 +34,7 @@ pub struct AAMatrix {
 }
 
 impl AAMatrix {
+    /// Create a simple matrix with a certain match and mismatch score.
     pub const fn new_simple(match_score: i8, mismatch_score: i8) -> Self {
         let mut scores = [i8::MIN; 27 * 32];
         let mut i = b'A';
@@ -91,6 +103,7 @@ impl Matrix for AAMatrix {
     }
 }
 
+/// Nucleotide scoring matrix.
 #[repr(C, align(32))]
 #[derive(Clone, PartialEq, Debug)]
 pub struct NucMatrix {
@@ -98,6 +111,7 @@ pub struct NucMatrix {
 }
 
 impl NucMatrix {
+    /// Create a simple matrix with a certain match and mismatch score.
     pub const fn new_simple(match_score: i8, mismatch_score: i8) -> Self {
         let mut scores = [i8::MIN; 8 * 16];
         let alpha = [b'A', b'T', b'C', b'G', b'N'];
@@ -165,6 +179,7 @@ impl Matrix for NucMatrix {
     }
 }
 
+/// Arbitrary bytes scoring matrix.
 #[repr(C)]
 #[derive(Clone, PartialEq, Debug)]
 pub struct ByteMatrix {
@@ -173,15 +188,17 @@ pub struct ByteMatrix {
 }
 
 impl ByteMatrix {
+    /// Create a simple matrix with a certain match and mismatch score.
     pub const fn new_simple(match_score: i8, mismatch_score: i8) -> Self {
         Self { match_score, mismatch_score }
     }
 }
 
 impl Matrix for ByteMatrix {
-    // NULL bytes used as padding.
-    // Leads to inaccurate results with x drop alignment
-    // when the block reaches the ends of the strings.
+    /// May lead to inaccurate results with x drop alignment,
+    /// if the block reaches the ends of the strings.
+    ///
+    /// Avoid using `ByteMatrix` with x drop alignment.
     const NULL: u8 = b'\0';
 
     fn new() -> Self {
@@ -216,6 +233,7 @@ impl Matrix for ByteMatrix {
     }
 }
 
+/// Match = 1, mismatch = -1.
 #[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
 pub static NW1: NucMatrix = NucMatrix::new_simple(1, -1);
 
@@ -249,6 +267,7 @@ pub static PAM200: AAMatrix = AAMatrix { scores: include!("../matrices/PAM200") 
 #[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
 pub static PAM250: AAMatrix = AAMatrix { scores: include!("../matrices/PAM250") };
 
+/// Match = 1, mismatch = -1.
 #[cfg_attr(not(target_arch = "wasm32"), no_mangle)]
 pub static BYTES1: ByteMatrix = ByteMatrix::new_simple(1, -1);
 
@@ -268,6 +287,10 @@ impl<const GAP_OPEN: i8, const GAP_EXTEND: i8, const I: usize> ScoreParams for P
 
 pub type GapParams<const GAP_OPEN: i8, const GAP_EXTEND: i8> = Params<{ GAP_OPEN }, { GAP_EXTEND }, 0>;*/
 
+/// Open and extend gap costs.
+///
+/// Open cost must include the extend cost. For example, with `Gaps { open: -11, extend: -1 }`,
+/// a gap of length 1 costs -11, and a gap of length 2 costs -12.
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[repr(C)]
 pub struct Gaps {
