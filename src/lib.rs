@@ -5,6 +5,8 @@
 //!
 //! ## Example
 //! ```
+//! # #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+//! # {
 //! use block_aligner::scan_block::*;
 //! use block_aligner::scores::*;
 //! use block_aligner::cigar::*;
@@ -20,6 +22,7 @@
 //!
 //! assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
 //! assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");
+//! # }
 //! ```
 //!
 //! When building your code that uses this library, it is important to specify the

@@ -33,6 +33,7 @@ pub struct Cigar {
 
 impl Cigar {
     /// Create a new CIGAR string with a certain maximum length.
+    #[allow(dead_code)]
     pub(crate) unsafe fn new(max_len: usize) -> Self {
         // first element should always be a sentinel
         let s = vec![OpLen { op: Operation::Sentinel, len: 0 }; max_len + 1];
@@ -47,6 +48,7 @@ impl Cigar {
     ///
     /// The total number of added operations must not exceed the
     /// maximum length the CIGAR string was created with.
+    #[allow(dead_code)]
     pub(crate) unsafe fn add(&mut self, op: Operation) {
         debug_assert!(self.idx < self.s.len());
         // branchlessly append one operation
