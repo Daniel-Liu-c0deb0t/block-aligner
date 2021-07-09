@@ -1,3 +1,5 @@
+//! Data structures and functions for working with CIGAR strings.
+
 use std::fmt;
 
 /// A match/mistmatch, insertion, or deletion operation.

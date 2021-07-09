@@ -1,3 +1,5 @@
+//! Main block aligner algorithm and supporting data structures.
+
 #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
 use crate::avx2::*;
 
@@ -1030,6 +1032,9 @@ pub struct PaddedBytes {
 
 impl PaddedBytes {
     /// Create from a byte slice.
+    ///
+    /// Make sure that `block_size` is greater than or equal to the upper bound
+    /// block size used in the `Block::align` function.
     #[inline]
     pub fn from_bytes<M: Matrix>(b: &[u8], block_size: usize) -> Self {
         let mut v = b.to_owned();
@@ -1041,12 +1046,18 @@ impl PaddedBytes {
     }
 
     /// Create from the bytes in a string slice.
+    ///
+    /// Make sure that `block_size` is greater than or equal to the upper bound
+    /// block size used in the `Block::align` function.
     #[inline]
     pub fn from_str<M: Matrix>(s: &str, block_size: usize) -> Self {
         Self::from_bytes::<M>(s.as_bytes(), block_size)
     }
 
     /// Create from the bytes in a string.
+    ///
+    /// Make sure that `block_size` is greater than or equal to the upper bound
+    /// block size used in the `Block::align` function.
     #[inline]
     pub fn from_string<M: Matrix>(s: String, block_size: usize) -> Self {
         let mut v = s.into_bytes();
@@ -1057,22 +1068,22 @@ impl PaddedBytes {
         Self { s: v, len }
     }
 
-    /// Get the byte at a certain index.
+    /// Get the byte at a certain index (unchecked).
     #[inline]
-    pub fn get(&self, i: usize) -> u8 {
-        unsafe { *self.s.as_ptr().add(i) }
+    pub unsafe fn get(&self, i: usize) -> u8 {
+        *self.s.as_ptr().add(i)
     }
 
-    /// Set the byte at a certain index.
+    /// Set the byte at a certain index (unchecked).
     #[inline]
-    pub fn set(&mut self, i: usize, c: u8) {
-        unsafe { *self.s.as_mut_ptr().add(i) = c; }
+    pub unsafe fn set(&mut self, i: usize, c: u8) {
+        *self.s.as_mut_ptr().add(i) = c;
     }
 
     /// Create a pointer to a specific index.
     #[inline]
-    pub fn as_ptr(&self, i: usize) -> *const u8 {
-        unsafe { self.s.as_ptr().add(i) }
+    pub unsafe fn as_ptr(&self, i: usize) -> *const u8 {
+        self.s.as_ptr().add(i)
     }
 
     /// Length of the original string (no padding).

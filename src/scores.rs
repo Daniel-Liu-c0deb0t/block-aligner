@@ -1,3 +1,5 @@
+//! Structs for representing match/mismatch scoring matrices.
+
 #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
 use crate::avx2::*;
 

@@ -1,3 +1,5 @@
+//! Utility functions for simulating random sequences.
+
 use rand::prelude::*;
 
 /// All 20 amino acids.
