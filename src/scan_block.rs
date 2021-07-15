@@ -939,8 +939,8 @@ impl Trace {
                 res.push(Rectangle {
                     row: *self.block_start.as_ptr().add(i * 2) as usize,
                     col: *self.block_start.as_ptr().add(i * 2 + 1) as usize,
-                    width: *self.block_size.as_ptr().add(i * 2) as usize,
-                    height: *self.block_size.as_ptr().add(i * 2 + 1) as usize
+                    height: *self.block_size.as_ptr().add(i * 2) as usize,
+                    width: *self.block_size.as_ptr().add(i * 2 + 1) as usize
                 });
             }
         }
