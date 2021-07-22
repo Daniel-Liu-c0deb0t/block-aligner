@@ -91,7 +91,7 @@ fn main() {
         for &rcp_k in &rcp_ks {
             let (wrong, wrong_avg, wrong_min, wrong_max, diff_idx) = test(iter, len, ((len as f64) / rcp_k) as usize, verbose);
             println!(
-                "\nlen: {}, k: {}, iter: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}, diff_idx: {}\n",
+                "\nlen: {}, k: {}, iter: {}, wrong: {}, wrong % error: {}, wrong min: {}, wrong max: {}, diff idx: {}\n",
                 len,
                 ((len as f64) / rcp_k) as usize,
                 iter,

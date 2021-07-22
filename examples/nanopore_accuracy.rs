@@ -60,6 +60,6 @@ fn main() {
     let arg1 = env::args().skip(1).next();
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let (wrong, wrong_avg, count) = test("data/sequences.txt", verbose);
-    println!("\ntotal: {}, wrong: {}, wrong avg: {}", count, wrong, wrong_avg);
+    println!("\ntotal: {}, wrong: {}, wrong % error: {}", count, wrong, wrong_avg);
     println!("Done!");
 }

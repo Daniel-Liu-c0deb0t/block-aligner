@@ -6,3 +6,4 @@ data/*
 !data/uc30_0.95_pairwise_aln.sh
 c/block_aligner.h
 c/a.out
+vis/.ipynb_checkpoints

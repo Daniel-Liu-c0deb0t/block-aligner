@@ -137,7 +137,7 @@ fn main() {
     let max_sizes = [32, 256];
 
     println!("# seq identity is lower bound (inclusive)");
-    println!("dataset, max size, seq identity, count, wrong, wrong avg");
+    println!("dataset, max size, seq identity, count, wrong, wrong % error");
 
     for (file_names, string) in file_names_arr.iter().zip(&strings) {
         for &max_size in &max_sizes {
@@ -170,7 +170,7 @@ fn main() {
             }
 
             println!(
-                "\n# total: {}, wrong: {}, wrong avg: {}, length avg: {}, length min: {}, length max: {}\n",
+                "\n# total: {}, wrong: {}, wrong % error: {}, length avg: {}, length min: {}, length max: {}\n",
                 count.iter().sum::<usize>(),
                 wrong.iter().sum::<usize>(),
                 wrong_avg.iter().sum::<f64>() / (wrong.iter().sum::<usize>() as f64),

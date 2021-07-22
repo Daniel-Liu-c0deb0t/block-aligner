@@ -102,7 +102,7 @@ fn main() {
     let mut total_wrong = 0usize;
     let mut total = 0usize;
 
-    println!("\nlen, k, insert, iter, max size, wrong, wrong avg, wrong min, wrong max\n");
+    println!("\nlen, k, insert, iter, max size, wrong, wrong % error, wrong min, wrong max\n");
 
     for (&len, &iter) in lens.iter().zip(&iters) {
         for &rcp_k in &rcp_ks {
