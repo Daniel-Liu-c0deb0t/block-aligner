@@ -107,7 +107,7 @@ Go to those repos, then follow the instructions for installing and running the c
 If you run the scripts in those repos for comparing scores produced by different algorithms,
 you should get `.tsv` generated files. Then, in this repo's directory, run
 ```
-./compare.sh /path/to/file.tsv
+./compare_avx2.sh /path/to/file.tsv
 ```
 to get the comparisons.
 

@@ -73,13 +73,14 @@ fn main() {
     let other_file = env::args().skip(1).next().expect("Pass in the path to a tab-separated file to compare to!");
     let max_sizes = [32, 64];
 
-    for &max_size in &max_sizes {
-        println!("\nmax size: {}", max_size);
+    println!("max size, total, other better, avg, us better, avg");
 
+    for &max_size in &max_sizes {
         let (count, other_better, other_better_avg, us_better, us_better_avg) = test(&other_file, max_size);
 
         println!(
-            "\ntotal: {}, other better: {}, avg: {}, us better: {}, avg: {}",
+            "\n{}, {}, {}, {}, {}, {}",
+            max_size,
             count,
             other_better,
             other_better_avg,
@@ -88,7 +89,7 @@ fn main() {
         );
     }
 
-    println!("Done!");
+    println!("# Done!");
 }
 
 // Scalar version of the block aligner algorithm for testing

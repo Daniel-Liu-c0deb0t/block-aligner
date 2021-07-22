@@ -13,9 +13,13 @@ use block_aligner::scores::*;
 use std::{env, cmp};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::usize;
 
-fn test(file_name: &str, max_size: usize, verbose: bool, wrong_indels: &mut [usize], count_indels: &mut [usize], wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) {
+fn test(file_name: &str, max_size: usize, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) -> (f64, usize, usize) {
     let reader = BufReader::new(File::open(file_name).unwrap());
+    let mut length_sum = 0f64;
+    let mut length_min = usize::MAX;
+    let mut length_max = usize::MIN;
 
     for line in reader.lines() {
         let line = line.unwrap();
@@ -30,7 +34,6 @@ fn test(file_name: &str, max_size: usize, verbose: bool, wrong_indels: &mut [usi
         let seq_identity = seq_id(&bio_alignment);
         let id_idx = cmp::min((seq_identity * 10.0) as usize, 9);
         let indels = indels(&bio_alignment, cmp::max(q.len(), r.len()));
-        let indels_idx = cmp::min((indels * 10.0) as usize, 9);
 
         let r_padded = PaddedBytes::from_bytes::<AAMatrix>(r.as_bytes(), 2048);
         let q_padded = PaddedBytes::from_bytes::<AAMatrix>(q.as_bytes(), 2048);
@@ -44,7 +47,6 @@ fn test(file_name: &str, max_size: usize, verbose: bool, wrong_indels: &mut [usi
         if bio_score != scan_score {
             wrong[id_idx] += 1;
             wrong_avg[id_idx] += ((bio_score - scan_score) as f64) / (bio_score as f64);
-            wrong_indels[indels_idx] += 1;
 
             if verbose {
                 let (a_pretty, b_pretty) = block_aligner.trace().cigar(scan_res.query_idx, scan_res.reference_idx).format(q.as_bytes(), r.as_bytes());
@@ -66,8 +68,12 @@ fn test(file_name: &str, max_size: usize, verbose: bool, wrong_indels: &mut [usi
         }
 
         count[id_idx] += 1;
-        count_indels[indels_idx] += 1;
+        length_sum += (q.len() + r.len()) as f64;
+        length_min = cmp::min(length_min, cmp::min(q.len(), r.len()));
+        length_max = cmp::max(length_max, cmp::max(q.len(), r.len()));
     }
+
+    (length_sum, length_min, length_max)
 }
 
 fn indels(a: &Alignment, len: usize) -> f64 {
@@ -130,53 +136,50 @@ fn main() {
     let strings = [/*"merged_clu_aln", */"uc30_0.95", "uc30"];
     let max_sizes = [32, 256];
 
+    println!("# seq identity is lower bound (inclusive)");
+    println!("dataset, max size, seq identity, count, wrong, wrong avg");
+
     for (file_names, string) in file_names_arr.iter().zip(&strings) {
         for &max_size in &max_sizes {
-            println!("\ndataset: {}, max size: {}", string, max_size);
-
-            let mut wrong_indels = [0usize; 10];
-            let mut count_indels = [0usize; 10];
             let mut wrong = [0usize; 10];
             let mut wrong_avg = [0f64; 10];
             let mut count = [0usize; 10];
+            let mut length_avg = 0f64;
+            let mut length_min = usize::MAX;
+            let mut length_max = usize::MIN;
 
             for file_name in file_names {
-                test(file_name, max_size, verbose, &mut wrong_indels, &mut count_indels, &mut wrong, &mut wrong_avg, &mut count);
+                let (len_sum, len_min, len_max) = test(file_name, max_size, verbose, &mut wrong, &mut wrong_avg, &mut count);
+                length_avg += len_sum;
+                length_min = cmp::min(length_min, len_min);
+                length_max = cmp::max(length_max, len_max);
             }
 
-            println!("Seq identity");
+            length_avg /= (count.iter().sum::<usize>() * 2) as f64;
 
             for i in 0..10 {
                 println!(
-                    "bin: {}-{}, count: {}, wrong: {}, wrong avg: {}",
+                    "{}, {}, {}, {}, {}, {}",
+                    string,
+                    max_size,
                     (i as f64) / 10.0,
-                    ((i as f64) + 1.0) / 10.0,
                     count[i],
                     wrong[i],
                     (wrong_avg[i] as f64) / (wrong[i] as f64)
                 );
             }
 
-            println!("\nIndels");
-
-            for i in 0..10 {
-                println!(
-                    "bin: {}-{}, count: {}, wrong: {}",
-                    (i as f64) / 10.0,
-                    ((i as f64) + 1.0) / 10.0,
-                    count_indels[i],
-                    wrong_indels[i]
-                );
-            }
-
             println!(
-                "\ntotal: {}, wrong: {}, wrong avg: {}",
+                "\n# total: {}, wrong: {}, wrong avg: {}, length avg: {}, length min: {}, length max: {}\n",
                 count.iter().sum::<usize>(),
                 wrong.iter().sum::<usize>(),
-                wrong_avg.iter().sum::<f64>() / (wrong.iter().sum::<usize>() as f64)
+                wrong_avg.iter().sum::<f64>() / (wrong.iter().sum::<usize>() as f64),
+                length_avg,
+                length_min,
+                length_max
             );
         }
     }
 
-    println!("Done!");
+    println!("# Done!");
 }

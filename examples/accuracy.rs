@@ -102,6 +102,8 @@ fn main() {
     let mut total_wrong = 0usize;
     let mut total = 0usize;
 
+    println!("\nlen, k, insert, iter, max size, wrong, wrong avg, wrong min, wrong max\n");
+
     for (&len, &iter) in lens.iter().zip(&iters) {
         for &rcp_k in &rcp_ks {
             for &insert in &inserts {
@@ -109,7 +111,7 @@ fn main() {
                     let insert_len = if insert { Some(len / 10) } else { None };
                     let (wrong, wrong_avg, wrong_min, wrong_max) = test(iter, len, ((len as f64) / rcp_k) as usize, slow, insert_len, nuc, max_size, verbose);
                     println!(
-                        "\nlen: {}, k: {}, insert: {}, iter: {}, max size: {}, wrong: {}, wrong avg: {}, wrong min: {}, wrong max: {}\n",
+                        "\n{}, {}, {}, {}, {}, {}, {}, {}, {}\n",
                         len,
                         ((len as f64) / rcp_k) as usize,
                         insert,
@@ -127,8 +129,8 @@ fn main() {
         }
     }
 
-    println!("\ntotal: {}, wrong: {}", total, total_wrong);
-    println!("Done!");
+    println!("\n# total: {}, wrong: {}", total, total_wrong);
+    println!("# Done!");
 }
 
 // Scalar version of the block aligner algorithm for testing

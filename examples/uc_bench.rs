@@ -109,20 +109,27 @@ fn main() {
         let _d = time(bench_scan_aa_core, 1);
     }
 
+    println!("# time (s)");
+    println!("algorithm, dataset, time");
+
     let d = time(bench_scan_aa_core, 0);
-    println!("scan uc30 time (s): {}", d.as_secs_f64());
+    let uc30_time = d.as_secs_f64();
+    println!("ours, uc30, {}", uc30_time);
     /*let d = time(bench_scan_aa_core, 1);
     println!("scan merged time (s): {}", d.as_secs_f64());*/
     let d = time(bench_scan_aa_core, 1);
-    println!("scan uc30 0.95 time (s): {}", d.as_secs_f64());
+    let uc30_95_time = d.as_secs_f64();
+    println!("ours, uc30 0.95, {}", uc30_95_time);
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         let d = time(bench_parasailors_aa_core, 0);
-        println!("parasail uc30 time (s): {}", d.as_secs_f64());
+        let uc30_time = d.as_secs_f64();
+        println!("parasail, uc30, {}", uc30_time);
         /*let d = time(bench_parasailors_aa_core, 1);
         println!("parasail merged time (s): {}", d.as_secs_f64());*/
         let d = time(bench_parasailors_aa_core, 1);
-        println!("parasail uc30 0.95 time (s): {}", d.as_secs_f64());
+        let uc30_95_time = d.as_secs_f64();
+        println!("parasail, uc30 0.95, {}", uc30_95_time);
     }
 }

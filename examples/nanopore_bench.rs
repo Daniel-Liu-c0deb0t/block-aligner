@@ -123,16 +123,23 @@ fn main() {
         let _d = time(bench_scan_nuc_core, false);
     }
 
+    println!("# time (s)");
+    println!("algorithm, dataset, time");
+
     let d = time(bench_scan_nuc_file, true);
-    println!("scan nanopore time (s): {}", d.as_secs_f64());
+    let nanopore_time = d.as_secs_f64();
+    println!("ours, nanopore, {}", nanopore_time);
     let d = time(bench_scan_nuc_core, false);
-    println!("scan rand time (s): {}", d.as_secs_f64());
+    let random_time = d.as_secs_f64();
+    println!("ours, random, {}", random_time);
 
     #[cfg(not(target_arch = "wasm32"))]
     {
         let d = time(bench_parasailors_nuc_core, true);
-        println!("parasail nanopore time (s): {}", d.as_secs_f64());
+        let nanopore_time = d.as_secs_f64();
+        println!("parasail, nanopore, {}", nanopore_time);
         let d = time(bench_parasailors_nuc_core, false);
-        println!("parasail rand time (s): {}", d.as_secs_f64());
+        let random_time = d.as_secs_f64();
+        println!("parasail, random, {}", random_time);
     }
 }
