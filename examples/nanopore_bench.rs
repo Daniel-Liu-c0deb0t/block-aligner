@@ -59,6 +59,7 @@ fn get_data(file_name: Option<&str>) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn bench_parasailors_nuc_core(file: bool) -> (i32, Duration) {
     let file_data = get_data(if file { Some(&FILE_NAME) } else { None });
     let matrix = Matrix::new(MatrixType::IdentityWithPenalty);
@@ -133,7 +134,7 @@ fn main() {
     let random_time = d.as_secs_f64();
     println!("ours, random, {}", random_time);
 
-    #[cfg(not(target_arch = "wasm32"))]
+    /*#[cfg(not(target_arch = "wasm32"))]
     {
         let d = time(bench_parasailors_nuc_core, true);
         let nanopore_time = d.as_secs_f64();
@@ -141,5 +142,5 @@ fn main() {
         let d = time(bench_parasailors_nuc_core, false);
         let random_time = d.as_secs_f64();
         println!("parasail, random, {}", random_time);
-    }
+    }*/
 }
