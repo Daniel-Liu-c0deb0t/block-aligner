@@ -4,11 +4,14 @@ use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 use block_aligner::cigar::*;
 
-use image::{Rgb, RgbImage};
+use image::{Rgb, RgbImage, ColorType};
+use image::codecs::png::{PngEncoder, CompressionType, FilterType};
 use imageproc::drawing::*;
 use imageproc::rect::Rect;
 
 use std::env;
+use std::io::BufWriter;
+use std::fs::File;
 
 fn main() {
     let args = env::args().skip(1);
@@ -73,6 +76,8 @@ fn main() {
             y = next_y;
         }
 
-        img.save(img_path).unwrap();
+        let writer = BufWriter::new(File::create(img_path).unwrap());
+        let encoder = PngEncoder::new_with_quality(writer, CompressionType::Best, FilterType::Sub);
+        encoder.encode(img.as_raw(), img.width(), img.height(), ColorType::Rgb8).unwrap();
     }
 }
