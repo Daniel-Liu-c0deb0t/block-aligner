@@ -7,6 +7,10 @@
 SIMD-accelerated library for computing global and X-drop affine gap sequence alignments using
 an adaptive block-based algorithm.
 
+<p align = "center">
+<img src = "vis/block_img1.png" width = "300px">
+</p>
+
 ## Example
 ```rust
 use block_aligner::scan_block::*;
@@ -143,21 +147,14 @@ installed and on your `$PATH`.
 There are C bindings for block aligner. More information on how to use them is located in
 the [C readme](c/README.md).
 
+## Data analysis and visualizations
+Use the Jupyter notebook in the `vis/` directory to gather data and plot them. An easier way
+to run the whole notebook is to run the `vis/run_vis.sh` script.
+
 ## Other SIMD instruction sets
 * [ ] SSE4.1 (Depends on demand)
 * [ ] AVX-512 (I don't have a machine to test)
 * [ ] NEON (I don't have a machine to test)
 
-## Some Failed Ideas
-1. What if we took Daily's prefix scan idea and made it faster and made it banded using
-ring buffers and had tons of 32-bit offsets for intervals of the band to prevent overflow?
-(This actually works, but it is soooooo complex.)
-2. What if we took that banded idea (a single thin vertical band) and made it adaptive?
-3. What if we placed blocks like Minecraft, where there is no overlap between blocks?
-4. What if we compared the rightmost column and bottommost row in each block to decide
-which direction to shift? (Surprisingly, using the first couple of values in each column
-or row is better than using the whole column/row. Also, comparing the sum of scores worked
-better than comparing the max.)
-5. Use a branch-predictor-like scheme to predict which direction to shift as a tie-breaker
-when shifting right or down seem equally good.
-6. ...
+## Old ideas and history
+See the [ideas](ideas.md) file.
