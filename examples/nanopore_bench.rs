@@ -60,7 +60,7 @@ fn get_data(file_name: Option<&str>) -> Vec<(Vec<u8>, Vec<u8>)> {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
-fn bench_parasailors_nuc_core(file: bool) -> (i32, Duration) {
+fn bench_parasailors_nuc_core(file: bool, _trace: bool) -> (i32, Duration) {
     let file_data = get_data(if file { Some(&FILE_NAME) } else { None });
     let matrix = Matrix::new(MatrixType::IdentityWithPenalty);
     let data = file_data
@@ -76,7 +76,7 @@ fn bench_parasailors_nuc_core(file: bool) -> (i32, Duration) {
     (temp, start.elapsed())
 }
 
-fn bench_scan_nuc_core(_file: bool) -> (i32, Duration) {
+fn bench_scan_nuc_core(_file: bool, trace: bool) -> (i32, Duration) {
     let file_data = get_data(None);
     let x_drop = 100;
     let matrix = NucMatrix::new_simple(2, -3);
@@ -89,13 +89,18 @@ fn bench_scan_nuc_core(_file: bool) -> (i32, Duration) {
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<_, true, true>::align(&q, &r, &matrix, bench_gaps, 32..=32, x_drop);
-        temp = temp.wrapping_add(a.res().score); // prevent optimizations
+        if trace {
+            let a = Block::<_, true, true>::align(&q, &r, &matrix, bench_gaps, 32..=32, x_drop);
+            temp = temp.wrapping_add(a.res().score); // prevent optimizations
+        } else {
+            let a = Block::<_, false, true>::align(&q, &r, &matrix, bench_gaps, 32..=32, x_drop);
+            temp = temp.wrapping_add(a.res().score); // prevent optimizations
+        }
     }
     (temp, start.elapsed())
 }
 
-fn bench_scan_nuc_file(_file: bool) -> (i32, Duration) {
+fn bench_scan_nuc_file(_file: bool, trace: bool) -> (i32, Duration) {
     let file_data = get_data(Some(&FILE_NAME));
     let x_drop = 50;
     let data = file_data
@@ -107,32 +112,44 @@ fn bench_scan_nuc_file(_file: bool) -> (i32, Duration) {
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let a = Block::<_, true, true>::align(&q, &r, &NW1, bench_gaps, 32..=32, x_drop);
-        temp = temp.wrapping_add(a.res().score); // prevent optimizations
+        if trace {
+            let a = Block::<_, true, true>::align(&q, &r, &NW1, bench_gaps, 32..=32, x_drop);
+            temp = temp.wrapping_add(a.res().score); // prevent optimizations
+        } else {
+            let a = Block::<_, false, true>::align(&q, &r, &NW1, bench_gaps, 32..=32, x_drop);
+            temp = temp.wrapping_add(a.res().score); // prevent optimizations
+        }
     }
     (temp, start.elapsed())
 }
 
-fn time(f: fn(bool) -> (i32, Duration), file: bool) -> Duration {
-    let (temp, duration) = f(file);
+fn time(f: fn(bool, bool) -> (i32, Duration), file: bool, trace: bool) -> Duration {
+    let (temp, duration) = f(file, trace);
     black_box(temp);
     duration
 }
 
 fn main() {
     for _i in 0..3 {
-        let _d = time(bench_scan_nuc_core, false);
+        let _d = time(bench_scan_nuc_file, true, false);
     }
 
     println!("# time (s)");
     println!("algorithm, dataset, time");
 
-    let d = time(bench_scan_nuc_file, true);
+    let d = time(bench_scan_nuc_file, true, false);
     let nanopore_time = d.as_secs_f64();
-    println!("ours, nanopore, {}", nanopore_time);
-    let d = time(bench_scan_nuc_core, false);
+    println!("ours (no trace), nanopore, {}", nanopore_time);
+    let d = time(bench_scan_nuc_core, false, false);
     let random_time = d.as_secs_f64();
-    println!("ours, random, {}", random_time);
+    println!("ours (no trace), random, {}", random_time);
+
+    let d = time(bench_scan_nuc_file, true, true);
+    let nanopore_time = d.as_secs_f64();
+    println!("ours (trace), nanopore, {}", nanopore_time);
+    let d = time(bench_scan_nuc_core, false, true);
+    let random_time = d.as_secs_f64();
+    println!("ours (trace), random, {}", random_time);
 
     /*#[cfg(not(target_arch = "wasm32"))]
     {

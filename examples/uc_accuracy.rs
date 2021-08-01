@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::usize;
 
-fn test(file_name: &str, max_size: usize, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) -> (f64, usize, usize) {
+fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) -> (f64, usize, usize) {
     let reader = BufReader::new(File::open(file_name).unwrap());
     let mut length_sum = 0f64;
     let mut length_min = usize::MAX;
@@ -40,7 +40,7 @@ fn test(file_name: &str, max_size: usize, verbose: bool, wrong: &mut [usize], wr
         let run_gaps = Gaps { open: -11, extend: -1 };
 
         // ours
-        let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=max_size, 0);
+        let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, min_size..=max_size, 0);
         let scan_res = block_aligner.res();
         let scan_score = scan_res.score;
 
@@ -134,13 +134,14 @@ fn main() {
         ]
     ];
     let strings = [/*"merged_clu_aln", */"uc30_0.95", "uc30"];
-    let max_sizes = [32, 256];
+    let min_sizes = [32, 32, 512];
+    let max_sizes = [32, 256, 512];
 
     println!("# seq identity is lower bound (inclusive)");
-    println!("dataset, max size, seq identity, count, wrong, wrong % error");
+    println!("dataset, size, seq identity, count, wrong, wrong % error");
 
     for (file_names, string) in file_names_arr.iter().zip(&strings) {
-        for &max_size in &max_sizes {
+        for (&min_size, &max_size) in min_sizes.iter().zip(&max_sizes) {
             let mut wrong = [0usize; 10];
             let mut wrong_avg = [0f64; 10];
             let mut count = [0usize; 10];
@@ -149,7 +150,7 @@ fn main() {
             let mut length_max = usize::MIN;
 
             for file_name in file_names {
-                let (len_sum, len_min, len_max) = test(file_name, max_size, verbose, &mut wrong, &mut wrong_avg, &mut count);
+                let (len_sum, len_min, len_max) = test(file_name, min_size, max_size, verbose, &mut wrong, &mut wrong_avg, &mut count);
                 length_avg += len_sum;
                 length_min = cmp::min(length_min, len_min);
                 length_max = cmp::max(length_max, len_max);
@@ -159,8 +160,9 @@ fn main() {
 
             for i in 0..10 {
                 println!(
-                    "{}, {}, {}, {}, {}, {}",
+                    "{}, {}-{}, {}, {}, {}, {}",
                     string,
+                    min_size,
                     max_size,
                     (i as f64) / 10.0,
                     count[i],
