@@ -60,6 +60,7 @@ const STEP: usize = if L / 2 < 8 { L / 2 } else { 8 };
 const LARGE_STEP: usize = STEP; // use larger step size when the block size gets large
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
+const X_DROP_ITER: usize = 2; // make sure that the X-drop iteration is truly met instead of just one "bad" step
 impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { TRACE }, { X_DROP }> {
     /// Align two strings with block aligner.
     ///
@@ -151,6 +152,9 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
 
         // how many steps since the latest best score was encountered
         let mut y_drop_iter = 0;
+
+        // how many steps where the X-drop threshold is met
+        let mut x_drop_iter = 0;
 
         // the state at the previous checkpoint (where latest best score was encountered)
         let mut i_ckpt = self.i;
@@ -440,9 +444,17 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                 y_drop_iter = 0;
             }
 
-            if X_DROP && unlikely(off_max < best_max - self.x_drop) {
-                // x drop termination
-                break;
+            if X_DROP {
+                if unlikely(off_max < best_max - self.x_drop) {
+                    if x_drop_iter < X_DROP_ITER - 1 {
+                        x_drop_iter += 1;
+                    } else {
+                        // x drop termination
+                        break;
+                    }
+                } else {
+                    x_drop_iter = 0;
+                }
             }
 
             if unlikely(self.i + block_size > self.query.len() && self.j + block_size > self.reference.len()) {

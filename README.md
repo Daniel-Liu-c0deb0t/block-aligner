@@ -111,9 +111,9 @@ Go to those repos, then follow the instructions for installing and running the c
 If you run the scripts in those repos for comparing scores produced by different algorithms,
 you should get `.tsv` generated files. Then, in this repo's directory, run
 ```
-./compare_avx2.sh /path/to/file.tsv
+./compare_avx2.sh /path/to/file.tsv 50
 ```
-to get the comparisons.
+to get the comparisons. The X-drop threshold is specified after the path.
 
 ## Benchmark
 1. `./bench_avx2.sh` or `./bench_wasm.sh`

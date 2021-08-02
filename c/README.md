@@ -14,3 +14,5 @@ calculations.
 
 The generated header file, `c/block_aligner.h`, should be included in
 code that calls block aligner functions. It should be C++ compatible.
+Like in the example `Makefile`, the `block_aligner` library in `target/release`
+must be linked to any C/C++ code that calls block aligner functions.

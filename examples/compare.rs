@@ -10,7 +10,7 @@ use std::{env, cmp};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
+fn test(file_name: &str, max_size: usize, x_drop: i32) -> (usize, usize, f64, usize, f64) {
     let reader = BufReader::new(File::open(file_name).unwrap());
     let mut count = 0;
     let mut other_better = 0;
@@ -30,7 +30,7 @@ fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
         let _other_j = row.next().unwrap().parse::<usize>().unwrap();
 
         //let x_drop = 100;
-        let x_drop = 50;
+        //let x_drop = 50;
         //let matrix = NucMatrix::new_simple(2, -3);
         let matrix = NucMatrix::new_simple(1, -1);
         let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), 2048);
@@ -70,13 +70,15 @@ fn test(file_name: &str, max_size: usize) -> (usize, usize, f64, usize, f64) {
 }
 
 fn main() {
-    let other_file = env::args().skip(1).next().expect("Pass in the path to a tab-separated file to compare to!");
+    let mut args = env::args().skip(1);
+    let other_file = args.next().expect("Pass in the path to a tab-separated file to compare to!");
+    let x_drop = args.next().expect("Pass in an X-drop threshold!").parse::<i32>().unwrap();
     let max_sizes = [32, 64];
 
     println!("max size, total, other better, other % better, us better, us % better");
 
     for &max_size in &max_sizes {
-        let (count, other_better, other_better_avg, us_better, us_better_avg) = test(&other_file, max_size);
+        let (count, other_better, other_better_avg, us_better, us_better_avg) = test(&other_file, max_size, x_drop);
 
         println!(
             "\n{}, {}, {}, {}, {}, {}",
