@@ -7,3 +7,4 @@ data/*
 c/block_aligner.h
 c/a.out
 vis/.ipynb_checkpoints
+vis/*.log

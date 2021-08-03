@@ -10,6 +10,7 @@ repository = "https://github.com/Daniel-Liu-c0deb0t/block-aligner"
 readme = "README.md"
 keywords = ["SIMD", "string-distance", "alignment", "biology", "edit-distance"]
 categories = ["algorithms", "hardware-support", "science", "text-processing"]
+exclude = ["vis/*", "!vis/block_img1.png"]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc", "i686-unknown-linux-gnu", "i686-pc-windows-msvc", "wasm32-wasi"]
