@@ -139,14 +139,14 @@ fn main() {
 
     let d = time(bench_scan_nuc_file, true, false);
     let nanopore_time = d.as_secs_f64();
-    println!("ours (no trace), nanopore, {}", nanopore_time);
+    println!("ours (no trace), nanopore 25kbp, {}", nanopore_time);
     let d = time(bench_scan_nuc_core, false, false);
     let random_time = d.as_secs_f64();
     println!("ours (no trace), random, {}", random_time);
 
     let d = time(bench_scan_nuc_file, true, true);
     let nanopore_time = d.as_secs_f64();
-    println!("ours (trace), nanopore, {}", nanopore_time);
+    println!("ours (trace), nanopore 25kbp, {}", nanopore_time);
     let d = time(bench_scan_nuc_core, false, true);
     let random_time = d.as_secs_f64();
     println!("ours (trace), random, {}", random_time);
@@ -155,7 +155,7 @@ fn main() {
     {
         let d = time(bench_parasailors_nuc_core, true);
         let nanopore_time = d.as_secs_f64();
-        println!("parasail, nanopore, {}", nanopore_time);
+        println!("parasail, nanopore 25kbp, {}", nanopore_time);
         let d = time(bench_parasailors_nuc_core, false);
         let random_time = d.as_secs_f64();
         println!("parasail, random, {}", random_time);

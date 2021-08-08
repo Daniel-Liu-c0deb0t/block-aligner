@@ -80,7 +80,7 @@ RUSTFLAGS="-C target-feature=+simd128" cargo build --target=wasm32-wasi --releas
 ```
 
 ## Data
-Some Nanopore (DNA) and Uniclust30 (protein) data are used in some tests and benchmarks.
+Some Illumina/Nanopore (DNA) and Uniclust30 (protein) data are used in some tests and benchmarks.
 You will need to download them by following the instructions in the [data readme](data/README.md).
 
 ## Test
@@ -90,7 +90,7 @@ CI will run these tests when commits are pushed to this repo.
 
 For assessing the accuracy of block aligner on random data, run `./accuracy_avx2.sh`,
 `./x_drop_accuracy_avx2.sh`, or `./accuracy_wasm.sh`.
-For Nanopore or Uniclust30 data, run `./nanopore_accuracy.sh` or `./uc_accuracy.sh`.
+For Illumina/Nanopore or Uniclust30 data, run `./nanopore_accuracy.sh` or `./uc_accuracy.sh`.
 
 For debugging, there exists a `debug` feature flag that prints out a lot of
 useful info about the internal state of the aligner while it runs.
