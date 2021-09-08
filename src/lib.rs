@@ -23,21 +23,7 @@
 //! ```
 //!
 //! When building your code that uses this library, it is important to specify the
-//! correct flags to turn on specific target features that this library uses.
-//!
-//! For x86 AVX2:
-//! ```text
-//! RUSTFLAGS="-C target-cpu=native" cargo build --release
-//! ```
-//! or
-//! ```text
-//! RUSTFLAGS="-C target-feature=+avx2" cargo build --release
-//! ```
-//!
-//! For WASM SIMD:
-//! ```text
-//! RUSTFLAGS="-C target-feature=+simd128" cargo build --target=wasm32-wasi --release
-//! ```
+//! correct feature flags: `simd_avx2` or `simd_wasm`.
 
 #![cfg_attr(feature = "mca", feature(asm))]
 

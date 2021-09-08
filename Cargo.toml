@@ -1,6 +1,6 @@
 [package]
 name = "block-aligner"
-version = "0.1.5"
+version = "0.2.0"
 authors = ["c0deb0t <daniel.liu02@gmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -48,7 +48,7 @@ rand = { version = "^0.8", default-features = false, features = ["std_rng", "all
 bio = "^0.33"
 
 [build-dependencies]
-cbindgen = "^0.19.0"
+cbindgen = "^0.20.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 parasailors = "^0.3.1"

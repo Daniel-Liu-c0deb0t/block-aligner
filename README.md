@@ -53,52 +53,55 @@ Currently, AVX2 (256-bit vectors) and WASM SIMD (128-bit vectors) are supported.
 For score calculations, 16-bit score values (lanes) and 32-bit per block offsets are used.
 
 ## Install
-This library requires the nightly Rust channel.
+This library can be used on both stable and nightly Rust channels.
+The nightly channel is needed for running tests and benchmarks.
 
-You can directly clone this repo, or add the following to your `Cargo.toml`:
+To use this as a crate in your Rust project, add the following to your `Cargo.toml`:
 ```
 [dependencies]
-block-aligner = "*"
+block-aligner = { version = "^0.2.0", features = ["simd_avx2"] }
 ```
-Your computer needs to have a CPU that supports AVX2.
+Use the `simd_wasm` feature flag for WASM SIMD support. It is your responsibility to ensure
+the correct feature to be enabled and supported by the platform that runs the code
+because this library does not automatically detect the supported SIMD instruction set.
 
-When building your code that uses this library, it is important to specify the
-correct flags to turn on specific target features that this library uses.
+For developing, testing, or using the C API, you should clone this repo
+and use Rust nightly. In general, when building, you need to specify the
+correct feature flags through the command line.
 
 For x86 AVX2:
 ```
-RUSTFLAGS="-C target-cpu=native" cargo build --release
-```
-or
-```
-RUSTFLAGS="-C target-feature=+avx2" cargo build --release
+cargo build --features simd_avx2 --release
 ```
 
 For WASM SIMD:
 ```
-RUSTFLAGS="-C target-feature=+simd128" cargo build --target=wasm32-wasi --release
+cargo build --target=wasm32-wasi --features simd_wasm --release
 ```
+
+Most of the instructions below are for benchmarking and testing block aligner.
 
 ## Data
 Some Illumina/Nanopore (DNA) and Uniclust30 (protein) data are used in some tests and benchmarks.
 You will need to download them by following the instructions in the [data readme](data/README.md).
 
 ## Test
-1. `./test_avx2.sh` or `./test_wasm.sh`
+1. `scripts/test_avx2.sh` or `scripts/test_wasm.sh`
 
 CI will run these tests when commits are pushed to this repo.
 
-For assessing the accuracy of block aligner on random data, run `./accuracy_avx2.sh`,
-`./x_drop_accuracy_avx2.sh`, or `./accuracy_wasm.sh`.
-For Illumina/Nanopore or Uniclust30 data, run `./nanopore_accuracy.sh` or `./uc_accuracy.sh`.
+For assessing the accuracy of block aligner on random data, run `scripts/accuracy_avx2.sh`,
+`scripts/x_drop_accuracy_avx2.sh`, or `scripts/accuracy_wasm.sh`.
+For Illumina/Nanopore or Uniclust30 data, run `scripts/nanopore_accuracy.sh` or
+`scripts/uc_accuracy.sh`.
 
 For debugging, there exists a `debug` feature flag that prints out a lot of
 useful info about the internal state of the aligner while it runs.
 There is another feature flag, `debug_size`, that prints the sizes of blocks after they grow.
-To manually inspect alignments, run `./debug_avx2.sh` with two sequences as arguments.
+To manually inspect alignments, run `scripts/debug_avx2.sh` with two sequences as arguments.
 
 ## Docs
-1. `./doc_avx2.sh` or `./doc_wasm.sh`
+1. `scripts/doc_avx2.sh` or `scripts/doc_wasm.sh`
 
 This will build the docs locally.
 
@@ -111,31 +114,31 @@ Go to those repos, then follow the instructions for installing and running the c
 If you run the scripts in those repos for comparing scores produced by different algorithms,
 you should get `.tsv` generated files. Then, in this repo's directory, run
 ```
-./compare_avx2.sh /path/to/file.tsv 50
+scripts/compare_avx2.sh /path/to/file.tsv 50
 ```
 to get the comparisons. The X-drop threshold is specified after the path.
 
 ## Benchmark
-1. `./bench_avx2.sh` or `./bench_wasm.sh`
+1. `scripts/bench_avx2.sh` or `scripts/bench_wasm.sh`
 
-For benchmarking Nanopore or Uniclust30 data, run `./nanopore_bench.sh` or `./uc_bench.sh`.
+For benchmarking Nanopore or Uniclust30 data, run `scripts/nanopore_bench.sh` or `scripts/uc_bench.sh`.
 
 ## Profiling with MacOS Instruments
 Use
 ```
 brew install cargo-instruments
-RUSTFLAGS="-g -C target-cpu=native" cargo instruments --example profile --release --open
+RUSTFLAGS="-g" cargo instruments --example profile --release --features simd_avx2 --open
 ```
 
 ## Analyzing performance with LLVM-MCA
 Use
 ```
-./build_ir_asm.sh
+scripts/build_ir_asm.sh
 ```
 to generate assembly output and run LLVM-MCA.
 
 ## Viewing the assembly
-Use either `./build_ir_asm.sh`, `objdump -d` on a binary (avoids recompiling code in
+Use either `scripts/build_ir_asm.sh`, `objdump -d` on a binary (avoids recompiling code in
 some cases), or a more advanced tool like Ghidra (has a decompiler, too).
 
 ## WASM SIMD support

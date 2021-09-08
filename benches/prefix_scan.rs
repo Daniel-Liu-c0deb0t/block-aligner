@@ -12,7 +12,7 @@ struct A([i16; L]);
 #[bench]
 fn bench_opt_prefix_scan(b: &mut Bencher) {
     #[target_feature(enable = "avx2")]
-    unsafe fn inner() {
+    unsafe fn inner(b: &mut Bencher) {
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
         let vec = simd_load(vec.0.as_ptr() as *const Simd);
 
@@ -21,13 +21,13 @@ fn bench_opt_prefix_scan(b: &mut Bencher) {
             simd_prefix_scan_i16(black_box(vec), consts)
         });
     }
-    unsafe { inner(); }
+    unsafe { inner(b); }
 }
 
 #[bench]
 fn bench_naive_prefix_scan(b: &mut Bencher) {
     #[target_feature(enable = "avx2")]
-    unsafe fn inner() {
+    unsafe fn inner(b: &mut Bencher) {
         let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
         let vec = simd_load(vec.0.as_ptr() as *const Simd);
 
@@ -36,5 +36,5 @@ fn bench_naive_prefix_scan(b: &mut Bencher) {
             simd_naive_prefix_scan_i16(black_box(vec), consts)
         });
     }
-    unsafe { inner(); }
+    unsafe { inner(b); }
 }
