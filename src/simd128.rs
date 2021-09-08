@@ -14,33 +14,43 @@ pub const MIN: i16 = 0;
 // Note: SIMD vectors treated as little-endian
 
 // No non-temporal store in WASM
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { *ptr = trace; }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_adds_i16(a: Simd, b: Simd) -> Simd { i16x8_add_sat(a, b) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_subs_i16(a: Simd, b: Simd) -> Simd { i16x8_sub_sat(a, b) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_max_i16(a: Simd, b: Simd) -> Simd { i16x8_max(a, b) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_cmpeq_i16(a: Simd, b: Simd) -> Simd { i16x8_eq(a, b) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { i16x8_gt(a, b) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd { v128_bitselect(b, a, mask) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_load(ptr: *const Simd) -> Simd { v128_load(ptr) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { v128_store(ptr, a) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_set1_i16(v: i16) -> Simd { i16x8_splat(v) }
 
@@ -68,6 +78,7 @@ macro_rules! simd_insert_i16 {
     };
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_movemask_i8(a: Simd) -> u16 {
     i8x16_bitmask(a) as u16
@@ -121,11 +132,13 @@ macro_rules! simd_sllz_i16 {
     };
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_broadcasthi_i16(v: Simd) -> Simd {
     i16x8_shuffle::<7, 7, 7, 7, 7, 7, 7, 7>(v, v)
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     debug_assert!(i < L);
@@ -138,6 +151,7 @@ pub unsafe fn simd_slow_extract_i16(v: Simd, i: usize) -> i16 {
     *a.0.as_ptr().add(i)
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_hmax_i16(v: Simd) -> i16 {
     let mut v2 = i16x8_max(v, simd_sr_i16!(v, v, 1));
@@ -190,12 +204,14 @@ macro_rules! simd_prefix_hmax_i16 {
     };
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
     let v2 = i16x8_eq(v, i16x8_splat(max));
     (simd_movemask_i8(v2).trailing_zeros() as usize) / 2
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 #[allow(non_snake_case)]
 #[allow(dead_code)]
@@ -212,6 +228,7 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts
     curr
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn get_gap_extend_all(gap: i16) -> Simd {
     i16x8(
@@ -222,12 +239,14 @@ pub unsafe fn get_gap_extend_all(gap: i16) -> Simd {
 
 pub type PrefixScanConsts = Simd;
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn get_prefix_scan_consts(gap: i16) -> PrefixScanConsts {
     let gap_cost = i16x8_splat(gap);
     gap_cost
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 #[allow(non_snake_case)]
 pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts) -> Simd {
@@ -244,6 +263,7 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts) -> S
     shift4
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
     // must use a mask to avoid zeroing lanes that are too large
@@ -256,11 +276,13 @@ pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) 
     i16x8_extend_low_i8x16(c)
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_lookup1_i16(lut: HalfSimd, v: HalfSimd) -> Simd {
     i16x8_extend_low_i8x16(i8x16_swizzle(lut, v128_and(v, i8x16_splat(0b1111))))
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_lookup_bytes_i16(match_scores: HalfSimd, mismatch_scores: HalfSimd, a: HalfSimd, b: HalfSimd) -> Simd {
     let mask = i8x16_eq(a, b);
@@ -268,22 +290,28 @@ pub unsafe fn halfsimd_lookup_bytes_i16(match_scores: HalfSimd, mismatch_scores:
     i16x8_extend_low_i8x16(c)
 }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_store(ptr: *mut HalfSimd, a: HalfSimd) { v128_store(ptr, a) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_sub_i8(a: HalfSimd, b: HalfSimd) -> HalfSimd { i8x16_sub(a, b) }
 
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_set1_i8(v: i8) -> HalfSimd { i8x16_splat(v) }
 
 // only the low 8 bytes are out of each v128 for halfsimd
+#[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_get_idx(i: usize) -> usize { i + i / L * L }
 
@@ -306,6 +334,7 @@ macro_rules! halfsimd_sr_i8 {
     };
 }
 
+#[target_feature(enable = "simd128")]
 #[allow(dead_code)]
 pub unsafe fn simd_dbg_i16(v: Simd) {
     #[repr(align(16))]
@@ -320,6 +349,7 @@ pub unsafe fn simd_dbg_i16(v: Simd) {
     println!();
 }
 
+#[target_feature(enable = "simd128")]
 #[allow(dead_code)]
 pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
     #[repr(align(16))]
@@ -334,6 +364,7 @@ pub unsafe fn halfsimd_dbg_i8(v: HalfSimd) {
     println!();
 }
 
+#[target_feature(enable = "simd128")]
 #[allow(dead_code)]
 pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
     #[repr(align(16))]
@@ -344,6 +375,7 @@ pub unsafe fn simd_assert_vec_eq(a: Simd, b: [i16; L]) {
     assert_eq!(arr.0, b);
 }
 
+#[target_feature(enable = "simd128")]
 #[allow(dead_code)]
 pub unsafe fn halfsimd_assert_vec_eq(a: HalfSimd, b: [i8; L]) {
     #[repr(align(16))]
@@ -360,7 +392,8 @@ mod tests {
 
     #[test]
     fn test_endianness() {
-        unsafe {
+        #[target_feature(enable = "simd128")]
+        unsafe fn inner() {
             #[repr(align(16))]
             struct A([i16; L]);
 
@@ -386,11 +419,13 @@ mod tests {
             simd_assert_vec_eq(simd_adds_i16(simd_set1_i16(i16::MAX), simd_set1_i16(i16::MIN)), [-1; 8]);
             simd_assert_vec_eq(simd_subs_i16(simd_set1_i16(i16::MAX), simd_set1_i16(i16::MIN)), [i16::MAX; 8]);
         }
+        unsafe { inner(); }
     }
 
     #[test]
     fn test_prefix_scan() {
-        unsafe {
+        #[target_feature(enable = "simd128")]
+        unsafe fn inner() {
             #[repr(align(16))]
             struct A([i16; L]);
 
@@ -404,5 +439,6 @@ mod tests {
             let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), consts);
             simd_assert_vec_eq(res, [8, 9, 10, 15, 14, 13, 14, 13]);
         }
+        unsafe { inner(); }
     }
 }

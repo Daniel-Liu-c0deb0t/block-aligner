@@ -1,7 +1,7 @@
 set -e
 
 cargo clean
-RUSTFLAGS="-C target-feature=+simd128" cargo build --release --benches --target wasm32-wasi
+cargo build --release --benches --target wasm32-wasi --features simd_wasm
 
 # binaryen wasm-opt pass
 for f in target/wasm32-wasi/*/deps/*.wasm; do

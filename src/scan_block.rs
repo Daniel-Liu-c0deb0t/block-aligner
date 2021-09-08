@@ -1,15 +1,14 @@
 //! Main block aligner algorithm and supporting data structures.
 
-#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+#[cfg(feature = "simd_avx2")]
 use crate::avx2::*;
 
-#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[cfg(feature = "simd_wasm")]
 use crate::simd128::*;
 
 use crate::scores::*;
 use crate::cigar::*;
 
-use std::intrinsics::{unlikely, unchecked_rem, unchecked_div};
 use std::{cmp, ptr, i16, alloc};
 use std::ops::RangeInclusive;
 use std::any::TypeId;
@@ -121,6 +120,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         a
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     unsafe fn align_core(&mut self) {
         // store the best alignment ending location for x drop alignment
@@ -389,8 +390,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     // calculate location with the best score
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
-                    let r = unchecked_rem(idx, block_size / L) * L + lane_idx;
-                    let c = (block_size - step) + unchecked_div(idx, block_size / L);
+                    let r = (idx % (block_size / L)) * L + lane_idx;
+                    let c = (block_size - step) + idx / (block_size / L);
 
                     match dir {
                         Direction::Right => {
@@ -404,13 +405,13 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                         Direction::Grow => {
                             // max could be in either block
                             if max >= grow_max {
-                                best_argmax_i = self.i + unchecked_rem(idx, block_size / L) * L + lane_idx;
-                                best_argmax_j = self.j + prev_size + unchecked_div(idx, block_size / L);
+                                best_argmax_i = self.i + (idx % (block_size / L)) * L + lane_idx;
+                                best_argmax_j = self.j + prev_size + idx / (block_size / L);
                             } else {
                                 let lane_idx = simd_hargmax_i16(grow_D_max, grow_max);
                                 let idx = simd_slow_extract_i16(grow_D_argmax, lane_idx) as usize;
-                                best_argmax_i = self.i + prev_size + unchecked_div(idx, prev_size / L);
-                                best_argmax_j = self.j + unchecked_rem(idx, prev_size / L) * L + lane_idx;
+                                best_argmax_i = self.i + prev_size + idx / (prev_size / L);
+                                best_argmax_j = self.j + (idx % (prev_size / L)) * L + lane_idx;
                             }
                         }
                     }
@@ -445,7 +446,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
             }
 
             if X_DROP {
-                if unlikely(off_max < best_max - self.x_drop) {
+                if off_max < best_max - self.x_drop {
                     if x_drop_iter < X_DROP_ITER - 1 {
                         x_drop_iter += 1;
                     } else {
@@ -457,18 +458,18 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                 }
             }
 
-            if unlikely(self.i + block_size > self.query.len() && self.j + block_size > self.reference.len()) {
+            if self.i + block_size > self.query.len() && self.j + block_size > self.reference.len() {
                 // reached the end of the strings
                 break;
             }
 
             // first check if the shift direction is "forced" to avoid going out of bounds
-            if unlikely(self.j + block_size > self.reference.len()) {
+            if self.j + block_size > self.reference.len() {
                 self.i += step;
                 dir = Direction::Down;
                 continue;
             }
-            if unlikely(self.i + block_size > self.query.len()) {
+            if self.i + block_size > self.query.len() {
                 self.j += step;
                 dir = Direction::Right;
                 continue;
@@ -479,7 +480,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
             if next_size <= self.max_size {
                 // if approximately (block_size / step) iterations has passed since the last best
                 // max, then it is time to grow
-                if unlikely(y_drop_iter > (block_size / step) - 1 || grow_no_max) {
+                if y_drop_iter > (block_size / step) - 1 || grow_no_max {
                     // y drop grow block
                     prev_size = block_size;
                     block_size = next_size;
@@ -555,6 +556,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         };
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn just_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
@@ -568,6 +571,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         }
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn prefix_max(&self, buf: *const i16, step: usize) -> i16 {
@@ -582,6 +587,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         }
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> Simd {
@@ -628,6 +635,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     /// Inside this function, everything will be treated as shifting right,
     /// conceptually. The same process can be trivially used for shifting
     /// down by calling this function with different parameters.
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     // Want this to be inlined in some places and not others, so let
     // compiler decide.
@@ -651,7 +660,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
 
-        if unlikely(width == 0 || height == 0) {
+        if width == 0 || height == 0 {
             return (D_max, D_argmax);
         }
 
@@ -675,7 +684,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
 
                 let scores = self.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
                 D11 = simd_adds_i16(D00, scores);
-                if unlikely(start_i + i == 0 && start_j + j == 0) {
+                if start_i + i == 0 && start_j + j == 0 {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
                 }
 
@@ -743,8 +752,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
             ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
             ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
-            if !X_DROP && unlikely(start_i + height > query.len()
-                                   && start_j + j >= reference.len()) {
+            if !X_DROP && start_i + height > query.len()
+                && start_j + j >= reference.len() {
                 if TRACE {
                     // make sure that the trace index is updated since the rest of the loop
                     // iterations are skipped
@@ -770,6 +779,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         &self.trace
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
     unsafe fn get_const_simd(&self) -> (Simd, Simd) {
         // some useful constant simd vectors
@@ -817,10 +828,12 @@ impl Trace {
         }
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    fn add_trace(&mut self, t: TraceType) {
+    unsafe fn add_trace(&mut self, t: TraceType) {
         debug_assert!(self.trace_idx < self.trace.len());
-        unsafe { store_trace(self.trace.as_mut_ptr().add(self.trace_idx), t); }
+        store_trace(self.trace.as_mut_ptr().add(self.trace_idx), t);
         self.trace_idx += 1;
     }
 
@@ -987,6 +1000,8 @@ struct Aligned {
 }
 
 impl Aligned {
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     pub unsafe fn new(block_size: usize) -> Self {
         // custom alignment
         let layout = alloc::Layout::from_size_align_unchecked(block_size * 2, L_BYTES);
@@ -999,6 +1014,8 @@ impl Aligned {
         Self { layout, ptr }
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
     pub unsafe fn set_vec(&mut self, o: &Aligned, idx: usize) {
         simd_store(self.ptr.add(idx) as _, simd_load(o.as_ptr().add(idx) as _));

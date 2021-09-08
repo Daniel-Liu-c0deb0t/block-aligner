@@ -1,19 +1,21 @@
-#![cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+#[cfg(not(feature = "simd_avx2"))]
+fn main() {}
 
-use block_aligner::scan_block::*;
-use block_aligner::scores::*;
-use block_aligner::cigar::*;
-
-use image::{Rgb, RgbImage, ColorType};
-use image::codecs::png::{PngEncoder, CompressionType, FilterType};
-use imageproc::drawing::*;
-use imageproc::rect::Rect;
-
-use std::env;
-use std::io::BufWriter;
-use std::fs::File;
-
+#[cfg(feature = "simd_avx2")]
 fn main() {
+    use block_aligner::scan_block::*;
+    use block_aligner::scores::*;
+    use block_aligner::cigar::*;
+
+    use image::{Rgb, RgbImage, ColorType};
+    use image::codecs::png::{PngEncoder, CompressionType, FilterType};
+    use imageproc::drawing::*;
+    use imageproc::rect::Rect;
+
+    use std::env;
+    use std::io::BufWriter;
+    use std::fs::File;
+
     let args = env::args().skip(1);
 
     let seqs = [

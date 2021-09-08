@@ -6,7 +6,7 @@ CFLAGS=-L../target/release -lblock_aligner -I.
 all: example
 
 block_aligner:
-	RUSTFLAGS="-C target-cpu=native" BLOCK_ALIGNER_C= cargo build --release
+	BLOCK_ALIGNER_C= cargo build --release --features simd_avx2
 
 example: block_aligner example.c
 	$(CC) $(CFLAGS) example.c

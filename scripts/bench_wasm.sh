@@ -5,7 +5,7 @@
 # CARGO_TARGET_WASM32_WASI_RUNNER="wasmer run --native --llvm --enable-simd --"
 # CARGO_TARGET_WASM32_WASI_RUNNER="wavm run --enable simd"
 
-CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime --wasm-features simd --" RUSTFLAGS="-C target-feature=+simd128" cargo bench --target=wasm32-wasi -- --nocapture "$@"
+CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime --wasm-features simd --" cargo bench --target=wasm32-wasi --features simd_wasm -- --nocapture "$@"
 #RUSTFLAGS="-C target-feature=+simd128" cargo build --release --benches --target=wasm32-wasi
 
 # binaryen wasm-opt pass

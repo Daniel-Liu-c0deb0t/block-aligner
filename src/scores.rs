@@ -1,9 +1,9 @@
 //! Structs for representing match/mismatch scoring matrices.
 
-#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+#[cfg(feature = "simd_avx2")]
 use crate::avx2::*;
 
-#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[cfg(feature = "simd_wasm")]
 use crate::simd128::*;
 
 use std::i8;
@@ -22,7 +22,7 @@ pub trait Matrix {
     /// Get the pointer for a specific index.
     fn as_ptr(&self, i: usize) -> *const i8;
     /// Get the scores for a certain byte and a certain SIMD vector of bytes.
-    fn get_scores(&self, c: u8, v: HalfSimd, right: bool) -> Simd;
+    unsafe fn get_scores(&self, c: u8, v: HalfSimd, right: bool) -> Simd;
     /// Convert a byte to a better storage format that makes retrieving scores
     /// easier.
     fn convert_char(c: u8) -> u8;
@@ -63,8 +63,8 @@ impl Matrix for AAMatrix {
     fn set(&mut self, a: u8, b: u8, score: i8) {
         let a = a.to_ascii_uppercase();
         let b = b.to_ascii_uppercase();
-        debug_assert!(b'A' <= a && a <= b'Z' + 1);
-        debug_assert!(b'A' <= b && b <= b'Z' + 1);
+        assert!(b'A' <= a && a <= b'Z' + 1);
+        assert!(b'A' <= b && b <= b'Z' + 1);
         let idx = ((a - b'A') as usize) * 32 + ((b - b'A') as usize);
         self.scores[idx] = score;
         let idx = ((b - b'A') as usize) * 32 + ((a - b'A') as usize);
@@ -74,8 +74,8 @@ impl Matrix for AAMatrix {
     fn get(&self, a: u8, b: u8) -> i8 {
         let a = a.to_ascii_uppercase();
         let b = b.to_ascii_uppercase();
-        debug_assert!(b'A' <= a && a <= b'Z' + 1);
-        debug_assert!(b'A' <= b && b <= b'Z' + 1);
+        assert!(b'A' <= a && a <= b'Z' + 1);
+        assert!(b'A' <= b && b <= b'Z' + 1);
         let idx = ((a - b'A') as usize) * 32 + ((b - b'A') as usize);
         self.scores[idx]
     }
@@ -86,21 +86,21 @@ impl Matrix for AAMatrix {
         unsafe { self.scores.as_ptr().add(i * 32) }
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
+    unsafe fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
         // efficiently lookup scores for each character in v
         let matrix_ptr = self.as_ptr(c as usize);
-        unsafe {
-            let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
-            let scores2 = halfsimd_load((matrix_ptr as *const HalfSimd).add(1));
-            halfsimd_lookup2_i16(scores1, scores2, v)
-        }
+        let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
+        let scores2 = halfsimd_load((matrix_ptr as *const HalfSimd).add(1));
+        halfsimd_lookup2_i16(scores1, scores2, v)
     }
 
     #[inline]
     fn convert_char(c: u8) -> u8 {
         let c = c.to_ascii_uppercase();
-        debug_assert!(c >= b'A' && c <= Self::NULL);
+        assert!(c >= b'A' && c <= Self::NULL);
         c - b'A'
     }
 }
@@ -141,8 +141,8 @@ impl Matrix for NucMatrix {
     fn set(&mut self, a: u8, b: u8, score: i8) {
         let a = a.to_ascii_uppercase();
         let b = b.to_ascii_uppercase();
-        debug_assert!(b'A' <= a && a <= b'Z');
-        debug_assert!(b'A' <= b && b <= b'Z');
+        assert!(b'A' <= a && a <= b'Z');
+        assert!(b'A' <= b && b <= b'Z');
         let idx = ((a & 0b111) as usize) * 16 + ((b & 0b1111) as usize);
         self.scores[idx] = score;
         let idx = ((b & 0b111) as usize) * 16 + ((a & 0b1111) as usize);
@@ -152,8 +152,8 @@ impl Matrix for NucMatrix {
     fn get(&self, a: u8, b: u8) -> i8 {
         let a = a.to_ascii_uppercase();
         let b = b.to_ascii_uppercase();
-        debug_assert!(b'A' <= a && a <= b'Z');
-        debug_assert!(b'A' <= b && b <= b'Z');
+        assert!(b'A' <= a && a <= b'Z');
+        assert!(b'A' <= b && b <= b'Z');
         let idx = ((a & 0b111) as usize) * 16 + ((b & 0b1111) as usize);
         self.scores[idx]
     }
@@ -163,20 +163,20 @@ impl Matrix for NucMatrix {
         unsafe { self.scores.as_ptr().add((i & 0b111) * 16) }
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
+    unsafe fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
         // efficiently lookup scores for each character in v
         let matrix_ptr = self.as_ptr(c as usize);
-        unsafe {
-            let scores = halfsimd_load(matrix_ptr as *const HalfSimd);
-            halfsimd_lookup1_i16(scores, v)
-        }
+        let scores = halfsimd_load(matrix_ptr as *const HalfSimd);
+        halfsimd_lookup1_i16(scores, v)
     }
 
     #[inline]
     fn convert_char(c: u8) -> u8 {
         let c = c.to_ascii_uppercase();
-        debug_assert!(c >= b'A' && c <= Self::NULL);
+        assert!(c >= b'A' && c <= Self::NULL);
         c
     }
 }
@@ -220,13 +220,13 @@ impl Matrix for ByteMatrix {
         unimplemented!()
     }
 
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
-        unsafe {
-            let match_scores = halfsimd_set1_i8(self.match_score);
-            let mismatch_scores = halfsimd_set1_i8(self.mismatch_score);
-            halfsimd_lookup_bytes_i16(match_scores, mismatch_scores, halfsimd_set1_i8(c as i8), v)
-        }
+    unsafe fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
+        let match_scores = halfsimd_set1_i8(self.match_score);
+        let mismatch_scores = halfsimd_set1_i8(self.mismatch_score);
+        halfsimd_lookup_bytes_i16(match_scores, mismatch_scores, halfsimd_set1_i8(c as i8), v)
     }
 
     #[inline]

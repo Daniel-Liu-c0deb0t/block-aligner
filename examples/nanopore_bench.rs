@@ -1,10 +1,6 @@
 #![feature(bench_black_box)]
-#![cfg(any(
-        all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"),
-        all(target_arch = "wasm32", target_feature = "simd128")
-))]
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 use parasailors::{Matrix, *};
 
 use rand::prelude::*;
@@ -58,7 +54,7 @@ fn get_data(file_name: Option<&str>) -> Vec<(Vec<u8>, Vec<u8>)> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 #[allow(dead_code)]
 fn bench_parasailors_nuc_core(file: bool, _trace: bool, _max_size: usize) -> (i32, Duration) {
     let file_data = get_data(if file { Some(&FILE_NAME) } else { None });

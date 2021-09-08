@@ -1,15 +1,16 @@
-#![cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+#[cfg(not(feature = "simd_avx2"))]
+fn main() {}
 
-use parasailors::{Matrix, *};
-
-use block_aligner::scan_block::*;
-use block_aligner::scores::*;
-
-use std::env;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-
+#[cfg(feature = "simd_avx2")]
 fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool) -> (usize, f64, usize) {
+    use parasailors::{Matrix, *};
+
+    use block_aligner::scan_block::*;
+    use block_aligner::scores::*;
+
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+
     let mut wrong = 0usize;
     let mut wrong_avg = 0f64;
     let mut count = 0usize;
@@ -56,7 +57,10 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool) -> (us
     (wrong, wrong_avg / (wrong as f64), count)
 }
 
+#[cfg(feature = "simd_avx2")]
 fn main() {
+    use std::env;
+
     let arg1 = env::args().skip(1).next();
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let paths = ["data/real.illumina.b10M.txt", "data/real.ont.b10M.txt", "data/sequences.txt"];

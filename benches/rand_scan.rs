@@ -1,8 +1,4 @@
 #![feature(test)]
-#![cfg(any(
-        all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"),
-        all(target_arch = "wasm32", target_feature = "simd128")
-))]
 
 extern crate test;
 use test::{Bencher, black_box};
@@ -12,10 +8,10 @@ use rand::prelude::*;
 use bio::alignment::pairwise::*;
 use bio::scores::blosum62;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 use bio::alignment::distance::simd::bounded_levenshtein;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 use parasailors::{Matrix, *};
 
 use block_aligner::scan_block::*;
@@ -33,7 +29,7 @@ fn bench_rustbio_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 fn bench_parasailors_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
@@ -107,7 +103,7 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 fn bench_triple_accel_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);
     let r = black_box(rand_str(len, &NUC, &mut rng));
@@ -151,10 +147,10 @@ fn bench_scan_nuc_100_1000(b: &mut Bencher) { bench_scan_nuc_core::<100>(b, 1000
 #[bench]
 fn bench_scan_nuc_1000_10000(b: &mut Bencher) { bench_scan_nuc_core::<1000>(b, 10000); }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 #[bench]
 fn bench_triple_accel_100_1000(b: &mut Bencher) { bench_triple_accel_core::<100>(b, 1000); }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 #[bench]
 fn bench_triple_accel_1000_10000(b: &mut Bencher) { bench_triple_accel_core::<1000>(b, 10000); }
 
@@ -163,12 +159,12 @@ fn bench_rustbio_aa_10_100(b: &mut Bencher) { bench_rustbio_aa_core::<10>(b, 100
 #[bench]
 fn bench_rustbio_aa_100_1000(b: &mut Bencher) { bench_rustbio_aa_core::<100>(b, 1000); }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 #[bench]
 fn bench_parasailors_aa_10_100(b: &mut Bencher) { bench_parasailors_aa_core::<10>(b, 100); }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 #[bench]
 fn bench_parasailors_aa_100_1000(b: &mut Bencher) { bench_parasailors_aa_core::<100>(b, 1000); }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(feature = "simd_wasm"))]
 #[bench]
 fn bench_parasailors_aa_1000_10000(b: &mut Bencher) { bench_parasailors_aa_core::<1000>(b, 10000); }

@@ -6,6 +6,7 @@
 
 use std::ffi::{CStr, c_void};
 use std::os::raw::c_char;
+use std::mem;
 
 use crate::scan_block::*;
 use crate::scores::*;
@@ -131,7 +132,8 @@ pub unsafe extern fn block_cigar_aa_trace(b: BlockHandle) -> CigarVec {
     let aligner = &*(b as *const Block<AAMatrix, true, false>);
     let res = aligner.res();
     let cigar_vec = aligner.trace().cigar(res.query_idx, res.reference_idx).to_vec();
-    let (ptr, len, cap) = cigar_vec.into_raw_parts();
+    let mut cigar_vec = mem::ManuallyDrop::new(cigar_vec);
+    let (ptr, len, cap) = (cigar_vec.as_mut_ptr(), cigar_vec.len(), cigar_vec.capacity());
     CigarVec { ptr, len, cap }
 }
 
@@ -166,7 +168,8 @@ pub unsafe extern fn block_cigar_aa_trace_xdrop(b: BlockHandle) -> CigarVec {
     let aligner = &*(b as *const Block<AAMatrix, true, true>);
     let res = aligner.res();
     let cigar_vec = aligner.trace().cigar(res.query_idx, res.reference_idx).to_vec();
-    let (ptr, len, cap) = cigar_vec.into_raw_parts();
+    let mut cigar_vec = mem::ManuallyDrop::new(cigar_vec);
+    let (ptr, len, cap) = (cigar_vec.as_mut_ptr(), cigar_vec.len(), cigar_vec.capacity());
     CigarVec { ptr, len, cap }
 }
 

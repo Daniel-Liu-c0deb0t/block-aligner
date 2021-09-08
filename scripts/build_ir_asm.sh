@@ -3,7 +3,7 @@ set -e
 LLVM_MCA=/usr/local/opt/llvm/bin/llvm-mca
 
 #RUSTFLAGS="-g -Z asm-comments --emit llvm-ir,asm -C llvm-args=-x86-asm-syntax=intel -C target-cpu=native" cargo build --release --example profile --features mca
-RUSTFLAGS="-Z asm-comments --emit llvm-ir,asm -C llvm-args=-x86-asm-syntax=intel -C target-cpu=native" cargo build --release --example profile --features mca
+RUSTFLAGS="-Z asm-comments --emit llvm-ir,asm -C llvm-args=-x86-asm-syntax=intel" cargo build --release --example profile --features mca,simd_avx2
 
 # demangle symbols
 #for f in target/release/examples/*.{s,ll}; do
