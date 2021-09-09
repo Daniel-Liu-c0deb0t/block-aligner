@@ -9,4 +9,4 @@ block_aligner:
 	BLOCK_ALIGNER_C= cargo build --release --features simd_avx2
 
 example: block_aligner example.c
-	LD_LIBRARY_PATH=../target/release $(CC) $(CFLAGS) example.c
+	$(CC) $(CFLAGS) example.c

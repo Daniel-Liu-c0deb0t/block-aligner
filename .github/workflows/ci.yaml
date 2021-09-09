@@ -34,13 +34,6 @@ jobs:
       run: |
         cargo test --target=wasm32-wasi --features simd_wasm --all-targets --no-run -- --nocapture
 
-    - name: Test C API
-      run: |
-        cd c
-        make
-        ./a.out
-        cd ..
-
     - name: Install Rust Stable
       uses: actions-rs/toolchain@v1
       with:
