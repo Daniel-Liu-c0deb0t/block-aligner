@@ -44,9 +44,8 @@ jobs:
     - name: Test AVX2
       run: |
         cargo --version
-        cargo test --features simd_avx2
+        cargo build --features simd_avx2
 
     - name: Test WASM
-      # needs wasmtime to actually run
       run: |
-        cargo test --target=wasm32-wasi --features simd_wasm --no-run -- --nocapture
+        cargo build --target=wasm32-wasi --features simd_wasm
