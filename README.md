@@ -54,7 +54,8 @@ For score calculations, 16-bit score values (lanes) and 32-bit per block offsets
 
 ## Install
 This library can be used on both stable and nightly Rust channels.
-The nightly channel is needed for running tests and benchmarks.
+The nightly channel is needed for running tests and benchmarks. Additionally, the tests
+and benchmarks need to run on Linux or MacOS.
 
 To use this as a crate in your Rust project, add the following to your `Cargo.toml`:
 ```
