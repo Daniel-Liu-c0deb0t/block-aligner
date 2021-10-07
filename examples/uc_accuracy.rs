@@ -129,8 +129,8 @@ fn main() {
         ]
     ];
     let strings = [/*"merged_clu_aln", */"uc30_0.95", "uc30"];
-    let min_sizes = [32, 32, 512];
-    let max_sizes = [32, 256, 512];
+    let min_sizes = [32, 32, 256];
+    let max_sizes = [32, 256, 256];
 
     println!("# seq identity is lower bound (inclusive)");
     println!("dataset, size, seq identity, count, wrong, wrong % error");

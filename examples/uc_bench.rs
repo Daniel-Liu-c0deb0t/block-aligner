@@ -131,12 +131,12 @@ fn main() {
     let uc30_95_time = d.as_secs_f64();
     println!("ours (no trace), uc30 0.95, 32-256, {}", uc30_95_time);
 
-    let d = time(bench_scan_aa_core, 0, false, 512, 512);
+    let d = time(bench_scan_aa_core, 0, false, 256, 256);
     let uc30_time = d.as_secs_f64();
-    println!("ours (no trace), uc30, 512-512, {}", uc30_time);
-    let d = time(bench_scan_aa_core, 1, false, 512, 512);
+    println!("ours (no trace), uc30, 256-256, {}", uc30_time);
+    let d = time(bench_scan_aa_core, 1, false, 256, 256);
     let uc30_95_time = d.as_secs_f64();
-    println!("ours (no trace), uc30 0.95, 512-512, {}", uc30_95_time);
+    println!("ours (no trace), uc30 0.95, 256-256, {}", uc30_95_time);
 
     let d = time(bench_scan_aa_core, 0, true, 32, 256);
     let uc30_time = d.as_secs_f64();
