@@ -10,11 +10,12 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::usize;
 
-fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) -> (f64, usize, usize) {
+fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool, wrong: &mut [usize], wrong_avg: &mut [f64], count: &mut [usize]) -> (f64, usize, usize, f64) {
     let reader = BufReader::new(File::open(file_name).unwrap());
     let mut length_sum = 0f64;
     let mut length_min = usize::MAX;
     let mut length_max = usize::MIN;
+    let mut dp_fraction = 0f64;
 
     for line in reader.lines() {
         let line = line.unwrap();
@@ -66,9 +67,12 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool, wrong:
         length_sum += (q.len() + r.len()) as f64;
         length_min = cmp::min(length_min, cmp::min(q.len(), r.len()));
         length_max = cmp::max(length_max, cmp::max(q.len(), r.len()));
+
+        let computed = block_aligner.trace().blocks().iter().map(|b| (b.width as f64) * (b.height as f64)).sum::<f64>();
+        dp_fraction += computed / (((q.len() + 1) as f64) * ((r.len() + 1) as f64));
     }
 
-    (length_sum, length_min, length_max)
+    (length_sum, length_min, length_max, dp_fraction)
 }
 
 fn indels(a: &Alignment, len: usize) -> f64 {
@@ -143,15 +147,18 @@ fn main() {
             let mut length_avg = 0f64;
             let mut length_min = usize::MAX;
             let mut length_max = usize::MIN;
+            let mut dp_fraction = 0f64;
 
             for file_name in file_names {
-                let (len_sum, len_min, len_max) = test(file_name, min_size, max_size, verbose, &mut wrong, &mut wrong_avg, &mut count);
+                let (len_sum, len_min, len_max, dp_fract) = test(file_name, min_size, max_size, verbose, &mut wrong, &mut wrong_avg, &mut count);
                 length_avg += len_sum;
                 length_min = cmp::min(length_min, len_min);
                 length_max = cmp::max(length_max, len_max);
+                dp_fraction += dp_fract;
             }
 
             length_avg /= (count.iter().sum::<usize>() * 2) as f64;
+            dp_fraction /= count.iter().sum::<usize>() as f64;
 
             for i in 0..10 {
                 println!(
@@ -167,13 +174,14 @@ fn main() {
             }
 
             println!(
-                "\n# total: {}, wrong: {}, wrong % error: {}, length avg: {}, length min: {}, length max: {}\n",
+                "\n# total: {}, wrong: {}, wrong % error: {}, length avg: {}, length min: {}, length max: {}, dp fraction: {}\n",
                 count.iter().sum::<usize>(),
                 wrong.iter().sum::<usize>(),
                 wrong_avg.iter().sum::<f64>() / (wrong.iter().sum::<usize>() as f64),
                 length_avg,
                 length_min,
-                length_max
+                length_max,
+                dp_fraction
             );
         }
     }
