@@ -7,6 +7,8 @@
 SIMD-accelerated library for computing global and X-drop affine gap sequence alignments using
 an adaptive block-based algorithm.
 
+Preprint paper available [here](https://www.biorxiv.org/content/10.1101/2021.11.08.467651).
+
 <p align = "center">
 <img src = "vis/block_img1.png" width = "300px">
 </p>
