@@ -38,10 +38,11 @@ use std::any::TypeId;
 // square blocks overlap. Only the non-overlapping new cells (a rectangular block) are
 // computed in each step.
 
-/// Data structure storing the settings for block aligner.
-pub struct Block<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> {
-    res: AlignResult,
-    trace: Trace,
+/// Keeps track of internal state and some parameters for block aligner.
+///
+/// This does not describe the whole state. The allocated scratch spaces
+/// and other local variables are also needed.
+struct State<'a, M: 'static + Matrix> {
     query: &'a PaddedBytes,
     i: usize,
     reference: &'a PaddedBytes,
@@ -53,6 +54,12 @@ pub struct Block<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool>
     x_drop: i32
 }
 
+/// Data structure storing the settings for block aligner.
+pub struct Block<const TRACE: bool, const X_DROP: bool> {
+    res: AlignResult,
+    allocated: Allocated
+}
+
 // increasing step size gives a bit extra speed but results in lower accuracy
 // current settings are fast, at the expense of some accuracy, and step size does not grow
 const STEP: usize = if L / 2 < 8 { L / 2 } else { 8 };
@@ -60,7 +67,21 @@ const LARGE_STEP: usize = STEP; // use larger step size when the block size gets
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
 const X_DROP_ITER: usize = 2; // make sure that the X-drop iteration is truly met instead of just one "bad" step
-impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { TRACE }, { X_DROP }> {
+impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
+
+    pub fn new(query_len: usize, reference_len: usize, max_size: usize) -> Self {
+        if GROW_EXP {
+            assert!(max_size.is_power_of_two(), "Block size must be a power of two!");
+        } else {
+            assert!(max_size % L == 0, "Block size must be multiples of {}!", L);
+        }
+
+        Self {
+            res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
+            allocated: Allocated::new(query_len, reference_len, max_size, TRACE)
+        }
+    }
+
     /// Align two strings with block aligner.
     ///
     /// If `TRACE` is true, then information for computing the traceback will be stored.
@@ -83,7 +104,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     /// other potentially difficult regions to be handled correctly.
     /// 16-bit deltas and 32-bit offsets are used to ensure that accurate scores are
     /// computed, even when the the strings are long.
-    pub fn align(query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) -> Self {
+    pub fn align(&mut self, query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
         // check invariants so bad stuff doesn't happen later
         assert!(gaps.open < 0 && gaps.extend < 0, "Gap costs must be negative!");
         // there are edge cases with calculating traceback that doesn't work if
@@ -102,9 +123,9 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
             assert!(TypeId::of::<M>() != TypeId::of::<ByteMatrix>(), "X-drop alignment with ByteMatrix is not fully supported!");
         }
 
-        let mut a = Self {
-            res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
-            trace: if TRACE { Trace::new(query.len(), reference.len()) } else { Trace::new(0, 0) },
+        unsafe { self.allocated.clear(query.len(), reference.len(), max_size, TRACE); }
+
+        let s = State {
             query,
             i: 0,
             reference,
@@ -115,15 +136,13 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
             gaps,
             x_drop
         };
-
-        unsafe { a.align_core(); }
-        a
+        unsafe { self.align_core(s); }
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    unsafe fn align_core(&mut self) {
+    unsafe fn align_core(&mut self, mut state: State) {
         // store the best alignment ending location for x drop alignment
         let mut best_max = 0i32;
         let mut best_argmax_i = 0usize;
@@ -790,6 +809,85 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     }
 }
 
+/// Allocated scratch spaces for alignment.
+///
+/// Scratch spaces can be reused for aligning strings with shorter lengths
+/// and smaller block sizes.
+struct Allocated {
+    trace: Trace,
+    D_col: Aligned,
+    C_col: Aligned,
+    D_row: Aligned,
+    R_row: Aligned,
+    D_col_ckpt: Aligned,
+    C_col_ckpt: Aligned,
+    D_row_ckpt: Aligned,
+    R_row_ckpt: Aligned,
+    temp_buf1: Aligned,
+    temp_buf2: Aligned,
+    query_len: usize,
+    reference_len: usize,
+    max_size: usize,
+    trace_flag: bool
+}
+
+impl Allocated {
+    fn new(query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) -> Self {
+        unsafe {
+            let trace = if trace_flag { Trace::new(query_len, reference_len) } else { Trace::new(0, 0) };
+            let D_col = Aligned::new(max_size);
+            let C_col = Aligned::new(max_size);
+            let D_row = Aligned::new(max_size);
+            let R_row = Aligned::new(max_size);
+            let D_col_ckpt = Aligned::new(max_size);
+            let C_col_ckpt = Aligned::new(max_size);
+            let D_row_ckpt = Aligned::new(max_size);
+            let R_row_ckpt = Aligned::new(max_size);
+            let temp_buf1 = Aligned::new(L);
+            let temp_buf2 = Aligned::new(L);
+
+            Self {
+                trace,
+                D_col,
+                C_col,
+                D_row,
+                R_row,
+                D_col_ckpt,
+                C_col_ckpt,
+                D_row_ckpt,
+                R_row_ckpt,
+                temp_buf1,
+                temp_buf2,
+                query_len,
+                reference_len,
+                max_size,
+                trace_flag
+            }
+        }
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    unsafe fn clear(&mut self, query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) {
+        assert!(query_len <= self.query_len);
+        assert!(reference_len <= self.reference_len);
+        assert!(max_size <= self.max_size);
+        assert_eq!(trace_flag, self.trace_flag);
+
+        self.trace.clear(query_len, reference_len);
+        self.D_col.clear(max_size);
+        self.C_col.clear(max_size);
+        self.D_row.clear(max_size);
+        self.R_row.clear(max_size);
+        self.D_col_ckpt.clear(max_size);
+        self.C_col_ckpt.clear(max_size);
+        self.D_row_ckpt.clear(max_size);
+        self.R_row_ckpt.clear(max_size);
+        self.temp_buf1.clear(L);
+        self.temp_buf2.clear(L);
+    }
+}
+
 /// Holds the trace generated by block aligner.
 #[derive(Clone)]
 pub struct Trace {
@@ -828,6 +926,19 @@ impl Trace {
         }
     }
 
+    #[inline]
+    fn clear(&mut self, query_len: usize, reference_len: usize) {
+        self.trace.clear();
+        // no need to clear block_start and block_size
+        self.right.fill(0);
+        self.trace_idx = 0;
+        self.block_idx = 0;
+        self.ckpt_trace_idx = 0;
+        self.ckpt_block_idx = 0;
+        self.query_len = query_len;
+        self.reference_len = reference_len;
+    }
+
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
@@ -855,6 +966,7 @@ impl Trace {
         }
     }
 
+    // TODO: overallocate trace array
     /// This must be used before adding new traces to make sure the trace array is large enough.
     #[inline]
     fn resize_trace(&mut self, i: usize, j: usize, q_len: usize, r_len: usize, block_size: usize) {
@@ -1000,18 +1112,21 @@ struct Aligned {
 }
 
 impl Aligned {
-    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
-    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     pub unsafe fn new(block_size: usize) -> Self {
         // custom alignment
         let layout = alloc::Layout::from_size_align_unchecked(block_size * 2, L_BYTES);
         let ptr = alloc::alloc_zeroed(layout) as *const i16;
+        Self { layout, ptr }
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    pub unsafe fn clear(&mut self, block_size: usize) {
         let mut i = 0;
         while i < block_size {
-            simd_store(ptr.add(i) as _, simd_set1_i16(MIN));
+            simd_store(self.ptr.add(i) as _, simd_set1_i16(MIN));
             i += L;
         }
-        Self { layout, ptr }
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
