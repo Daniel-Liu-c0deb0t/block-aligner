@@ -314,9 +314,6 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     println!("Grow down");
 
                     if TRACE {
-                        // with a larger block, the size of the trace array might need to be
-                        // increased
-                        self.trace.resize_trace(self.i, self.j, self.query.len(), self.reference.len(), block_size);
                         self.trace.add_block(self.i + prev_size, self.j, prev_size, grow_step, false);
                     }
 
@@ -834,7 +831,11 @@ struct Allocated {
 impl Allocated {
     fn new(query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) -> Self {
         unsafe {
-            let trace = if trace_flag { Trace::new(query_len, reference_len) } else { Trace::new(0, 0) };
+            let trace = if trace_flag {
+                Trace::new(query_len, reference_len, max_size)
+            } else {
+                Trace::new(0, 0, 0)
+            };
             let D_col = Aligned::new(max_size);
             let C_col = Aligned::new(max_size);
             let D_row = Aligned::new(max_size);
@@ -905,9 +906,9 @@ pub struct Trace {
 
 impl Trace {
     #[inline]
-    fn new(query_len: usize, reference_len: usize) -> Self {
+    fn new(query_len: usize, reference_len: usize, max_size: usize) -> Self {
         let len = query_len + reference_len;
-        let trace = Vec::new();
+        let trace = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
         let right = vec![0u64; div_ceil(len, 64)];
         let block_start = vec![0u32; len * 2];
         let block_size = vec![0u16; len * 2];
@@ -928,8 +929,7 @@ impl Trace {
 
     #[inline]
     fn clear(&mut self, query_len: usize, reference_len: usize) {
-        self.trace.clear();
-        // no need to clear block_start and block_size
+        // no need to clear trace, block_start, and block_size
         self.right.fill(0);
         self.trace_idx = 0;
         self.block_idx = 0;
@@ -966,13 +966,6 @@ impl Trace {
         }
     }
 
-    // TODO: overallocate trace array
-    /// This must be used before adding new traces to make sure the trace array is large enough.
-    #[inline]
-    fn resize_trace(&mut self, i: usize, j: usize, q_len: usize, r_len: usize, block_size: usize) {
-        self.trace.resize(self.trace_idx + (block_size / L) * (q_len + block_size - i + r_len + block_size - j), 0 as TraceType);
-    }
-
     #[inline]
     fn add_trace_idx(&mut self, add: usize) {
         self.trace_idx += add;
@@ -988,7 +981,6 @@ impl Trace {
     /// checkpoint is essentially popped off the stack.
     #[inline]
     fn restore_ckpt(&mut self) {
-        unsafe { self.trace.set_len(self.ckpt_trace_idx); }
         self.trace_idx = self.ckpt_trace_idx;
         self.block_idx = self.ckpt_block_idx;
     }
