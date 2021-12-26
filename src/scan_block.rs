@@ -11,7 +11,6 @@ use crate::cigar::*;
 
 use std::{cmp, ptr, i16, alloc};
 use std::ops::RangeInclusive;
-use std::any::TypeId;
 
 // Notes:
 //
@@ -42,7 +41,7 @@ use std::any::TypeId;
 ///
 /// This does not describe the whole state. The allocated scratch spaces
 /// and other local variables are also needed.
-struct State<'a, M: 'static + Matrix> {
+struct State<'a, M: Matrix> {
     query: &'a PaddedBytes,
     i: usize,
     reference: &'a PaddedBytes,
@@ -109,7 +108,9 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// other potentially difficult regions to be handled correctly.
     /// 16-bit deltas and 32-bit offsets are used to ensure that accurate scores are
     /// computed, even when the the strings are long.
-    pub fn align<M: 'static + Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
+    ///
+    /// X-drop alignment with `ByteMatrix` is not supported.
+    pub fn align<M: Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
         // check invariants so bad stuff doesn't happen later
         assert!(gaps.open < 0 && gaps.extend < 0, "Gap costs must be negative!");
         // there are edge cases with calculating traceback that doesn't work if
@@ -125,7 +126,6 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         }
         if X_DROP {
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
-            assert!(TypeId::of::<M>() != TypeId::of::<ByteMatrix>(), "X-drop alignment with ByteMatrix is not fully supported!");
         }
 
         unsafe { self.allocated.clear(query.len(), reference.len(), max_size, TRACE); }
@@ -147,7 +147,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    unsafe fn align_core<M: 'static + Matrix>(&mut self, mut state: State<M>) {
+    unsafe fn align_core<M: Matrix>(&mut self, mut state: State<M>) {
         // store the best alignment ending location for x drop alignment
         let mut best_max = 0i32;
         let mut best_argmax_i = 0usize;
@@ -204,14 +204,15 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     }
 
                     // offset previous columns with newly computed offset
-                    self.just_offset(block_size, self.allocated.D_col.as_mut_ptr(), self.allocated.C_col.as_mut_ptr(), off_add);
+                    Self::just_offset(block_size, self.allocated.D_col.as_mut_ptr(), self.allocated.C_col.as_mut_ptr(), off_add);
 
                     // compute new elements in the block as a result of shifting by the step size
                     // this region should be block_size x step
-                    let (D_max, D_argmax) = self.place_block(
+                    let (D_max, D_argmax) = Self::place_block(
                         &state,
                         state.query,
                         state.reference,
+                        &mut self.allocated.trace,
                         state.i,
                         state.j + block_size - step,
                         step,
@@ -227,10 +228,10 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     );
 
                     // sum of a couple elements on the right border
-                    let right_max = self.prefix_max(self.allocated.D_col.as_ptr(), step);
+                    let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
 
                     // shift and offset bottom row
-                    D_corner = self.shift_and_offset(
+                    D_corner = Self::shift_and_offset(
                         block_size,
                         self.allocated.D_row.as_mut_ptr(),
                         self.allocated.R_row.as_mut_ptr(),
@@ -240,7 +241,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                         step
                     );
                     // sum of a couple elements on the bottom border
-                    let down_max = self.prefix_max(self.allocated.D_row.as_ptr(), step);
+                    let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
                 },
@@ -255,14 +256,15 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     }
 
                     // offset previous rows with newly computed offset
-                    self.just_offset(block_size, self.allocated.D_row.as_mut_ptr(), self.allocated.R_row.as_mut_ptr(), off_add);
+                    Self::just_offset(block_size, self.allocated.D_row.as_mut_ptr(), self.allocated.R_row.as_mut_ptr(), off_add);
 
                     // compute new elements in the block as a result of shifting by the step size
                     // this region should be step x block_size
-                    let (D_max, D_argmax) = self.place_block(
+                    let (D_max, D_argmax) = Self::place_block(
                         &state,
                         state.reference,
                         state.query,
+                        &mut self.allocated.trace,
                         state.j,
                         state.i + block_size - step,
                         step,
@@ -278,10 +280,10 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     );
 
                     // sum of a couple elements on the bottom border
-                    let down_max = self.prefix_max(self.allocated.D_row.as_ptr(), step);
+                    let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
 
                     // shift and offset last column
-                    D_corner = self.shift_and_offset(
+                    D_corner = Self::shift_and_offset(
                         block_size,
                         self.allocated.D_col.as_mut_ptr(),
                         self.allocated.C_col.as_mut_ptr(),
@@ -291,7 +293,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                         step
                     );
                     // sum of a couple elements on the right border
-                    let right_max = self.prefix_max(self.allocated.D_col.as_ptr(), step);
+                    let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
                 },
@@ -310,10 +312,11 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
                     // down
                     // this region should be prev_size x prev_size
-                    let (D_max1, D_argmax1) = self.place_block(
+                    let (D_max1, D_argmax1) = Self::place_block(
                         &state,
                         state.reference,
                         state.query,
+                        &mut self.allocated.trace,
                         state.j,
                         state.i + prev_size,
                         grow_step,
@@ -337,10 +340,11 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
                     // right
                     // this region should be block_size x prev_size
-                    let (D_max2, D_argmax2) = self.place_block(
+                    let (D_max2, D_argmax2) = Self::place_block(
                         &state,
                         state.query,
                         state.reference,
+                        &mut self.allocated.trace,
                         state.i,
                         state.j + prev_size,
                         grow_step,
@@ -355,8 +359,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                         gap_extend_all
                     );
 
-                    let right_max = self.prefix_max(self.allocated.D_col.as_ptr(), step);
-                    let down_max = self.prefix_max(self.allocated.D_row.as_ptr(), step);
+                    let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
+                    let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
@@ -569,7 +573,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn just_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
+    unsafe fn just_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
         let mut i = 0;
         while i < block_size {
             let a = simd_adds_i16(simd_load(buf1.add(i) as _), off_add);
@@ -584,7 +588,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn prefix_max(&self, buf: *const i16, step: usize) -> i16 {
+    unsafe fn prefix_max(buf: *const i16, step: usize) -> i16 {
         if STEP == LARGE_STEP {
             simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
         } else {
@@ -600,7 +604,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> Simd {
+    unsafe fn shift_and_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> Simd {
         #[inline]
         unsafe fn sr(a: Simd, b: Simd, step: usize) -> Simd {
             if STEP == LARGE_STEP {
@@ -649,10 +653,10 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[allow(non_snake_case)]
     // Want this to be inlined in some places and not others, so let
     // compiler decide.
-    unsafe fn place_block<M: 'static + Matrix>(&mut self,
-                                               state: &State<M>,
+    unsafe fn place_block<M: Matrix>(state: &State<M>,
                                                query: &PaddedBytes,
                                                reference: &PaddedBytes,
+                                               trace: &mut Trace,
                                                start_i: usize,
                                                start_j: usize,
                                                width: usize,
@@ -665,7 +669,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                                                right: bool,
                                                prefix_scan_consts: PrefixScanConsts,
                                                gap_extend_all: Simd) -> (Simd, Simd) {
-        let (gap_open, gap_extend) = self.get_const_simd(state);
+        let (gap_open, gap_extend) = Self::get_const_simd(state);
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
@@ -736,8 +740,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                         simd_dbg_i16(trace_D_R);
                     }
                     // compress trace with movemask to save space
-                    let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
-                    self.allocated.trace.add_trace(trace as TraceType);
+                    let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
+                    trace.add_trace(trace_data as TraceType);
                 }
 
                 D_max = simd_max_i16(D_max, D11);
@@ -767,7 +771,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                 if TRACE {
                     // make sure that the trace index is updated since the rest of the loop
                     // iterations are skipped
-                    self.allocated.trace.add_trace_idx((width - 1 - j) * (height / L));
+                    trace.add_trace_idx((width - 1 - j) * (height / L));
                 }
                 break;
             }
@@ -792,7 +796,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    unsafe fn get_const_simd<M: 'static + Matrix>(&self, state: &State<M>) -> (Simd, Simd) {
+    unsafe fn get_const_simd<M: Matrix>(state: &State<M>) -> (Simd, Simd) {
         // some useful constant simd vectors
         let gap_open = simd_set1_i16(state.gaps.open as i16);
         let gap_extend = simd_set1_i16(state.gaps.extend as i16);
@@ -804,6 +808,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 ///
 /// Scratch spaces can be reused for aligning strings with shorter lengths
 /// and smaller block sizes.
+#[allow(non_snake_case)]
 struct Allocated {
     pub trace: Trace,
 
@@ -831,6 +836,7 @@ struct Allocated {
 }
 
 impl Allocated {
+    #[allow(non_snake_case)]
     fn new(query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) -> Self {
         unsafe {
             let trace = if trace_flag {
@@ -872,8 +878,8 @@ impl Allocated {
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     unsafe fn clear(&mut self, query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) {
-        assert!(query_len <= self.query_len);
-        assert!(reference_len <= self.reference_len);
+        // do not overwrite query_len, reference_len, etc. because they are upper bounds
+        assert!(query_len + reference_len <= self.query_len + self.reference_len);
         assert!(max_size <= self.max_size);
         assert_eq!(trace_flag, self.trace_flag);
 
@@ -989,11 +995,12 @@ impl Trace {
 
     /// Create a CIGAR string that represents a single traceback path ending on the specified
     /// location.
-    pub fn cigar(&self, mut i: usize, mut j: usize) -> Cigar {
+    pub fn cigar(&self, mut i: usize, mut j: usize, cigar: &mut Cigar) {
         assert!(i <= self.query_len && j <= self.reference_len, "Traceback cigar end position must be in bounds!");
 
+        cigar.clear(i, j);
+
         unsafe {
-            let mut res = Cigar::new(i + j + 5);
             let mut block_idx = self.block_idx;
             let mut trace_idx = self.trace_idx;
             let mut block_i;
@@ -1039,7 +1046,7 @@ impl Trace {
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
                         j -= OP_LUT[lut_idx].2;
-                        res.add(op);
+                        cigar.add(op);
                     }
                 } else {
                     while i >= block_i && j >= block_j && (i > 0 || j > 0) {
@@ -1051,12 +1058,10 @@ impl Trace {
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
                         j -= OP_LUT[lut_idx].2;
-                        res.add(op);
+                        cigar.add(op);
                     }
                 }
             }
-
-            res
         }
     }
 
@@ -1169,6 +1174,23 @@ pub struct PaddedBytes {
 }
 
 impl PaddedBytes {
+    /// Create an empty `PaddedBytes` instance that can hold byte strings
+    /// of a specific size.
+    pub fn new<M: Matrix>(len: usize, block_size: usize) -> Self {
+        Self {
+            s: vec![M::NULL; 1 + len + block_size],
+            len
+        }
+    }
+
+    /// Modifies the bytes in place, filling in the rest of the memory with padding bytes.
+    pub fn set_bytes<M: Matrix>(&mut self, b: &[u8], block_size: usize) {
+        self.s[0] = M::NULL;
+        self.s[1..1 + b.len()].copy_from_slice(b);
+        self.s[1 + b.len()..1 + b.len() + block_size].fill(M::NULL);
+        self.len = b.len();
+    }
+
     /// Create from a byte slice.
     ///
     /// Make sure that `block_size` is greater than or equal to the upper bound
