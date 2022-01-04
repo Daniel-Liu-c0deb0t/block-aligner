@@ -5,6 +5,7 @@ use parasailors::{Matrix, *};
 
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
+use block_aligner::cigar::*;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -89,12 +90,15 @@ fn bench_scan_aa_core(idx: usize, trace: bool, min_size: usize, max_size: usize)
     let mut temp = 0i32;
     for (q, r) in &data {
         if trace {
-            let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, bench_gaps, min_size..=max_size, 0);
+            let mut a = Block::<true, false>::new(q.len(), r.len(), max_size);
+            a.align(&q, &r, &BLOSUM62, bench_gaps, min_size..=max_size, 0);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
-            let cigar = a.trace().cigar(q.len(), r.len());
+            let mut cigar = Cigar::new(q.len(), r.len());
+            a.trace().cigar(q.len(), r.len(), &mut cigar);
             temp = temp.wrapping_add(cigar.len() as i32);
         } else {
-            let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, bench_gaps, min_size..=max_size, 0);
+            let mut a = Block::<false, false>::new(q.len(), r.len(), max_size);
+            a.align(&q, &r, &BLOSUM62, bench_gaps, min_size..=max_size, 0);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         }
     }

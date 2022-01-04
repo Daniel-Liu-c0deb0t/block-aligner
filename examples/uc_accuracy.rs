@@ -4,6 +4,7 @@ use bio::scores::blosum62;
 
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
+use block_aligner::cigar::*;
 
 use std::{env, cmp};
 use std::fs::File;
@@ -36,7 +37,8 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool, wrong:
         let run_gaps = Gaps { open: -11, extend: -1 };
 
         // ours
-        let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, min_size..=max_size, 0);
+        let mut block_aligner = Block::<true, false>::new(q.len(), r.len(), max_size);
+        block_aligner.align(&q_padded, &r_padded, &BLOSUM62, run_gaps, min_size..=max_size, 0);
         let scan_res = block_aligner.res();
         let scan_score = scan_res.score;
 
@@ -45,7 +47,9 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool, wrong:
             wrong_avg[id_idx] += ((bio_score - scan_score) as f64) / (bio_score as f64);
 
             if verbose {
-                let (a_pretty, b_pretty) = block_aligner.trace().cigar(scan_res.query_idx, scan_res.reference_idx).format(q.as_bytes(), r.as_bytes());
+                let mut cigar = Cigar::new(scan_res.query_idx, scan_res.reference_idx);
+                block_aligner.trace().cigar(scan_res.query_idx, scan_res.reference_idx, &mut cigar);
+                let (a_pretty, b_pretty) = cigar.format(q.as_bytes(), r.as_bytes());
                 println!(
                     "seq id: {}, max indel len: {}, bio: {}, ours: {}\nq (len = {}): {}\nr (len = {}): {}\nbio pretty:\n{}\nours pretty:\n{}\n{}",
                     seq_identity,

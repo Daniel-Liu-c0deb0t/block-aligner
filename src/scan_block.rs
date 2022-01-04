@@ -537,7 +537,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
         #[cfg(any(feature = "debug", feature = "debug_size"))]
         {
-            println!("query size: {}, reference size: {}", state.query.len() - 1, state.reference.len() - 1);
+            println!("query size: {}, reference size: {}", state.query.len(), state.reference.len());
             println!("end block size: {}", block_size);
         }
 
@@ -654,21 +654,21 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     // Want this to be inlined in some places and not others, so let
     // compiler decide.
     unsafe fn place_block<M: Matrix>(state: &State<M>,
-                                               query: &PaddedBytes,
-                                               reference: &PaddedBytes,
-                                               trace: &mut Trace,
-                                               start_i: usize,
-                                               start_j: usize,
-                                               width: usize,
-                                               height: usize,
-                                               D_col: *mut i16,
-                                               C_col: *mut i16,
-                                               D_row: *mut i16,
-                                               R_row: *mut i16,
-                                               mut D_corner: Simd,
-                                               right: bool,
-                                               prefix_scan_consts: PrefixScanConsts,
-                                               gap_extend_all: Simd) -> (Simd, Simd) {
+                                     query: &PaddedBytes,
+                                     reference: &PaddedBytes,
+                                     trace: &mut Trace,
+                                     start_i: usize,
+                                     start_j: usize,
+                                     width: usize,
+                                     height: usize,
+                                     D_col: *mut i16,
+                                     C_col: *mut i16,
+                                     D_row: *mut i16,
+                                     R_row: *mut i16,
+                                     mut D_corner: Simd,
+                                     right: bool,
+                                     prefix_scan_consts: PrefixScanConsts,
+                                     gap_extend_all: Simd) -> (Simd, Simd) {
         let (gap_open, gap_extend) = Self::get_const_simd(state);
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
@@ -1178,16 +1178,17 @@ impl PaddedBytes {
     /// of a specific size.
     pub fn new<M: Matrix>(len: usize, block_size: usize) -> Self {
         Self {
-            s: vec![M::NULL; 1 + len + block_size],
+            s: vec![M::convert_char(M::NULL); 1 + len + block_size],
             len
         }
     }
 
     /// Modifies the bytes in place, filling in the rest of the memory with padding bytes.
     pub fn set_bytes<M: Matrix>(&mut self, b: &[u8], block_size: usize) {
-        self.s[0] = M::NULL;
+        self.s[0] = M::convert_char(M::NULL);
         self.s[1..1 + b.len()].copy_from_slice(b);
-        self.s[1 + b.len()..1 + b.len() + block_size].fill(M::NULL);
+        self.s[1..1 + b.len()].iter_mut().for_each(|c| *c = M::convert_char(*c));
+        self.s[1 + b.len()..1 + b.len() + block_size].fill(M::convert_char(M::NULL));
         self.len = b.len();
     }
 
@@ -1279,63 +1280,70 @@ mod tests {
     fn test_no_x_drop() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
+        let mut a = Block::<false, false>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 11);
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARAAAA", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, 12);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 16);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 11);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"RRRR", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, -4);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 1);
 
         let test_gaps2 = Gaps { open: -2, extend: -1 };
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAN", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"ATAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 0);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 32);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -32);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TATATATATATATATATATATATATATATATA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 0);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTAAAAAAATTTTTTTTTTTT", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 7);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"C", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -5);
-        let a = Block::<_, false, false>::align(&r, &q, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&r, &q, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -5);
     }
 
@@ -1343,14 +1351,16 @@ mod tests {
     fn test_x_drop() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
+        let mut a = Block::<false, true>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAARRA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAA", 16);
-        let a = Block::<_, false, true>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
-        let a = Block::<_, false, true>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
     }
 
@@ -1358,42 +1368,51 @@ mod tests {
     fn test_trace() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
+        let mut cigar = Cigar::new(100, 100);
+
+        let mut a = Block::<true, false>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAARRA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAA", 16);
-        let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
-        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "6M");
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "6M");
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAA", 16);
-        let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 1, query_idx: 3, reference_idx: 4 });
-        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "3M1D");
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "3M1D");
 
         let test_gaps2 = Gaps { open: -2, extend: -1 };
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTAAAAAAATTTTTTTTTTTT", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
-        let a = Block::<_, true, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
-        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "2M6I16M3D");
     }
 
     #[test]
     fn test_bytes() {
         let test_gaps = Gaps { open: -2, extend: -1 };
 
+        let mut a = Block::<false, false>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<ByteMatrix>(b"AAAaaA", 16);
         let q = PaddedBytes::from_bytes::<ByteMatrix>(b"AAAAAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 2);
 
         let r = PaddedBytes::from_bytes::<ByteMatrix>(b"abcdefg", 16);
         let q = PaddedBytes::from_bytes::<ByteMatrix>(b"abdefg", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 4);
     }
 }

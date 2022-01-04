@@ -45,9 +45,11 @@ fn test(iter: usize, len: usize, k: usize, insert_len: Option<usize>) -> usize {
         let q_padded = PaddedBytes::from_bytes::<AAMatrix>(&q, 2048);
         let run_gaps = Gaps { open: -11, extend: -1 };
 
-        let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=2048, 0);
+        let mut block_aligner = Block::<true, false>::new(q.len(), r.len(), 2048);
+        block_aligner.align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=2048, 0);
         let scan_score = block_aligner.res().score;
-        let scan_cigar = block_aligner.trace().cigar(q.len(), r.len());
+        let mut scan_cigar = Cigar::new(q.len(), r.len());
+        block_aligner.trace().cigar(q.len(), r.len(), &mut scan_cigar);
 
         if !consistent(q.len(), r.len(), &scan_cigar) {
             wrong += 1;
