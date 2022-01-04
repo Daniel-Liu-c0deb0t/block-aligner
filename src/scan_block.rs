@@ -11,7 +11,6 @@ use crate::cigar::*;
 
 use std::{cmp, ptr, i16, alloc};
 use std::ops::RangeInclusive;
-use std::any::TypeId;
 
 // Notes:
 //
@@ -38,10 +37,11 @@ use std::any::TypeId;
 // square blocks overlap. Only the non-overlapping new cells (a rectangular block) are
 // computed in each step.
 
-/// Data structure storing the settings for block aligner.
-pub struct Block<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> {
-    res: AlignResult,
-    trace: Trace,
+/// Keeps track of internal state and some parameters for block aligner.
+///
+/// This does not describe the whole state. The allocated scratch spaces
+/// and other local variables are also needed.
+struct State<'a, M: Matrix> {
     query: &'a PaddedBytes,
     i: usize,
     reference: &'a PaddedBytes,
@@ -53,6 +53,12 @@ pub struct Block<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool>
     x_drop: i32
 }
 
+/// Data structure storing the settings for block aligner.
+pub struct Block<const TRACE: bool, const X_DROP: bool> {
+    res: AlignResult,
+    allocated: Allocated
+}
+
 // increasing step size gives a bit extra speed but results in lower accuracy
 // current settings are fast, at the expense of some accuracy, and step size does not grow
 const STEP: usize = if L / 2 < 8 { L / 2 } else { 8 };
@@ -60,7 +66,26 @@ const LARGE_STEP: usize = STEP; // use larger step size when the block size gets
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
 const X_DROP_ITER: usize = 2; // make sure that the X-drop iteration is truly met instead of just one "bad" step
-impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M, { TRACE }, { X_DROP }> {
+impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
+    /// Allocate a block aligner instance with an upper bound query length,
+    /// reference length, and max block size.
+    ///
+    /// A block aligner instance can be reused for multiple alignments as long
+    /// as the aligned sequence lengths and block sizes do not exceed the specified
+    /// upper bounds.
+    pub fn new(query_len: usize, reference_len: usize, max_size: usize) -> Self {
+        if GROW_EXP {
+            assert!(max_size.is_power_of_two(), "Block size must be a power of two!");
+        } else {
+            assert!(max_size % L == 0, "Block size must be multiples of {}!", L);
+        }
+
+        Self {
+            res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
+            allocated: Allocated::new(query_len, reference_len, max_size, TRACE)
+        }
+    }
+
     /// Align two strings with block aligner.
     ///
     /// If `TRACE` is true, then information for computing the traceback will be stored.
@@ -83,7 +108,9 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     /// other potentially difficult regions to be handled correctly.
     /// 16-bit deltas and 32-bit offsets are used to ensure that accurate scores are
     /// computed, even when the the strings are long.
-    pub fn align(query: &'a PaddedBytes, reference: &'a PaddedBytes, matrix: &'a M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) -> Self {
+    ///
+    /// X-drop alignment with `ByteMatrix` is not supported.
+    pub fn align<M: Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
         // check invariants so bad stuff doesn't happen later
         assert!(gaps.open < 0 && gaps.extend < 0, "Gap costs must be negative!");
         // there are edge cases with calculating traceback that doesn't work if
@@ -99,12 +126,11 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         }
         if X_DROP {
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
-            assert!(TypeId::of::<M>() != TypeId::of::<ByteMatrix>(), "X-drop alignment with ByteMatrix is not fully supported!");
         }
 
-        let mut a = Self {
-            res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
-            trace: if TRACE { Trace::new(query.len(), reference.len()) } else { Trace::new(0, 0) },
+        unsafe { self.allocated.clear(query.len(), reference.len(), max_size, TRACE); }
+
+        let s = State {
             query,
             i: 0,
             reference,
@@ -115,15 +141,13 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
             gaps,
             x_drop
         };
-
-        unsafe { a.align_core(); }
-        a
+        unsafe { self.align_core(s); }
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    unsafe fn align_core(&mut self) {
+    unsafe fn align_core<M: Matrix>(&mut self, mut state: State<M>) {
         // store the best alignment ending location for x drop alignment
         let mut best_max = 0i32;
         let mut best_argmax_i = 0usize;
@@ -132,7 +156,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         let mut prev_dir = Direction::Grow;
         let mut dir = Direction::Grow;
         let mut prev_size = 0;
-        let mut block_size = self.min_size;
+        let mut block_size = state.min_size;
         let mut step = STEP;
 
         // 32-bit score offsets
@@ -140,34 +164,18 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         let mut prev_off;
         let mut off_max = 0i32;
 
-        // bottom and right borders of the current block
-        let mut D_col = Aligned::new(self.max_size);
-        let mut C_col = Aligned::new(self.max_size);
-        let mut D_row = Aligned::new(self.max_size);
-        let mut R_row = Aligned::new(self.max_size);
-
-        // reused buffers for storing values that must be shifted
-        // into the other border when the block moves in one direction
-        let mut temp_buf1 = Aligned::new(L);
-        let mut temp_buf2 = Aligned::new(L);
-
         // how many steps since the latest best score was encountered
         let mut y_drop_iter = 0;
 
         // how many steps where the X-drop threshold is met
         let mut x_drop_iter = 0;
 
-        // the state at the previous checkpoint (where latest best score was encountered)
-        let mut i_ckpt = self.i;
-        let mut j_ckpt = self.j;
+        let mut i_ckpt = state.i;
+        let mut j_ckpt = state.j;
         let mut off_ckpt = 0i32;
-        let mut D_col_ckpt = Aligned::new(self.max_size);
-        let mut C_col_ckpt = Aligned::new(self.max_size);
-        let mut D_row_ckpt = Aligned::new(self.max_size);
-        let mut R_row_ckpt = Aligned::new(self.max_size);
 
-        let prefix_scan_consts = get_prefix_scan_consts(self.gaps.extend as i16);
-        let gap_extend_all = get_gap_extend_all(self.gaps.extend as i16);
+        let prefix_scan_consts = get_prefix_scan_consts(state.gaps.extend as i16);
+        let gap_extend_all = get_gap_extend_all(state.gaps.extend as i16);
 
         // corner value that affects the score when shifting down then right, or right then down
         let mut D_corner = simd_set1_i16(MIN);
@@ -175,8 +183,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
         loop {
             #[cfg(feature = "debug")]
             {
-                println!("i: {}", self.i);
-                println!("j: {}", self.j);
+                println!("i: {}", state.i);
+                println!("j: {}", state.j);
                 println!("{:?}", dir);
                 println!("block size: {}", block_size);
             }
@@ -192,25 +200,27 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     let off_add = simd_set1_i16(clamp(prev_off - off));
 
                     if TRACE {
-                        self.trace.add_block(self.i, self.j + block_size - step, step, block_size, true);
+                        self.allocated.trace.add_block(state.i, state.j + block_size - step, step, block_size, true);
                     }
 
                     // offset previous columns with newly computed offset
-                    self.just_offset(block_size, D_col.as_mut_ptr(), C_col.as_mut_ptr(), off_add);
+                    Self::just_offset(block_size, self.allocated.D_col.as_mut_ptr(), self.allocated.C_col.as_mut_ptr(), off_add);
 
                     // compute new elements in the block as a result of shifting by the step size
                     // this region should be block_size x step
-                    let (D_max, D_argmax) = self.place_block(
-                        self.query,
-                        self.reference,
-                        self.i,
-                        self.j + block_size - step,
+                    let (D_max, D_argmax) = Self::place_block(
+                        &state,
+                        state.query,
+                        state.reference,
+                        &mut self.allocated.trace,
+                        state.i,
+                        state.j + block_size - step,
                         step,
                         block_size,
-                        D_col.as_mut_ptr(),
-                        C_col.as_mut_ptr(),
-                        temp_buf1.as_mut_ptr(),
-                        temp_buf2.as_mut_ptr(),
+                        self.allocated.D_col.as_mut_ptr(),
+                        self.allocated.C_col.as_mut_ptr(),
+                        self.allocated.temp_buf1.as_mut_ptr(),
+                        self.allocated.temp_buf2.as_mut_ptr(),
                         if prev_dir == Direction::Down { simd_adds_i16(D_corner, off_add) } else { simd_set1_i16(MIN) },
                         true,
                         prefix_scan_consts,
@@ -218,20 +228,20 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     );
 
                     // sum of a couple elements on the right border
-                    let right_max = self.prefix_max(D_col.as_ptr(), step);
+                    let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
 
                     // shift and offset bottom row
-                    D_corner = self.shift_and_offset(
+                    D_corner = Self::shift_and_offset(
                         block_size,
-                        D_row.as_mut_ptr(),
-                        R_row.as_mut_ptr(),
-                        temp_buf1.as_mut_ptr(),
-                        temp_buf2.as_mut_ptr(),
+                        self.allocated.D_row.as_mut_ptr(),
+                        self.allocated.R_row.as_mut_ptr(),
+                        self.allocated.temp_buf1.as_mut_ptr(),
+                        self.allocated.temp_buf2.as_mut_ptr(),
                         off_add,
                         step
                     );
                     // sum of a couple elements on the bottom border
-                    let down_max = self.prefix_max(D_row.as_ptr(), step);
+                    let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
                 },
@@ -242,25 +252,27 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     let off_add = simd_set1_i16(clamp(prev_off - off));
 
                     if TRACE {
-                        self.trace.add_block(self.i + block_size - step, self.j, block_size, step, false);
+                        self.allocated.trace.add_block(state.i + block_size - step, state.j, block_size, step, false);
                     }
 
                     // offset previous rows with newly computed offset
-                    self.just_offset(block_size, D_row.as_mut_ptr(), R_row.as_mut_ptr(), off_add);
+                    Self::just_offset(block_size, self.allocated.D_row.as_mut_ptr(), self.allocated.R_row.as_mut_ptr(), off_add);
 
                     // compute new elements in the block as a result of shifting by the step size
                     // this region should be step x block_size
-                    let (D_max, D_argmax) = self.place_block(
-                        self.reference,
-                        self.query,
-                        self.j,
-                        self.i + block_size - step,
+                    let (D_max, D_argmax) = Self::place_block(
+                        &state,
+                        state.reference,
+                        state.query,
+                        &mut self.allocated.trace,
+                        state.j,
+                        state.i + block_size - step,
                         step,
                         block_size,
-                        D_row.as_mut_ptr(),
-                        R_row.as_mut_ptr(),
-                        temp_buf1.as_mut_ptr(),
-                        temp_buf2.as_mut_ptr(),
+                        self.allocated.D_row.as_mut_ptr(),
+                        self.allocated.R_row.as_mut_ptr(),
+                        self.allocated.temp_buf1.as_mut_ptr(),
+                        self.allocated.temp_buf2.as_mut_ptr(),
                         if prev_dir == Direction::Right { simd_adds_i16(D_corner, off_add) } else { simd_set1_i16(MIN) },
                         false,
                         prefix_scan_consts,
@@ -268,20 +280,20 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     );
 
                     // sum of a couple elements on the bottom border
-                    let down_max = self.prefix_max(D_row.as_ptr(), step);
+                    let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
 
                     // shift and offset last column
-                    D_corner = self.shift_and_offset(
+                    D_corner = Self::shift_and_offset(
                         block_size,
-                        D_col.as_mut_ptr(),
-                        C_col.as_mut_ptr(),
-                        temp_buf1.as_mut_ptr(),
-                        temp_buf2.as_mut_ptr(),
+                        self.allocated.D_col.as_mut_ptr(),
+                        self.allocated.C_col.as_mut_ptr(),
+                        self.allocated.temp_buf1.as_mut_ptr(),
+                        self.allocated.temp_buf2.as_mut_ptr(),
                         off_add,
                         step
                     );
                     // sum of a couple elements on the right border
-                    let right_max = self.prefix_max(D_col.as_ptr(), step);
+                    let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
 
                     (D_max, D_argmax, right_max, down_max)
                 },
@@ -295,25 +307,24 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     println!("Grow down");
 
                     if TRACE {
-                        // with a larger block, the size of the trace array might need to be
-                        // increased
-                        self.trace.resize_trace(self.i, self.j, self.query.len(), self.reference.len(), block_size);
-                        self.trace.add_block(self.i + prev_size, self.j, prev_size, grow_step, false);
+                        self.allocated.trace.add_block(state.i + prev_size, state.j, prev_size, grow_step, false);
                     }
 
                     // down
                     // this region should be prev_size x prev_size
-                    let (D_max1, D_argmax1) = self.place_block(
-                        self.reference,
-                        self.query,
-                        self.j,
-                        self.i + prev_size,
+                    let (D_max1, D_argmax1) = Self::place_block(
+                        &state,
+                        state.reference,
+                        state.query,
+                        &mut self.allocated.trace,
+                        state.j,
+                        state.i + prev_size,
                         grow_step,
                         prev_size,
-                        D_row.as_mut_ptr(),
-                        R_row.as_mut_ptr(),
-                        D_col.as_mut_ptr().add(prev_size),
-                        C_col.as_mut_ptr().add(prev_size),
+                        self.allocated.D_row.as_mut_ptr(),
+                        self.allocated.R_row.as_mut_ptr(),
+                        self.allocated.D_col.as_mut_ptr().add(prev_size),
+                        self.allocated.C_col.as_mut_ptr().add(prev_size),
                         simd_set1_i16(MIN),
                         false,
                         prefix_scan_consts,
@@ -324,30 +335,32 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     println!("Grow right");
 
                     if TRACE {
-                        self.trace.add_block(self.i, self.j + prev_size, grow_step, block_size, true);
+                        self.allocated.trace.add_block(state.i, state.j + prev_size, grow_step, block_size, true);
                     }
 
                     // right
                     // this region should be block_size x prev_size
-                    let (D_max2, D_argmax2) = self.place_block(
-                        self.query,
-                        self.reference,
-                        self.i,
-                        self.j + prev_size,
+                    let (D_max2, D_argmax2) = Self::place_block(
+                        &state,
+                        state.query,
+                        state.reference,
+                        &mut self.allocated.trace,
+                        state.i,
+                        state.j + prev_size,
                         grow_step,
                         block_size,
-                        D_col.as_mut_ptr(),
-                        C_col.as_mut_ptr(),
-                        D_row.as_mut_ptr().add(prev_size),
-                        R_row.as_mut_ptr().add(prev_size),
+                        self.allocated.D_col.as_mut_ptr(),
+                        self.allocated.C_col.as_mut_ptr(),
+                        self.allocated.D_row.as_mut_ptr().add(prev_size),
+                        self.allocated.R_row.as_mut_ptr().add(prev_size),
                         simd_set1_i16(MIN),
                         true,
                         prefix_scan_consts,
                         gap_extend_all
                     );
 
-                    let right_max = self.prefix_max(D_col.as_ptr(), step);
-                    let down_max = self.prefix_max(D_row.as_ptr(), step);
+                    let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
+                    let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
                     grow_D_max = D_max1;
                     grow_D_argmax = D_argmax1;
 
@@ -355,15 +368,15 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     // the block must grow again from this position
                     let mut i = 0;
                     while i < block_size {
-                        D_col_ckpt.set_vec(&D_col, i);
-                        C_col_ckpt.set_vec(&C_col, i);
-                        D_row_ckpt.set_vec(&D_row, i);
-                        R_row_ckpt.set_vec(&R_row, i);
+                        self.allocated.D_col_ckpt.set_vec(&self.allocated.D_col, i);
+                        self.allocated.C_col_ckpt.set_vec(&self.allocated.C_col, i);
+                        self.allocated.D_row_ckpt.set_vec(&self.allocated.D_row, i);
+                        self.allocated.R_row_ckpt.set_vec(&self.allocated.R_row, i);
                         i += L;
                     }
 
                     if TRACE {
-                        self.trace.save_ckpt();
+                        self.allocated.trace.save_ckpt();
                     }
 
                     (D_max2, D_argmax2, right_max, down_max)
@@ -395,46 +408,46 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
 
                     match dir {
                         Direction::Right => {
-                            best_argmax_i = self.i + r;
-                            best_argmax_j = self.j + c;
+                            best_argmax_i = state.i + r;
+                            best_argmax_j = state.j + c;
                         },
                         Direction::Down => {
-                            best_argmax_i = self.i + c;
-                            best_argmax_j = self.j + r;
+                            best_argmax_i = state.i + c;
+                            best_argmax_j = state.j + r;
                         },
                         Direction::Grow => {
                             // max could be in either block
                             if max >= grow_max {
-                                best_argmax_i = self.i + (idx % (block_size / L)) * L + lane_idx;
-                                best_argmax_j = self.j + prev_size + idx / (block_size / L);
+                                best_argmax_i = state.i + (idx % (block_size / L)) * L + lane_idx;
+                                best_argmax_j = state.j + prev_size + idx / (block_size / L);
                             } else {
                                 let lane_idx = simd_hargmax_i16(grow_D_max, grow_max);
                                 let idx = simd_slow_extract_i16(grow_D_argmax, lane_idx) as usize;
-                                best_argmax_i = self.i + prev_size + idx / (prev_size / L);
-                                best_argmax_j = self.j + (idx % (prev_size / L)) * L + lane_idx;
+                                best_argmax_i = state.i + prev_size + idx / (prev_size / L);
+                                best_argmax_j = state.j + (idx % (prev_size / L)) * L + lane_idx;
                             }
                         }
                     }
                 }
 
-                if block_size < self.max_size {
+                if block_size < state.max_size {
                     // if able to grow in the future, then save the current location
                     // as a checkpoint
-                    i_ckpt = self.i;
-                    j_ckpt = self.j;
+                    i_ckpt = state.i;
+                    j_ckpt = state.j;
                     off_ckpt = off;
 
                     let mut i = 0;
                     while i < block_size {
-                        D_col_ckpt.set_vec(&D_col, i);
-                        C_col_ckpt.set_vec(&C_col, i);
-                        D_row_ckpt.set_vec(&D_row, i);
-                        R_row_ckpt.set_vec(&R_row, i);
+                        self.allocated.D_col_ckpt.set_vec(&self.allocated.D_col, i);
+                        self.allocated.C_col_ckpt.set_vec(&self.allocated.C_col, i);
+                        self.allocated.D_row_ckpt.set_vec(&self.allocated.D_row, i);
+                        self.allocated.R_row_ckpt.set_vec(&self.allocated.R_row, i);
                         i += L;
                     }
 
                     if TRACE {
-                        self.trace.save_ckpt();
+                        self.allocated.trace.save_ckpt();
                     }
 
                     grow_no_max = false;
@@ -446,7 +459,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
             }
 
             if X_DROP {
-                if off_max < best_max - self.x_drop {
+                if off_max < best_max - state.x_drop {
                     if x_drop_iter < X_DROP_ITER - 1 {
                         x_drop_iter += 1;
                     } else {
@@ -458,26 +471,26 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                 }
             }
 
-            if self.i + block_size > self.query.len() && self.j + block_size > self.reference.len() {
+            if state.i + block_size > state.query.len() && state.j + block_size > state.reference.len() {
                 // reached the end of the strings
                 break;
             }
 
             // first check if the shift direction is "forced" to avoid going out of bounds
-            if self.j + block_size > self.reference.len() {
-                self.i += step;
+            if state.j + block_size > state.reference.len() {
+                state.i += step;
                 dir = Direction::Down;
                 continue;
             }
-            if self.i + block_size > self.query.len() {
-                self.j += step;
+            if state.i + block_size > state.query.len() {
+                state.j += step;
                 dir = Direction::Right;
                 continue;
             }
 
             // check if it is possible to grow
             let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
-            if next_size <= self.max_size {
+            if next_size <= state.max_size {
                 // if approximately (block_size / step) iterations has passed since the last best
                 // max, then it is time to grow
                 if y_drop_iter > (block_size / step) - 1 || grow_no_max {
@@ -485,26 +498,26 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                     prev_size = block_size;
                     block_size = next_size;
                     dir = Direction::Grow;
-                    if STEP != LARGE_STEP && block_size >= (LARGE_STEP / STEP) * self.min_size {
+                    if STEP != LARGE_STEP && block_size >= (LARGE_STEP / STEP) * state.min_size {
                         step = LARGE_STEP;
                     }
 
                     // return to checkpoint
-                    self.i = i_ckpt;
-                    self.j = j_ckpt;
+                    state.i = i_ckpt;
+                    state.j = j_ckpt;
                     off = off_ckpt;
 
                     let mut i = 0;
                     while i < prev_size {
-                        D_col.set_vec(&D_col_ckpt, i);
-                        C_col.set_vec(&C_col_ckpt, i);
-                        D_row.set_vec(&D_row_ckpt, i);
-                        R_row.set_vec(&R_row_ckpt, i);
+                        self.allocated.D_col.set_vec(&self.allocated.D_col_ckpt, i);
+                        self.allocated.C_col.set_vec(&self.allocated.C_col_ckpt, i);
+                        self.allocated.D_row.set_vec(&self.allocated.D_row_ckpt, i);
+                        self.allocated.R_row.set_vec(&self.allocated.R_row_ckpt, i);
                         i += L;
                     }
 
                     if TRACE {
-                        self.trace.restore_ckpt();
+                        self.allocated.trace.restore_ckpt();
                     }
 
                     y_drop_iter = 0;
@@ -514,17 +527,17 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
 
             // move according to where the max is
             if down_max > right_max {
-                self.i += step;
+                state.i += step;
                 dir = Direction::Down;
             } else {
-                self.j += step;
+                state.j += step;
                 dir = Direction::Right;
             }
         }
 
         #[cfg(any(feature = "debug", feature = "debug_size"))]
         {
-            println!("query size: {}, reference size: {}", self.query.len() - 1, self.reference.len() - 1);
+            println!("query size: {}, reference size: {}", state.query.len(), state.reference.len());
             println!("end block size: {}", block_size);
         }
 
@@ -535,23 +548,23 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                 reference_idx: best_argmax_j
             }
         } else {
-            debug_assert!(self.i <= self.query.len());
+            debug_assert!(state.i <= state.query.len());
             let score = off + match dir {
                 Direction::Right | Direction::Grow => {
-                    let idx = self.query.len() - self.i;
+                    let idx = state.query.len() - state.i;
                     debug_assert!(idx < block_size);
-                    (D_col.get(idx) as i32) - (ZERO as i32)
+                    (self.allocated.D_col.get(idx) as i32) - (ZERO as i32)
                 },
                 Direction::Down => {
-                    let idx = self.reference.len() - self.j;
+                    let idx = state.reference.len() - state.j;
                     debug_assert!(idx < block_size);
-                    (D_row.get(idx) as i32) - (ZERO as i32)
+                    (self.allocated.D_row.get(idx) as i32) - (ZERO as i32)
                 }
             };
             AlignResult {
                 score,
-                query_idx: self.query.len(),
-                reference_idx: self.reference.len()
+                query_idx: state.query.len(),
+                reference_idx: state.reference.len()
             }
         };
     }
@@ -560,7 +573,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn just_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
+    unsafe fn just_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
         let mut i = 0;
         while i < block_size {
             let a = simd_adds_i16(simd_load(buf1.add(i) as _), off_add);
@@ -575,7 +588,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn prefix_max(&self, buf: *const i16, step: usize) -> i16 {
+    unsafe fn prefix_max(buf: *const i16, step: usize) -> i16 {
         if STEP == LARGE_STEP {
             simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
         } else {
@@ -591,7 +604,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn shift_and_offset(&self, block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> Simd {
+    unsafe fn shift_and_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> Simd {
         #[inline]
         unsafe fn sr(a: Simd, b: Simd, step: usize) -> Simd {
             if STEP == LARGE_STEP {
@@ -640,22 +653,23 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     #[allow(non_snake_case)]
     // Want this to be inlined in some places and not others, so let
     // compiler decide.
-    unsafe fn place_block(&mut self,
-                          query: &PaddedBytes,
-                          reference: &PaddedBytes,
-                          start_i: usize,
-                          start_j: usize,
-                          width: usize,
-                          height: usize,
-                          D_col: *mut i16,
-                          C_col: *mut i16,
-                          D_row: *mut i16,
-                          R_row: *mut i16,
-                          mut D_corner: Simd,
-                          right: bool,
-                          prefix_scan_consts: PrefixScanConsts,
-                          gap_extend_all: Simd) -> (Simd, Simd) {
-        let (gap_open, gap_extend) = self.get_const_simd();
+    unsafe fn place_block<M: Matrix>(state: &State<M>,
+                                     query: &PaddedBytes,
+                                     reference: &PaddedBytes,
+                                     trace: &mut Trace,
+                                     start_i: usize,
+                                     start_j: usize,
+                                     width: usize,
+                                     height: usize,
+                                     D_col: *mut i16,
+                                     C_col: *mut i16,
+                                     D_row: *mut i16,
+                                     R_row: *mut i16,
+                                     mut D_corner: Simd,
+                                     right: bool,
+                                     prefix_scan_consts: PrefixScanConsts,
+                                     gap_extend_all: Simd) -> (Simd, Simd) {
+        let (gap_open, gap_extend) = Self::get_const_simd(state);
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
@@ -682,7 +696,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                 let D00 = simd_sl_i16!(D10, D_corner, 1);
                 D_corner = D10;
 
-                let scores = self.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
+                let scores = state.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
                 D11 = simd_adds_i16(D00, scores);
                 if start_i + i == 0 && start_j + j == 0 {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
@@ -726,8 +740,8 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                         simd_dbg_i16(trace_D_R);
                     }
                     // compress trace with movemask to save space
-                    let trace = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
-                    self.trace.add_trace(trace as TraceType);
+                    let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
+                    trace.add_trace(trace_data as TraceType);
                 }
 
                 D_max = simd_max_i16(D_max, D11);
@@ -757,7 +771,7 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
                 if TRACE {
                     // make sure that the trace index is updated since the rest of the loop
                     // iterations are skipped
-                    self.trace.add_trace_idx((width - 1 - j) * (height / L));
+                    trace.add_trace_idx((width - 1 - j) * (height / L));
                 }
                 break;
             }
@@ -776,17 +790,110 @@ impl<'a, M: 'static + Matrix, const TRACE: bool, const X_DROP: bool> Block<'a, M
     #[inline]
     pub fn trace(&self) -> &Trace {
         assert!(TRACE);
-        &self.trace
+        &self.allocated.trace
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    unsafe fn get_const_simd(&self) -> (Simd, Simd) {
+    unsafe fn get_const_simd<M: Matrix>(state: &State<M>) -> (Simd, Simd) {
         // some useful constant simd vectors
-        let gap_open = simd_set1_i16(self.gaps.open as i16);
-        let gap_extend = simd_set1_i16(self.gaps.extend as i16);
+        let gap_open = simd_set1_i16(state.gaps.open as i16);
+        let gap_extend = simd_set1_i16(state.gaps.extend as i16);
         (gap_open, gap_extend)
+    }
+}
+
+/// Allocated scratch spaces for alignment.
+///
+/// Scratch spaces can be reused for aligning strings with shorter lengths
+/// and smaller block sizes.
+#[allow(non_snake_case)]
+struct Allocated {
+    pub trace: Trace,
+
+    // bottom and right borders of the current block
+    pub D_col: Aligned,
+    pub C_col: Aligned,
+    pub D_row: Aligned,
+    pub R_row: Aligned,
+
+    // the state at the previous checkpoint (where latest best score was encountered)
+    pub D_col_ckpt: Aligned,
+    pub C_col_ckpt: Aligned,
+    pub D_row_ckpt: Aligned,
+    pub R_row_ckpt: Aligned,
+
+    // reused buffers for storing values that must be shifted
+    // into the other border when the block moves in one direction
+    pub temp_buf1: Aligned,
+    pub temp_buf2: Aligned,
+
+    query_len: usize,
+    reference_len: usize,
+    max_size: usize,
+    trace_flag: bool
+}
+
+impl Allocated {
+    #[allow(non_snake_case)]
+    fn new(query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) -> Self {
+        unsafe {
+            let trace = if trace_flag {
+                Trace::new(query_len, reference_len, max_size)
+            } else {
+                Trace::new(0, 0, 0)
+            };
+            let D_col = Aligned::new(max_size);
+            let C_col = Aligned::new(max_size);
+            let D_row = Aligned::new(max_size);
+            let R_row = Aligned::new(max_size);
+            let D_col_ckpt = Aligned::new(max_size);
+            let C_col_ckpt = Aligned::new(max_size);
+            let D_row_ckpt = Aligned::new(max_size);
+            let R_row_ckpt = Aligned::new(max_size);
+            let temp_buf1 = Aligned::new(L);
+            let temp_buf2 = Aligned::new(L);
+
+            Self {
+                trace,
+                D_col,
+                C_col,
+                D_row,
+                R_row,
+                D_col_ckpt,
+                C_col_ckpt,
+                D_row_ckpt,
+                R_row_ckpt,
+                temp_buf1,
+                temp_buf2,
+                query_len,
+                reference_len,
+                max_size,
+                trace_flag
+            }
+        }
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    unsafe fn clear(&mut self, query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) {
+        // do not overwrite query_len, reference_len, etc. because they are upper bounds
+        assert!(query_len + reference_len <= self.query_len + self.reference_len);
+        assert!(max_size <= self.max_size);
+        assert_eq!(trace_flag, self.trace_flag);
+
+        self.trace.clear(query_len, reference_len);
+        self.D_col.clear(max_size);
+        self.C_col.clear(max_size);
+        self.D_row.clear(max_size);
+        self.R_row.clear(max_size);
+        self.D_col_ckpt.clear(max_size);
+        self.C_col_ckpt.clear(max_size);
+        self.D_row_ckpt.clear(max_size);
+        self.R_row_ckpt.clear(max_size);
+        self.temp_buf1.clear(L);
+        self.temp_buf2.clear(L);
     }
 }
 
@@ -807,9 +914,9 @@ pub struct Trace {
 
 impl Trace {
     #[inline]
-    fn new(query_len: usize, reference_len: usize) -> Self {
+    fn new(query_len: usize, reference_len: usize, max_size: usize) -> Self {
         let len = query_len + reference_len;
-        let trace = Vec::new();
+        let trace = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
         let right = vec![0u64; div_ceil(len, 64)];
         let block_start = vec![0u32; len * 2];
         let block_size = vec![0u16; len * 2];
@@ -826,6 +933,18 @@ impl Trace {
             query_len,
             reference_len
         }
+    }
+
+    #[inline]
+    fn clear(&mut self, query_len: usize, reference_len: usize) {
+        // no need to clear trace, block_start, and block_size
+        self.right.fill(0);
+        self.trace_idx = 0;
+        self.block_idx = 0;
+        self.ckpt_trace_idx = 0;
+        self.ckpt_block_idx = 0;
+        self.query_len = query_len;
+        self.reference_len = reference_len;
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
@@ -855,12 +974,6 @@ impl Trace {
         }
     }
 
-    /// This must be used before adding new traces to make sure the trace array is large enough.
-    #[inline]
-    fn resize_trace(&mut self, i: usize, j: usize, q_len: usize, r_len: usize, block_size: usize) {
-        self.trace.resize(self.trace_idx + (block_size / L) * (q_len + block_size - i + r_len + block_size - j), 0 as TraceType);
-    }
-
     #[inline]
     fn add_trace_idx(&mut self, add: usize) {
         self.trace_idx += add;
@@ -876,18 +989,18 @@ impl Trace {
     /// checkpoint is essentially popped off the stack.
     #[inline]
     fn restore_ckpt(&mut self) {
-        unsafe { self.trace.set_len(self.ckpt_trace_idx); }
         self.trace_idx = self.ckpt_trace_idx;
         self.block_idx = self.ckpt_block_idx;
     }
 
     /// Create a CIGAR string that represents a single traceback path ending on the specified
     /// location.
-    pub fn cigar(&self, mut i: usize, mut j: usize) -> Cigar {
+    pub fn cigar(&self, mut i: usize, mut j: usize, cigar: &mut Cigar) {
         assert!(i <= self.query_len && j <= self.reference_len, "Traceback cigar end position must be in bounds!");
 
+        cigar.clear(i, j);
+
         unsafe {
-            let mut res = Cigar::new(i + j + 5);
             let mut block_idx = self.block_idx;
             let mut trace_idx = self.trace_idx;
             let mut block_i;
@@ -933,7 +1046,7 @@ impl Trace {
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
                         j -= OP_LUT[lut_idx].2;
-                        res.add(op);
+                        cigar.add(op);
                     }
                 } else {
                     while i >= block_i && j >= block_j && (i > 0 || j > 0) {
@@ -945,12 +1058,10 @@ impl Trace {
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
                         j -= OP_LUT[lut_idx].2;
-                        res.add(op);
+                        cigar.add(op);
                     }
                 }
             }
-
-            res
         }
     }
 
@@ -1000,18 +1111,21 @@ struct Aligned {
 }
 
 impl Aligned {
-    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
-    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     pub unsafe fn new(block_size: usize) -> Self {
         // custom alignment
         let layout = alloc::Layout::from_size_align_unchecked(block_size * 2, L_BYTES);
         let ptr = alloc::alloc_zeroed(layout) as *const i16;
+        Self { layout, ptr }
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    pub unsafe fn clear(&mut self, block_size: usize) {
         let mut i = 0;
         while i < block_size {
-            simd_store(ptr.add(i) as _, simd_set1_i16(MIN));
+            simd_store(self.ptr.add(i) as _, simd_set1_i16(MIN));
             i += L;
         }
-        Self { layout, ptr }
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
@@ -1060,6 +1174,24 @@ pub struct PaddedBytes {
 }
 
 impl PaddedBytes {
+    /// Create an empty `PaddedBytes` instance that can hold byte strings
+    /// of a specific size.
+    pub fn new<M: Matrix>(len: usize, block_size: usize) -> Self {
+        Self {
+            s: vec![M::convert_char(M::NULL); 1 + len + block_size],
+            len
+        }
+    }
+
+    /// Modifies the bytes in place, filling in the rest of the memory with padding bytes.
+    pub fn set_bytes<M: Matrix>(&mut self, b: &[u8], block_size: usize) {
+        self.s[0] = M::convert_char(M::NULL);
+        self.s[1..1 + b.len()].copy_from_slice(b);
+        self.s[1..1 + b.len()].iter_mut().for_each(|c| *c = M::convert_char(*c));
+        self.s[1 + b.len()..1 + b.len() + block_size].fill(M::convert_char(M::NULL));
+        self.len = b.len();
+    }
+
     /// Create from a byte slice.
     ///
     /// Make sure that `block_size` is greater than or equal to the upper bound
@@ -1148,63 +1280,70 @@ mod tests {
     fn test_no_x_drop() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
+        let mut a = Block::<false, false>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 11);
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARAAAA", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, 12);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 16);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 11);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"RRRR", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, -4);
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 1);
 
         let test_gaps2 = Gaps { open: -2, extend: -1 };
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAN", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"ATAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 0);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 32);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -32);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TATATATATATATATATATATATATATATATA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 0);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTAAAAAAATTTTTTTTTTTT", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, 7);
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"C", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -5);
-        let a = Block::<_, false, false>::align(&r, &q, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&r, &q, &NW1, test_gaps2, 16..=16, 0);
         assert_eq!(a.res().score, -5);
     }
 
@@ -1212,14 +1351,16 @@ mod tests {
     fn test_x_drop() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
+        let mut a = Block::<false, true>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAARRA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAA", 16);
-        let a = Block::<_, false, true>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAAAAAAAAARRRRRRRRRRRRRRRRAAAAAAAAAAAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 16);
-        let a = Block::<_, false, true>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
         assert_eq!(a.res(), AlignResult { score: 60, query_idx: 15, reference_idx: 15 });
     }
 
@@ -1227,42 +1368,51 @@ mod tests {
     fn test_trace() {
         let test_gaps = Gaps { open: -11, extend: -1 };
 
+        let mut cigar = Cigar::new(100, 100);
+
+        let mut a = Block::<true, false>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAARRA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAA", 16);
-        let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
-        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "6M");
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "6M");
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAA", 16);
-        let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 1, query_idx: 3, reference_idx: 4 });
-        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "3M1D");
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "3M1D");
 
         let test_gaps2 = Gaps { open: -2, extend: -1 };
 
         let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTAAAAAAATTTTTTTTTTTT", 16);
         let q = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
-        let a = Block::<_, true, false>::align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
+        a.align(&q, &r, &NW1, test_gaps2, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
-        assert_eq!(a.trace().cigar(res.query_idx, res.reference_idx).to_string(), "2M6I16M3D");
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "2M6I16M3D");
     }
 
     #[test]
     fn test_bytes() {
         let test_gaps = Gaps { open: -2, extend: -1 };
 
+        let mut a = Block::<false, false>::new(100, 100, 16);
+
         let r = PaddedBytes::from_bytes::<ByteMatrix>(b"AAAaaA", 16);
         let q = PaddedBytes::from_bytes::<ByteMatrix>(b"AAAAAA", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 2);
 
         let r = PaddedBytes::from_bytes::<ByteMatrix>(b"abcdefg", 16);
         let q = PaddedBytes::from_bytes::<ByteMatrix>(b"abdefg", 16);
-        let a = Block::<_, false, false>::align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
+        a.align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
         assert_eq!(a.res().score, 4);
     }
 }

@@ -3,6 +3,7 @@ use bio::scores::blosum62;
 
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
+use block_aligner::cigar::*;
 
 use std::{env, str};
 
@@ -22,9 +23,11 @@ fn main() {
     let bio_alignment = bio_aligner.global(&q, &r);
     let bio_score = bio_alignment.score;
 
-    let block_aligner = Block::<_, true, false>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=256, 0);
+    let mut block_aligner = Block::<true, false>::new(q.len(), r.len(), 256);
+    block_aligner.align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=256, 0);
     let scan_score = block_aligner.res().score;
-    let scan_cigar = block_aligner.trace().cigar(q.len(), r.len());
+    let mut scan_cigar = Cigar::new(q.len(), r.len());
+    block_aligner.trace().cigar(q.len(), r.len(), &mut scan_cigar);
     let (a, b) = scan_cigar.format(&q, &r);
 
     println!(

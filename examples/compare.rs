@@ -34,7 +34,8 @@ fn test(file_name: &str, max_size: usize, x_drop: i32) -> (usize, usize, f64, us
         let run_gaps = Gaps { open: -2, extend: -1 };
 
         // ours
-        let block_aligner = Block::<_, true, true>::align(&q_padded, &r_padded, &matrix, run_gaps, 32..=max_size, x_drop);
+        let mut block_aligner = Block::<true, true>::new(q.len(), r.len(), max_size);
+        block_aligner.align(&q_padded, &r_padded, &matrix, run_gaps, 32..=max_size, x_drop);
         let scan_res = block_aligner.res();
         let scan_score = scan_res.score;
 

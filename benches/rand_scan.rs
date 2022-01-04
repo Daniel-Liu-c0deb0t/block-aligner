@@ -16,6 +16,7 @@ use parasailors::{Matrix, *};
 
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
+use block_aligner::cigar::*;
 use block_aligner::simulate::*;
 
 fn bench_rustbio_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
@@ -55,7 +56,8 @@ fn bench_scan_aa_core<const K: usize>(b: &mut Bencher, len: usize, insert: bool)
     let bench_gaps = Gaps { open: -11, extend: -1 };
 
     b.iter(|| {
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, bench_gaps, 32..=2048, 0);
+        let mut a = Block::<false, false>::new(q.len(), r.len(), 2048);
+        a.align(&q, &r, &BLOSUM62, bench_gaps, 32..=2048, 0);
         a.res()
     });
 }
@@ -69,7 +71,8 @@ fn bench_scan_aa_core_small<const K: usize>(b: &mut Bencher, len: usize) {
     let bench_gaps = Gaps { open: -11, extend: -1 };
 
     b.iter(|| {
-        let a = Block::<_, false, false>::align(&q, &r, &BLOSUM62, bench_gaps, 32..=32, 0);
+        let mut a = Block::<false, false>::new(q.len(), r.len(), 32);
+        a.align(&q, &r, &BLOSUM62, bench_gaps, 32..=32, 0);
         a.res()
     });
 }
@@ -83,9 +86,12 @@ fn bench_scan_aa_core_trace<const K: usize>(b: &mut Bencher, len: usize) {
     let bench_gaps = Gaps { open: -11, extend: -1 };
 
     b.iter(|| {
-        let a = Block::<_, true, false>::align(&q, &r, &BLOSUM62, bench_gaps, 32..=2048, 0);
+        let mut a = Block::<true, false>::new(q.len(), r.len(), 2048);
+        a.align(&q, &r, &BLOSUM62, bench_gaps, 32..=2048, 0);
         //a.res()
-        (a.res(), a.trace().cigar(q.len(), r.len()))
+        let mut cigar = Cigar::new(q.len(), r.len());
+        a.trace().cigar(q.len(), r.len(), &mut cigar);
+        (a.res(), cigar)
     });
 }
 
@@ -98,7 +104,8 @@ fn bench_scan_nuc_core<const K: usize>(b: &mut Bencher, len: usize) {
     let bench_gaps = Gaps { open: -2, extend: -1 };
 
     b.iter(|| {
-        let a = Block::<_, false, false>::align(&q, &r, &NW1, bench_gaps, 32..=2048, 0);
+        let mut a = Block::<false, false>::new(q.len(), r.len(), 2048);
+        a.align(&q, &r, &NW1, bench_gaps, 32..=2048, 0);
         a.res()
     });
 }

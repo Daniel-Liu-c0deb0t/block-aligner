@@ -4,13 +4,11 @@
 //!
 //! Nucleotide and arbitrary byte alignment do not have bindings yet.
 
-use std::ffi::{CStr, c_void};
-use std::os::raw::c_char;
-use std::mem;
+use std::ffi::c_void;
 
 use crate::scan_block::*;
 use crate::scores::*;
-use crate::cigar::OpLen;
+use crate::cigar::*;
 
 // avoid generics by using void pointer and monomorphism
 /// A handle for a block in block aligner.
@@ -24,23 +22,52 @@ pub struct SizeRange {
     pub max: usize
 }
 
-/// Represents a vector of operations that form a CIGAR string.
-///
-/// The length and capacity fields should not be modified, since
-/// they are needed to correctly free the CIGAR string.
-#[repr(C)]
-pub struct CigarVec {
-    pub ptr: *mut OpLen,
-    pub len: usize,
-    pub cap: usize
+
+// CIGAR
+
+/// Create a new empty CIGAR string.
+#[no_mangle]
+pub unsafe extern fn block_new_cigar(query_len: usize, reference_len: usize) -> *mut Cigar {
+    let cigar = Box::new(Cigar::new(query_len, reference_len));
+    Box::into_raw(cigar)
 }
 
-/// Create a padded amino acid string.
+/// Get the operation at a certain index in a CIGAR string.
 #[no_mangle]
-pub unsafe extern fn block_make_padded_aa(s: *const c_char, max_size: usize) -> *mut PaddedBytes {
-    let c_str = CStr::from_ptr(s);
-    let padded_bytes = Box::new(PaddedBytes::from_bytes::<AAMatrix>(c_str.to_bytes(), max_size));
+pub unsafe extern fn block_get_cigar(cigar: *const Cigar, i: usize) -> OpLen {
+    let cigar_str = &*cigar;
+    cigar_str.get(i)
+}
+
+/// Get the length of a CIGAR string.
+#[no_mangle]
+pub unsafe extern fn block_len_cigar(cigar: *const Cigar) -> usize {
+    let cigar_str = &*cigar;
+    cigar_str.len()
+}
+
+/// Frees a CIGAR string.
+#[no_mangle]
+pub unsafe extern fn block_free_cigar(cigar: *mut Cigar) {
+    drop(Box::from_raw(cigar));
+}
+
+
+// PaddedBytes
+
+/// Create a new empty padded amino acid string.
+#[no_mangle]
+pub unsafe extern fn block_new_padded_aa(len: usize, max_size: usize) -> *mut PaddedBytes {
+    let padded_bytes = Box::new(PaddedBytes::new::<AAMatrix>(len, max_size));
     Box::into_raw(padded_bytes)
+}
+
+/// Write to a padded amino acid string.
+#[no_mangle]
+pub unsafe extern fn block_set_bytes_padded_aa(padded: *mut PaddedBytes, s: *const u8, len: usize, max_size: usize) {
+    let bytes = std::slice::from_raw_parts(s, len);
+    let padded_bytes = &mut *padded;
+    padded_bytes.set_bytes::<AAMatrix>(bytes, max_size);
 }
 
 /// Frees a padded amino acid string.
@@ -49,132 +76,112 @@ pub unsafe extern fn block_free_padded_aa(padded: *mut PaddedBytes) {
     drop(Box::from_raw(padded));
 }
 
-/// Frees a cigar vector.
-#[no_mangle]
-pub unsafe extern fn block_free_cigar(v: CigarVec) {
-    drop(Vec::from_raw_parts(v.ptr, v.len, v.cap));
+
+// Block
+
+macro_rules! gen_functions {
+    ($new_name:ident, $new_doc:expr,
+     $align_name:ident, $align_doc:expr,
+     $res_name:ident, $res_doc:expr,
+     $trace_name:ident, $trace_doc:expr,
+     $free_name:ident, $free_doc:expr,
+     $matrix:ty, $trace:literal, $x_drop:literal) => {
+        #[doc = $new_doc]
+        #[no_mangle]
+        pub unsafe extern fn $new_name(query_len: usize,
+                                       reference_len: usize,
+                                       max_size: usize) -> BlockHandle {
+            let aligner = Box::new(Block::<$trace, $x_drop>::new(query_len, reference_len, max_size));
+            Box::into_raw(aligner) as BlockHandle
+        }
+
+        #[doc = $align_doc]
+        #[no_mangle]
+        pub unsafe extern fn $align_name(b: BlockHandle,
+                                         q: *const PaddedBytes,
+                                         r: *const PaddedBytes,
+                                         m: *const $matrix,
+                                         g: Gaps,
+                                         s: SizeRange,
+                                         x: i32) {
+            let aligner = &mut *(b as *mut Block<$trace, $x_drop>);
+            aligner.align(&*q, &*r, &*m, g, s.min..=s.max, x);
+        }
+
+        #[doc = $res_doc]
+        #[no_mangle]
+        pub unsafe extern fn $res_name(b: BlockHandle) -> AlignResult {
+            let aligner = &*(b as *const Block<$trace, $x_drop>);
+            aligner.res()
+        }
+
+        #[doc = $trace_doc]
+        #[no_mangle]
+        pub unsafe extern fn $trace_name(b: BlockHandle, query_idx: usize, reference_idx: usize, cigar: *mut Cigar) {
+            let aligner = &*(b as *const Block<$trace, $x_drop>);
+            aligner.trace().cigar(query_idx, reference_idx, &mut *cigar);
+        }
+
+        #[doc = $free_doc]
+        #[no_mangle]
+        pub unsafe extern fn $free_name(b: BlockHandle) {
+            drop(Box::from_raw(b as *mut Block<$trace, $x_drop>));
+        }
+    };
 }
 
-// No traceback
+gen_functions!(
+    block_new_aa,
+    "Create a new block aligner instance for global alignment of amino acid strings (no traceback).",
+    block_align_aa,
+    "Global alignment of two amino acid strings (no traceback).",
+    block_res_aa,
+    "Retrieves the result of global alignment of two amino acid strings (no traceback).",
+    _block_cigar_aa,
+    "Don't use.",
+    block_free_aa,
+    "Frees the block used for global alignment of two amino acid strings (no traceback).",
+    AAMatrix, false, false
+);
 
-/// Global alignment of two amino acid strings (no traceback).
-#[no_mangle]
-pub unsafe extern fn block_align_aa(q: *const PaddedBytes,
-                                    r: *const PaddedBytes,
-                                    m: *const AAMatrix,
-                                    g: Gaps,
-                                    s: SizeRange) -> BlockHandle {
-    let aligner = Box::new(Block::<_, false, false>::align(&*q, &*r, &*m, g, s.min..=s.max, 0));
-    Box::into_raw(aligner) as BlockHandle
-}
+gen_functions!(
+    block_new_aa_xdrop,
+    "Create a new block aligner instance for X-drop alignment of amino acid strings (no traceback).",
+    block_align_aa_xdrop,
+    "X-drop alignment of two amino acid strings (no traceback).",
+    block_res_aa_xdrop,
+    "Retrieves the result of X-drop alignment of two amino acid strings (no traceback).",
+    _block_cigar_aa_xdrop,
+    "Don't use.",
+    block_free_aa_xdrop,
+    "Frees the block used for X-drop alignment of two amino acid strings (no traceback).",
+    AAMatrix, false, true
+);
 
-/// Retrieves the result of global alignment of two amino acid strings (no traceback).
-#[no_mangle]
-pub unsafe extern fn block_res_aa(b: BlockHandle) -> AlignResult {
-    let aligner = &*(b as *const Block<AAMatrix, false, false>);
-    aligner.res()
-}
+gen_functions!(
+    block_new_aa_trace,
+    "Create a new block aligner instance for global alignment of amino acid strings, with traceback.",
+    block_align_aa_trace,
+    "Global alignment of two amino acid strings, with traceback.",
+    block_res_aa_trace,
+    "Retrieves the result of global alignment of two amino acid strings, with traceback.",
+    block_cigar_aa_trace,
+    "Retrieves the resulting CIGAR string from global alignment of two amino acid strings, with traceback.",
+    block_free_aa_trace,
+    "Frees the block used for global alignment of two amino acid strings, with traceback.",
+    AAMatrix, true, false
+);
 
-/// Frees the block used for global alignment of two amino acid strings (no traceback).
-#[no_mangle]
-pub unsafe extern fn block_free_aa(b: BlockHandle) {
-    drop(Box::from_raw(b as *mut Block<AAMatrix, false, false>));
-}
-
-/// X-drop alignment of two amino acid strings (no traceback).
-#[no_mangle]
-pub unsafe extern fn block_align_aa_xdrop(q: *const PaddedBytes,
-                                          r: *const PaddedBytes,
-                                          m: *const AAMatrix,
-                                          g: Gaps,
-                                          s: SizeRange,
-                                          x: i32) -> BlockHandle {
-    let aligner = Box::new(Block::<_, false, true>::align(&*q, &*r, &*m, g, s.min..=s.max, x));
-    Box::into_raw(aligner) as BlockHandle
-}
-
-/// Retrieves the result of X-drop alignment of two amino acid strings (no traceback).
-#[no_mangle]
-pub unsafe extern fn block_res_aa_xdrop(b: BlockHandle) -> AlignResult {
-    let aligner = &*(b as *const Block<AAMatrix, false, true>);
-    aligner.res()
-}
-
-/// Frees the block used for X-drop alignment of two amino acid strings (no traceback).
-#[no_mangle]
-pub unsafe extern fn block_free_aa_xdrop(b: BlockHandle) {
-    drop(Box::from_raw(b as *mut Block<AAMatrix, false, true>));
-}
-
-// With traceback
-
-/// Global alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_align_aa_trace(q: *const PaddedBytes,
-                                          r: *const PaddedBytes,
-                                          m: *const AAMatrix,
-                                          g: Gaps,
-                                          s: SizeRange) -> BlockHandle {
-    let aligner = Box::new(Block::<_, true, false>::align(&*q, &*r, &*m, g, s.min..=s.max, 0));
-    Box::into_raw(aligner) as BlockHandle
-}
-
-/// Retrieves the result of global alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_res_aa_trace(b: BlockHandle) -> AlignResult {
-    let aligner = &*(b as *const Block<AAMatrix, true, false>);
-    aligner.res()
-}
-
-/// Retrieves the resulting CIGAR string from global alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_cigar_aa_trace(b: BlockHandle) -> CigarVec {
-    let aligner = &*(b as *const Block<AAMatrix, true, false>);
-    let res = aligner.res();
-    let cigar_vec = aligner.trace().cigar(res.query_idx, res.reference_idx).to_vec();
-    let mut cigar_vec = mem::ManuallyDrop::new(cigar_vec);
-    let (ptr, len, cap) = (cigar_vec.as_mut_ptr(), cigar_vec.len(), cigar_vec.capacity());
-    CigarVec { ptr, len, cap }
-}
-
-/// Frees the block used for global alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_free_aa_trace(b: BlockHandle) {
-    drop(Box::from_raw(b as *mut Block<AAMatrix, true, false>));
-}
-
-/// X-drop alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_align_aa_trace_xdrop(q: *const PaddedBytes,
-                                                r: *const PaddedBytes,
-                                                m: *const AAMatrix,
-                                                g: Gaps,
-                                                s: SizeRange,
-                                                x: i32) -> BlockHandle {
-    let aligner = Box::new(Block::<_, true, true>::align(&*q, &*r, &*m, g, s.min..=s.max, x));
-    Box::into_raw(aligner) as BlockHandle
-}
-
-/// Retrieves the result of X-drop alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_res_aa_trace_xdrop(b: BlockHandle) -> AlignResult {
-    let aligner = &*(b as *const Block<AAMatrix, true, true>);
-    aligner.res()
-}
-
-/// Retrieves the resulting CIGAR string from X-drop alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_cigar_aa_trace_xdrop(b: BlockHandle) -> CigarVec {
-    let aligner = &*(b as *const Block<AAMatrix, true, true>);
-    let res = aligner.res();
-    let cigar_vec = aligner.trace().cigar(res.query_idx, res.reference_idx).to_vec();
-    let mut cigar_vec = mem::ManuallyDrop::new(cigar_vec);
-    let (ptr, len, cap) = (cigar_vec.as_mut_ptr(), cigar_vec.len(), cigar_vec.capacity());
-    CigarVec { ptr, len, cap }
-}
-
-/// Frees the block used for X-drop alignment of two amino acid strings, with traceback.
-#[no_mangle]
-pub unsafe extern fn block_free_aa_trace_xdrop(b: BlockHandle) {
-    drop(Box::from_raw(b as *mut Block<AAMatrix, true, true>));
-}
+gen_functions!(
+    block_new_aa_trace_xdrop,
+    "Create a new block aligner instance for X-drop alignment of amino acid strings, with traceback.",
+    block_align_aa_trace_xdrop,
+    "X-drop alignment of two amino acid strings, with traceback.",
+    block_res_aa_trace_xdrop,
+    "Retrieves the result of X-drop alignment of two amino acid strings, with traceback.",
+    block_cigar_aa_trace_xdrop,
+    "Retrieves the resulting CIGAR string from X-drop alignment of two amino acid strings, with traceback.",
+    block_free_aa_trace_xdrop,
+    "Frees the block used for X-drop alignment of two amino acid strings, with traceback.",
+    AAMatrix, true, true
+);

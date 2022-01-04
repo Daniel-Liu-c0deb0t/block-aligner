@@ -26,7 +26,8 @@ fn test(iter: usize, len: usize, k: usize, verbose: bool) -> (usize, f64, i32, i
 
         let slow_res = slow_align(&q, &r, 50);
 
-        let block_aligner = Block::<_, false, true>::align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=64, 50);
+        let mut block_aligner = Block::<false, true>::new(q.len(), r.len(), 64);
+        block_aligner.align(&q_padded, &r_padded, &BLOSUM62, run_gaps, 32..=64, 50);
         let scan_res = block_aligner.res();
 
         if slow_res.0 != scan_res.score {

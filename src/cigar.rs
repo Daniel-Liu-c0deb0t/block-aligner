@@ -34,13 +34,19 @@ pub struct Cigar {
 }
 
 impl Cigar {
-    /// Create a new CIGAR string with a certain maximum length.
-    #[allow(dead_code)]
-    pub(crate) unsafe fn new(max_len: usize) -> Self {
+    /// Create a new CIGAR string with certain maximum lengths for the aligned sequences.
+    pub fn new(query_len: usize, reference_len: usize) -> Self {
+        let s = vec![OpLen { op: Operation::Sentinel, len: 0 }; query_len + reference_len + 5];
         // first element should always be a sentinel
-        let s = vec![OpLen { op: Operation::Sentinel, len: 0 }; max_len + 1];
         let idx = 1;
         Cigar { s, idx }
+    }
+
+    /// Clear this CIGAR string.
+    #[allow(dead_code)]
+    pub(crate) fn clear(&mut self, query_len: usize, reference_len: usize) {
+        self.s[..query_len + reference_len + 5].fill(OpLen { op: Operation::Sentinel, len: 0 });
+        self.idx = 1;
     }
 
     /// Branchlessly add a new operation (in reverse order).
@@ -73,12 +79,12 @@ impl Cigar {
 
     /// Generate two strings to visualize the edit operations.
     pub fn format(&self, q: &[u8], r: &[u8]) -> (String, String) {
-        let mut a = String::with_capacity(self.s.len());
-        let mut b = String::with_capacity(self.s.len());
+        let mut a = String::with_capacity(self.idx);
+        let mut b = String::with_capacity(self.idx);
         let mut i = 0;
         let mut j = 0;
 
-        for &op_len in self.s.iter().rev() {
+        for &op_len in self.s[1..self.idx].iter().rev() {
             match op_len.op {
                 Operation::M => {
                     for _k in 0..op_len.len {
@@ -114,10 +120,9 @@ impl Cigar {
     ///
     /// Sentinels are removed.
     pub fn to_vec(&self) -> Vec<OpLen> {
-        self.s
+        self.s[1..self.idx]
             .iter()
             .rev()
-            .filter(|op_len| op_len.op != Operation::Sentinel)
             .map(|&op_len| op_len)
             .collect::<Vec<OpLen>>()
     }
@@ -126,7 +131,7 @@ impl Cigar {
 impl fmt::Display for Cigar {
     /// Print a CIGAR string in standard CIGAR format.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for &op_len in self.s.iter().rev() {
+        for &op_len in self.s[1..self.idx].iter().rev() {
             let c = match op_len.op {
                 Operation::M => 'M',
                 Operation::I => 'I',

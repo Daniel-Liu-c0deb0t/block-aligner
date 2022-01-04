@@ -31,7 +31,8 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool) -> (us
         let run_gaps = Gaps { open: -2, extend: -1 };
 
         // ours
-        let block_aligner = Block::<_, false, false>::align(&q_padded, &r_padded, &NW1, run_gaps, min_size..=max_size, 0);
+        let mut block_aligner = Block::<false, false>::new(q.len(), r.len(), max_size);
+        block_aligner.align(&q_padded, &r_padded, &NW1, run_gaps, min_size..=max_size, 0);
         let scan_score = block_aligner.res().score;
 
         if parasail_score != scan_score {

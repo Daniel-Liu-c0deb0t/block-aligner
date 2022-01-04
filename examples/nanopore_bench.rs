@@ -86,10 +86,12 @@ fn bench_scan_nuc_core(_file: bool, trace: bool, max_size: usize) -> (i32, Durat
     let mut temp = 0i32;
     for (q, r) in &data {
         if trace {
-            let a = Block::<_, true, true>::align(&q, &r, &matrix, bench_gaps, 32..=max_size, x_drop);
+            let mut a = Block::<true, true>::new(q.len(), r.len(), max_size);
+            a.align(&q, &r, &matrix, bench_gaps, 32..=max_size, x_drop);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         } else {
-            let a = Block::<_, false, true>::align(&q, &r, &matrix, bench_gaps, 32..=max_size, x_drop);
+            let mut a = Block::<false, true>::new(q.len(), r.len(), max_size);
+            a.align(&q, &r, &matrix, bench_gaps, 32..=max_size, x_drop);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         }
     }
@@ -109,10 +111,12 @@ fn bench_scan_nuc_file(_file: bool, trace: bool, max_size: usize) -> (i32, Durat
     let mut temp = 0i32;
     for (q, r) in &data {
         if trace {
-            let a = Block::<_, true, true>::align(&q, &r, &NW1, bench_gaps, 32..=max_size, x_drop);
+            let mut a = Block::<true, true>::new(q.len(), r.len(), max_size);
+            a.align(&q, &r, &NW1, bench_gaps, 32..=max_size, x_drop);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         } else {
-            let a = Block::<_, false, true>::align(&q, &r, &NW1, bench_gaps, 32..=max_size, x_drop);
+            let mut a = Block::<false, true>::new(q.len(), r.len(), max_size);
+            a.align(&q, &r, &NW1, bench_gaps, 32..=max_size, x_drop);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         }
     }
