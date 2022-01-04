@@ -16,6 +16,7 @@ use parasailors::{Matrix, *};
 
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
+use block_aligner::cigar::*;
 use block_aligner::simulate::*;
 
 fn bench_rustbio_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
