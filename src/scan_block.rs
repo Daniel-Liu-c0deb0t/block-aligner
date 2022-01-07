@@ -400,6 +400,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
             if off_max > best_max {
                 if X_DROP {
+                    // TODO: move outside loop
                     // calculate location with the best score
                     let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                     let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
@@ -525,6 +526,43 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                 }
             }
 
+            // shrink
+            if block_size > state.min_size
+                && Self::suffix_max(self.allocated.D_row.as_ptr(), block_size, step) > down_max * 4
+                && Self::suffix_max(self.allocated.D_col.as_ptr(), block_size, step) > right_max * 4 {
+                block_size /= 2;
+                let mut i = 0;
+                while i < block_size {
+                    self.allocated.D_col.copy_vec(i, i + block_size);
+                    self.allocated.C_col.copy_vec(i, i + block_size);
+                    self.allocated.D_row.copy_vec(i, i + block_size);
+                    self.allocated.R_row.copy_vec(i, i + block_size);
+                    i += L;
+                }
+
+                state.i += block_size;
+                state.j += block_size;
+
+                i_ckpt = state.i;
+                j_ckpt = state.j;
+                off_ckpt = off;
+
+                let mut i = 0;
+                while i < block_size {
+                    self.allocated.D_col_ckpt.set_vec(&self.allocated.D_col, i);
+                    self.allocated.C_col_ckpt.set_vec(&self.allocated.C_col, i);
+                    self.allocated.D_row_ckpt.set_vec(&self.allocated.D_row, i);
+                    self.allocated.R_row_ckpt.set_vec(&self.allocated.R_row, i);
+                    i += L;
+                }
+
+                if TRACE {
+                    self.allocated.trace.save_ckpt();
+                }
+
+                y_drop_iter = 0;
+            }
+
             // move according to where the max is
             if down_max > right_max {
                 state.i += step;
@@ -596,6 +634,22 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                 simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
             } else {
                 simd_prefix_hadd_i16!(simd_load(buf as _), LARGE_STEP)
+            }
+        }
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[allow(non_snake_case)]
+    #[inline]
+    unsafe fn suffix_max(buf: *const i16, buf_len: usize, step: usize) -> i16 {
+        if STEP == LARGE_STEP {
+            simd_prefix_hadd_i16!(simd_load(buf.add(buf_len - L) as _), STEP)
+        } else {
+            if step == STEP {
+                simd_prefix_hadd_i16!(simd_load(buf.add(buf_len - L) as _), STEP)
+            } else {
+                simd_prefix_hadd_i16!(simd_load(buf.add(buf_len - L) as _), LARGE_STEP)
             }
         }
     }
@@ -1133,6 +1187,13 @@ impl Aligned {
     #[inline]
     pub unsafe fn set_vec(&mut self, o: &Aligned, idx: usize) {
         simd_store(self.ptr.add(idx) as _, simd_load(o.as_ptr().add(idx) as _));
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    pub unsafe fn copy_vec(&mut self, new_idx: usize, idx: usize) {
+        simd_store(self.ptr.add(new_idx) as _, simd_load(self.ptr.add(idx) as _));
     }
 
     #[inline]
