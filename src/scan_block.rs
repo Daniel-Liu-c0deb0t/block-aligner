@@ -66,6 +66,7 @@ const LARGE_STEP: usize = STEP; // use larger step size when the block size gets
 const GROW_STEP: usize = L; // used when not growing by powers of 2
 const GROW_EXP: bool = true; // grow by powers of 2
 const X_DROP_ITER: usize = 2; // make sure that the X-drop iteration is truly met instead of just one "bad" step
+const SHRINK: bool = true; // whether to allow the block size to shrink by powers of 2
 impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// Allocate a block aligner instance with an upper bound query length,
     /// reference length, and max block size.
@@ -192,7 +193,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             prev_off = off;
             let mut grow_D_max = simd_set1_i16(MIN);
             let mut grow_D_argmax = simd_set1_i16(0);
-            let (D_max, D_argmax, right_max, down_max) = match dir {
+            let (D_max, D_argmax, mut right_max, mut down_max) = match dir {
                 Direction::Right => {
                     off = off_max;
                     #[cfg(feature = "debug")]
@@ -526,41 +527,48 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                 }
             }
 
-            // shrink
-            if block_size > state.min_size
-                && Self::suffix_max(self.allocated.D_row.as_ptr(), block_size, step) > down_max * 4
-                && Self::suffix_max(self.allocated.D_col.as_ptr(), block_size, step) > right_max * 4 {
-                block_size /= 2;
-                let mut i = 0;
-                while i < block_size {
-                    self.allocated.D_col.copy_vec(i, i + block_size);
-                    self.allocated.C_col.copy_vec(i, i + block_size);
-                    self.allocated.D_row.copy_vec(i, i + block_size);
-                    self.allocated.R_row.copy_vec(i, i + block_size);
-                    i += L;
+            // check if it is possible to shrink
+            if SHRINK && block_size > state.min_size {
+                let shrink_max = cmp::max(
+                    Self::suffix_max(self.allocated.D_row.as_ptr(), block_size, step),
+                    Self::suffix_max(self.allocated.D_col.as_ptr(), block_size, step)
+                );
+                if shrink_max >= max {
+                    block_size /= 2;
+                    let mut i = 0;
+                    while i < block_size {
+                        self.allocated.D_col.copy_vec(i, i + block_size);
+                        self.allocated.C_col.copy_vec(i, i + block_size);
+                        self.allocated.D_row.copy_vec(i, i + block_size);
+                        self.allocated.R_row.copy_vec(i, i + block_size);
+                        i += L;
+                    }
+
+                    state.i += block_size;
+                    state.j += block_size;
+
+                    i_ckpt = state.i;
+                    j_ckpt = state.j;
+                    off_ckpt = off;
+
+                    let mut i = 0;
+                    while i < block_size {
+                        self.allocated.D_col_ckpt.set_vec(&self.allocated.D_col, i);
+                        self.allocated.C_col_ckpt.set_vec(&self.allocated.C_col, i);
+                        self.allocated.D_row_ckpt.set_vec(&self.allocated.D_row, i);
+                        self.allocated.R_row_ckpt.set_vec(&self.allocated.R_row, i);
+                        i += L;
+                    }
+
+                    right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
+                    down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
+
+                    if TRACE {
+                        self.allocated.trace.save_ckpt();
+                    }
+
+                    y_drop_iter = 0;
                 }
-
-                state.i += block_size;
-                state.j += block_size;
-
-                i_ckpt = state.i;
-                j_ckpt = state.j;
-                off_ckpt = off;
-
-                let mut i = 0;
-                while i < block_size {
-                    self.allocated.D_col_ckpt.set_vec(&self.allocated.D_col, i);
-                    self.allocated.C_col_ckpt.set_vec(&self.allocated.C_col, i);
-                    self.allocated.D_row_ckpt.set_vec(&self.allocated.D_row, i);
-                    self.allocated.R_row_ckpt.set_vec(&self.allocated.R_row, i);
-                    i += L;
-                }
-
-                if TRACE {
-                    self.allocated.trace.save_ckpt();
-                }
-
-                y_drop_iter = 0;
             }
 
             // move according to where the max is
@@ -644,12 +652,12 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[inline]
     unsafe fn suffix_max(buf: *const i16, buf_len: usize, step: usize) -> i16 {
         if STEP == LARGE_STEP {
-            simd_prefix_hadd_i16!(simd_load(buf.add(buf_len - L) as _), STEP)
+            simd_suffix_hmax_i16!(simd_load(buf.add(buf_len - L) as _), STEP / 4)
         } else {
             if step == STEP {
-                simd_prefix_hadd_i16!(simd_load(buf.add(buf_len - L) as _), STEP)
+                simd_suffix_hmax_i16!(simd_load(buf.add(buf_len - L) as _), STEP / 4)
             } else {
-                simd_prefix_hadd_i16!(simd_load(buf.add(buf_len - L) as _), LARGE_STEP)
+                simd_suffix_hmax_i16!(simd_load(buf.add(buf_len - L) as _), LARGE_STEP / 4)
             }
         }
     }
