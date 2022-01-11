@@ -67,7 +67,7 @@ fn main() {
     let paths = ["data/real.illumina.b10M.txt", "data/real.ont.b10M.txt", "data/sequences.txt"];
     let names = ["illumina", "nanopore 1kbp", "nanopore 25kbp"];
     let min_size = [32, 32, 32];
-    let max_size = [32, 64, 256];
+    let max_size = [32, 128, 256];
 
     println!("\ndataset, size, total, wrong, wrong % error");
 

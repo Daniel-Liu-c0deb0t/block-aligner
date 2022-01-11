@@ -528,7 +528,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             }
 
             // check if it is possible to shrink
-            if SHRINK && block_size > state.min_size {
+            if SHRINK && block_size > state.min_size && y_drop_iter == 0 {
                 let shrink_max = cmp::max(
                     Self::suffix_max(self.allocated.D_row.as_ptr(), block_size, step),
                     Self::suffix_max(self.allocated.D_col.as_ptr(), block_size, step)
