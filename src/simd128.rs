@@ -204,6 +204,28 @@ macro_rules! simd_prefix_hmax_i16 {
     };
 }
 
+#[macro_export]
+#[doc(hidden)]
+macro_rules! simd_suffix_hmax_i16 {
+    ($a:expr, $num:expr) => {
+        {
+            debug_assert!($num <= L);
+            use std::arch::wasm32::*;
+            let mut v = $a;
+            if $num > 4 {
+                v = i16x8_max(v, simd_sl_i16!(v, v, 4));
+            }
+            if $num > 2 {
+                v = i16x8_max(v, simd_sl_i16!(v, v, 2));
+            }
+            if $num > 1 {
+                v = i16x8_max(v, simd_sl_i16!(v, v, 1));
+            }
+            simd_extract_i16!(v, 15)
+        }
+    };
+}
+
 #[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {

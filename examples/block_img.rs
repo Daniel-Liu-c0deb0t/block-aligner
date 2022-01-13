@@ -29,7 +29,7 @@ fn main() {
     let cell_size = 1;
     let bg_color = Rgb([255u8, 255u8, 255u8]);
     let fg_colors = [Rgb([50u8, 50u8, 50u8]), Rgb([50u8, 50u8, 50u8]), Rgb([50u8, 50u8, 50u8])];
-    let trace_color = Rgb([255u8, 255u8, 255u8]);
+    let trace_color = Rgb([255u8, 0u8, 0u8]);
 
     for (i, img_path) in args.enumerate() {
         let q = &seqs[i].0;
