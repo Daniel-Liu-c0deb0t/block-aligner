@@ -86,6 +86,7 @@ impl Matrix for AAMatrix {
         unsafe { self.scores.as_ptr().add(i * 32) }
     }
 
+    // TODO: get rid of lookup for around half of the shifts by constructing position specific scoring matrix?
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
@@ -298,4 +299,102 @@ pub type GapParams<const GAP_OPEN: i8, const GAP_EXTEND: i8> = Params<{ GAP_OPEN
 pub struct Gaps {
     pub open: i8,
     pub extend: i8
+}
+
+pub trait Profile {
+    /// Byte to use as padding.
+    const NULL: u8;
+    /// Create a new matrix with default (usually nonsense) values.
+    fn new(len: usize) -> Self;
+    /// Set the score for a position and byte.
+    fn set(&mut self, i: usize, b: u8, score: i8);
+    /// Get the score for a position and byte.
+    fn get(&self, i: usize, b: u8) -> i8;
+    /// Get the pointer for a specific index.
+    fn as_ptr_pos(&self, i: usize) -> *const i8;
+    /// Get the pointer for a specific amino acid.
+    fn as_ptr_aa(&self, a: usize) -> *const i16;
+    /// Get the scores for a certain byte and a certain SIMD vector of bytes.
+    unsafe fn get_scores_pos(&self, i: usize, c: u8, right: bool) -> Simd;
+    /// Get the scores for a certain byte and a certain SIMD vector of bytes.
+    unsafe fn get_scores_aa(&self, i: usize, v: HalfSimd, right: bool) -> Simd;
+    /// Convert a byte to a better storage format that makes retrieving scores
+    /// easier.
+    fn convert_char(c: u8) -> u8;
+}
+
+
+/// Amino acid position specific scoring matrix.
+#[derive(Clone, PartialEq, Debug)]
+pub struct AAProfile {
+    aa_pos: Vec<i16>,
+    pos_aa: Vec<i8>,
+    len: usize
+}
+
+impl Profile for AAProfile {
+    const NULL: u8 = b'A' + 26u8;
+
+    fn new(len: usize) -> Self {
+        let len = (len + 31) / 32 * 32;
+        Self {
+            aa_pos: vec![i8::MIN as i16; 32 * len],
+            pos_aa: vec![i8::MIN; len * 32],
+            len
+        }
+    }
+
+    fn set(&mut self, i: usize, b: u8, score: i8) {
+        let b = b.to_ascii_uppercase();
+        assert!(b'A' <= b && b <= b'Z' + 1);
+        let idx = i * 32 + ((b - b'A') as usize);
+        self.pos_aa[idx] = score;
+        let idx = ((b - b'A') as usize) * self.len + i;
+        self.aa_pos[idx] = score as i16;
+    }
+
+    fn get(&self, i: usize, b: u8) -> i8 {
+        let b = b.to_ascii_uppercase();
+        assert!(b'A' <= b && b <= b'Z' + 1);
+        let idx = i * 32 + ((b - b'A') as usize);
+        self.pos_aa[idx]
+    }
+
+    #[inline]
+    fn as_ptr_pos(&self, i: usize) -> *const i8 {
+        debug_assert!(i < self.len);
+        unsafe { self.pos_aa.as_ptr().add(i * 32) }
+    }
+
+    #[inline]
+    fn as_ptr_aa(&self, a: usize) -> *const i16 {
+        debug_assert!(a < 27);
+        unsafe { self.aa_pos.as_ptr().add(a * self.len) }
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_scores_pos(&self, i: usize, v: HalfSimd, _right: bool) -> Simd {
+        // efficiently lookup scores for each character in v
+        let matrix_ptr = self.as_ptr_pos(i);
+        let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
+        let scores2 = halfsimd_load((matrix_ptr as *const HalfSimd).add(1));
+        halfsimd_lookup2_i16(scores1, scores2, v)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_scores_aa(&self, i: usize, c: u8, _right: bool) -> Simd {
+        let matrix_ptr = self.as_ptr_aa(c as usize);
+        simd_load(matrix_ptr.add(i) as *const Simd)
+    }
+
+    #[inline]
+    fn convert_char(c: u8) -> u8 {
+        let c = c.to_ascii_uppercase();
+        assert!(c >= b'A' && c <= Self::NULL);
+        c - b'A'
+    }
 }
