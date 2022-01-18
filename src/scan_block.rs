@@ -605,6 +605,9 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                             Self::suffix_max(self.allocated.D_col.as_ptr(), block_size, step)
                         );
                         if shrink_max >= max {
+                            // just to make sure it is not right or down shift so D_corner is not used
+                            prev_dir = Direction::Grow;
+
                             block_size /= 2;
                             let mut i = 0;
                             while i < block_size {
