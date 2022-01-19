@@ -305,11 +305,17 @@ pub trait Profile {
     /// Byte to use as padding.
     const NULL: u8;
     /// Create a new matrix with default (usually nonsense) values.
-    fn new(len: usize) -> Self;
+    fn new(len: usize, gap_open: i8) -> Self;
     /// Set the score for a position and byte.
     fn set(&mut self, i: usize, b: u8, score: i8);
+    /// Set the gap extend cost for a column.
+    fn set_gap_extend_C(&mut self, i: usize, gap: i8);
+    /// Set the gap extend cost for a row.
+    fn set_gap_extend_R(&mut self, i: usize, gap: i8);
     /// Get the score for a position and byte.
     fn get(&self, i: usize, b: u8) -> i8;
+    /// Get the gap open cost.
+    fn get_gap_open(&self) -> i8;
     /// Get the pointer for a specific index.
     fn as_ptr_pos(&self, i: usize) -> *const i8;
     /// Get the pointer for a specific amino acid.
@@ -318,6 +324,10 @@ pub trait Profile {
     unsafe fn get_scores_pos(&self, i: usize, c: u8, right: bool) -> Simd;
     /// Get the scores for a certain byte and a certain SIMD vector of bytes.
     unsafe fn get_scores_aa(&self, i: usize, v: HalfSimd, right: bool) -> Simd;
+    /// Get the gap extend cost for a column.
+    unsafe fn get_gap_extend_C(&self, i: usize) -> Simd;
+    /// Get the gap extend cost for a row.
+    unsafe fn get_gap_extend_R(&self, i: usize) -> Simd;
     /// Convert a byte to a better storage format that makes retrieving scores
     /// easier.
     fn convert_char(c: u8) -> u8;
@@ -329,17 +339,23 @@ pub trait Profile {
 pub struct AAProfile {
     aa_pos: Vec<i16>,
     pos_aa: Vec<i8>,
+    gap_open: i8,
+    pos_gap_extend_C: Vec<i8>,
+    pos_gap_extend_R: Vec<i16>,
     len: usize
 }
 
 impl Profile for AAProfile {
     const NULL: u8 = b'A' + 26u8;
 
-    fn new(len: usize) -> Self {
-        let len = (len + 31) / 32 * 32;
+    fn new(len: usize, block_size: usize, gap_open: i8) -> Self {
+        let len = len + block_size + 1;
         Self {
             aa_pos: vec![i8::MIN as i16; 32 * len],
             pos_aa: vec![i8::MIN; len * 32],
+            gap_open,
+            pos_gap_extend_C: vec![i8::MIN; len * 32],
+            pos_gap_extend_R: vec![i8::MIN as i16; len * 32],
             len
         }
     }
@@ -353,11 +369,23 @@ impl Profile for AAProfile {
         self.aa_pos[idx] = score as i16;
     }
 
+    fn set_gap_extend_C(&mut self, i: usize, gap: i8) {
+        self.pos_gap_extend_C[i] = gap;
+    }
+
+    fn set_gap_extend_R(&mut self, i: usize, gap: i8) {
+        self.pos_gap_extend_R[i] = gap;
+    }
+
     fn get(&self, i: usize, b: u8) -> i8 {
         let b = b.to_ascii_uppercase();
         assert!(b'A' <= b && b <= b'Z' + 1);
         let idx = i * 32 + ((b - b'A') as usize);
         self.pos_aa[idx]
+    }
+
+    fn get_gap_open(&self) -> i8 {
+        self.gap_open
     }
 
     #[inline]
@@ -378,8 +406,8 @@ impl Profile for AAProfile {
     unsafe fn get_scores_pos(&self, i: usize, v: HalfSimd, _right: bool) -> Simd {
         // efficiently lookup scores for each character in v
         let matrix_ptr = self.as_ptr_pos(i);
-        let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
-        let scores2 = halfsimd_load((matrix_ptr as *const HalfSimd).add(1));
+        let scores1 = halfsimd_loadu(matrix_ptr as *const HalfSimd);
+        let scores2 = halfsimd_loadu((matrix_ptr as *const HalfSimd).add(1));
         halfsimd_lookup2_i16(scores1, scores2, v)
     }
 
@@ -388,7 +416,21 @@ impl Profile for AAProfile {
     #[inline]
     unsafe fn get_scores_aa(&self, i: usize, c: u8, _right: bool) -> Simd {
         let matrix_ptr = self.as_ptr_aa(c as usize);
-        simd_load(matrix_ptr.add(i) as *const Simd)
+        simd_loadu(matrix_ptr.add(i) as *const Simd)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_extend_C(&self, i: usize) -> Simd {
+        simd_set1_i16(*self.pos_gap_extend_C.as_ptr().add(i) as i16)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_extend_R(&self, i: usize) -> Simd {
+        simd_loadu(self.pos_gap_extend_R.as_ptr().add(i) as *const Simd)
     }
 
     #[inline]
