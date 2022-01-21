@@ -422,14 +422,28 @@ impl Profile for AAProfile {
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    unsafe fn get_gap_extend_C(&self, i: usize) -> Simd {
+    unsafe fn get_gap_extend_right_C(&self, i: usize) -> Simd {
         simd_set1_i16(*self.pos_gap_extend_C.as_ptr().add(i) as i16)
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    unsafe fn get_gap_extend_R(&self, i: usize) -> Simd {
+    unsafe fn get_gap_extend_right_R(&self, i: usize) -> Simd {
+        simd_set1_i16(*self.pos_gap_extend_R.as_ptr().add(i) as i16)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_extend_down_C(&self, i: usize) -> Simd {
+        simd_loadu(self.pos_gap_extend_C.as_ptr().add(i) as *const Simd)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_extend_down_R(&self, i: usize) -> Simd {
         simd_loadu(self.pos_gap_extend_R.as_ptr().add(i) as *const Simd)
     }
 
