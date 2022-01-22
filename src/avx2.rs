@@ -322,43 +322,6 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: Simd, gap_cost_lane: P
 
 #[target_feature(enable = "avx2")]
 #[inline]
-#[allow(non_snake_case)]
-pub unsafe fn simd_prefix_scan_gaps_i16(R_max: Simd, gap_cost: Simd) -> (Simd, Simd) {
-    let mut shift1 = simd_sllz_i16!(R_max, 1);
-    shift1 = _mm256_adds_epi16(shift1, gap_cost);
-    shift1 = _mm256_max_epi16(R_max, shift1);
-
-    let mut gap_shift1 = simd_sllz_i16!(gap_cost, 1);
-    gap_shift1 = _mm256_adds_epi16(gap_shift1, gap_cost);
-    let mut shift2 = simd_sllz_i16!(shift1, 2);
-    shift2 = _mm256_adds_epi16(shift2, gap_shift1);
-    shift2 = _mm256_max_epi16(shift1, shift2);
-
-    let mut gap_shift2 = simd_sllz_i16!(gap_shift1, 2);
-    gap_shift2 = _mm256_adds_epi16(gap_shift2, gap_shift1);
-    let mut shift4 = simd_sllz_i16!(shift2, 4);
-    shift4 = _mm256_adds_epi16(shift4, gap_shift2);
-    shift4 = _mm256_max_epi16(shift2, shift4);
-
-    let mut gap_shift4 = simd_sllz_i16!(gap_shift2, 4);
-    gap_shift4 = _mm256_adds_epi16(gap_shift4, gap_shift2);
-
-    // Correct the upper lane using the last element of the lower lane
-    // Make sure that the operation on the bottom lane is essentially nop
-    let mut correct1 = _mm256_shufflehi_epi16(shift4, 0b11111111);
-    correct1 = _mm256_permute4x64_epi64(correct1, 0b01010000);
-    correct1 = _mm256_adds_epi16(correct1, gap_shift4);
-    correct1 = _mm256_max_epi16(shift4, correct1);
-
-    let mut gap_correct1 = _mm256_srli_si256(_mm256_shufflehi_epi16(gap_shift4, 0b11111111), 8);
-    gap_correct1 = _mm256_permute4x64_epi64(gap_correct1, 0b00000101);
-    gap_correct1 = _mm256_adds_epi16(gap_correct1, gap_shift4);
-
-    (correct1, gap_correct1)
-}
-
-#[target_feature(enable = "avx2")]
-#[inline]
 pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
     let a = _mm_shuffle_epi8(lut1, v);
     let b = _mm_shuffle_epi8(lut2, v);

@@ -184,7 +184,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// computed, even when the the strings are long.
     pub fn align_profile<P: Profile>(&mut self, query: &PaddedBytes, profile: &P, size: RangeInclusive<usize>, x_drop: i32) {
         // check invariants so bad stuff doesn't happen later
-        assert!(profile.get_gap_open() < 0, "Gap open cost must be negative!");
+        assert!(profile.get_gap_extend() < 0, "Gap extend cost must be negative!");
         let min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
         assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
@@ -933,7 +933,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                                      R_row: *mut i16,
                                      mut D_corner: Simd,
                                      _right: bool) -> (Simd, Simd) {
-        let gap_open = simd_set1_i16(reference.get_gap_open() as i16);
+        let gap_extend = simd_set1_i16(reference.get_gap_extend() as i16);
+        let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
@@ -949,9 +950,9 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             let mut R11 = simd_set1_i16(MIN);
 
             let idx = start_j + j;
-            let gap_extend_C = reference.get_gap_extend_right_C(idx);
-            let gap_extend_R = reference.get_gap_extend_right_R(idx);
-            let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend_R);
+            let gap_open_C = reference.get_gap_open_right_C(idx);
+            let gap_close_C = reference.get_gap_close_right_C(idx);
+            let gap_open_R = reference.get_gap_open_right_R(idx);
 
             let mut i = 0;
             while i < height {
@@ -966,12 +967,12 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
                 }
 
-                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend_C), simd_adds_i16(D10, simd_adds_i16(gap_open, gap_extend_C)));
-                D11 = simd_max_i16(D11, C11);
+                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend)));
+                D11 = simd_max_i16(D11, simd_adds_i16(C11, gap_open_R));
                 // at this point, C11 is fully calculated and D11 is partially calculated
 
-                let D11_open = simd_adds_i16(D11, gap_open);
-                R11 = simd_prefix_scan_i16(D11_open, gap_extend_R, prefix_scan_consts);
+                let D11_open = simd_adds_i16(D11, gap_open_R);
+                R11 = simd_prefix_scan_i16(D11_open, gap_extend, prefix_scan_consts);
                 // do prefix scan before using R01 to break up dependency chain that depends on
                 // the last element of R01 from the previous loop iteration
                 R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
@@ -1067,7 +1068,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                                      R_row: *mut i16,
                                      mut D_corner: Simd,
                                      _right: bool) -> (Simd, Simd) {
-        let gap_open = simd_set1_i16(reference.get_gap_open() as i16);
+        let gap_extend = simd_set1_i16(reference.get_gap_extend() as i16);
+        let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
         let mut curr_i = simd_set1_i16(0);
@@ -1098,19 +1100,20 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
                 }
 
-                let gap_extend_C = query.get_gap_extend_down_R(idx);
-                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend_C), simd_adds_i16(D10, simd_adds_i16(gap_open, gap_extend_C)));
+                let gap_open_C = query.get_gap_open_down_R(idx);
+                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend)));
                 D11 = simd_max_i16(D11, C11);
                 // at this point, C11 is fully calculated and D11 is partially calculated
 
-                let D11_open = simd_adds_i16(D11, gap_open);
-                let gap_extend_R = query.get_gap_extend_down_C(idx);
-                let (R11_temp, gap_extend_all) = simd_prefix_scan_gap_i16(D11_open, gap_extend_R);
+                let gap_open_R = query.get_gap_open_down_C(idx);
+                let D11_open = simd_adds_i16(D11, gap_open_R);
+                R11 = simd_prefix_scan_i16(D11_open, gap_extend, prefix_scan_consts);
                 // do prefix scan before using R01 to break up dependency chain that depends on
                 // the last element of R01 from the previous loop iteration
-                R11 = simd_max_i16(R11_temp, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
+                R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
                 // fully calculate D11 using R11
-                D11 = simd_max_i16(D11, R11);
+                let gap_close_R = query.get_gap_close_down_C(idx);
+                D11 = simd_max_i16(D11, simd_adds_i16(R11, gap_close_R));
                 R01 = R11;
 
                 #[cfg(feature = "debug")]
