@@ -387,7 +387,7 @@ impl Profile for AAProfile {
     }
 
     fn set_gap_open_C(&mut self, i: usize, gap: i8) {
-        assert!(gap < 0);
+        assert!(gap < 0, "Gap open cost must be negative!");
         self.pos_gap_open_C[i] = gap;
     }
 
@@ -396,7 +396,7 @@ impl Profile for AAProfile {
     }
 
     fn set_gap_open_R(&mut self, i: usize, gap: i8) {
-        assert!(gap < 0);
+        assert!(gap < 0, "Gap open cost must be negative!");
         self.pos_gap_open_R[i] = gap;
     }
 

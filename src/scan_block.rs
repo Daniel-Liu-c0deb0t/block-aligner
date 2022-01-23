@@ -102,7 +102,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         }
     }
 
-    /// Align two strings with block aligner.
+    /// Align two sequences with block aligner.
     ///
     /// If `TRACE` is true, then information for computing the traceback will be stored.
     /// After alignment, the traceback CIGAR string can then be computed.
@@ -112,7 +112,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// the max score in the current block drops by `x_drop` below the max score encountered
     /// so far. If `X_DROP` is false, then global alignment is done.
     ///
-    /// Since larger scores are better, gap and mismatches penalties should be negative.
+    /// Since larger scores are better, gap and mismatches penalties must be negative.
     ///
     /// The minimum and maximum sizes of the block must be powers of 2 that are greater than the
     /// number of 16-bit lanes in a SIMD vector.
@@ -160,7 +160,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         unsafe { self.align_core(s); }
     }
 
-    /// Align a string to a profile with block aligner.
+    /// Align a sequence to a profile with block aligner.
     ///
     /// If `TRACE` is true, then information for computing the traceback will be stored.
     /// After alignment, the traceback CIGAR string can then be computed.
@@ -170,7 +170,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// the max score in the current block drops by `x_drop` below the max score encountered
     /// so far. If `X_DROP` is false, then global alignment is done.
     ///
-    /// Since larger scores are better, gap and mismatches penalties should be negative.
+    /// Since larger scores are better, gap and mismatches penalties must be negative.
     ///
     /// The minimum and maximum sizes of the block must be powers of 2 that are greater than the
     /// number of 16-bit lanes in a SIMD vector.
@@ -768,18 +768,19 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         D_corner
     }
 
-    /// Place block right or down.
+    /// Place block right or down for sequence-sequence alignment.
     ///
     /// Assumes all inputs are already relative to the current offset.
     ///
     /// Inside this function, everything will be treated as shifting right,
     /// conceptually. The same process can be trivially used for shifting
     /// down by calling this function with different parameters.
+    ///
+    /// The same function can be reused for right and down shifts because
+    /// sequence to sequence alignment is symmetric.
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
-    // Want this to be inlined in some places and not others, so let
-    // compiler decide.
     unsafe fn place_block<M: Matrix>(state: &State<M>,
                                      query: &PaddedBytes,
                                      reference: &PaddedBytes,
@@ -907,276 +908,167 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         (D_max, D_argmax)
     }
 
-    /// Place block right or down.
+    /// Place block right or down for sequence-profile alignment.
     ///
     /// Assumes all inputs are already relative to the current offset.
     ///
     /// Inside this function, everything will be treated as shifting right,
     /// conceptually. The same process can be trivially used for shifting
     /// down by calling this function with different parameters.
-    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
-    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
-    #[allow(non_snake_case)]
-    // Want this to be inlined in some places and not others, so let
-    // compiler decide.
-    unsafe fn place_block_profile_right<P: Profile>(state: &StateProfile<P>,
-                                     query: &PaddedBytes,
-                                     reference: &Profile,
-                                     trace: &mut Trace,
-                                     start_i: usize,
-                                     start_j: usize,
-                                     width: usize,
-                                     height: usize,
-                                     D_col: *mut i16,
-                                     C_col: *mut i16,
-                                     D_row: *mut i16,
-                                     R_row: *mut i16,
-                                     mut D_corner: Simd,
-                                     _right: bool) -> (Simd, Simd) {
-        let gap_extend = simd_set1_i16(reference.get_gap_extend() as i16);
-        let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
-        let mut D_max = simd_set1_i16(MIN);
-        let mut D_argmax = simd_set1_i16(0);
-        let mut curr_i = simd_set1_i16(0);
+    ///
+    /// Right and down shifts must be handled separately since a sequence
+    /// is aligned to a profile.
+    macro_rules! place_block_profile_gen {
+        ($fn_name:ident, $query_type: ty, $reference_type: ty, $right: expr) => {
+            #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+            #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+            #[allow(non_snake_case)]
+            unsafe fn $fn_name<P: Profile>(state: &StateProfile<P>,
+                                           query: $query_type,
+                                           reference: $reference_type,
+                                           trace: &mut Trace,
+                                           start_i: usize,
+                                           start_j: usize,
+                                           width: usize,
+                                           height: usize,
+                                           D_col: *mut i16,
+                                           C_col: *mut i16,
+                                           D_row: *mut i16,
+                                           R_row: *mut i16,
+                                           mut D_corner: Simd,
+                                           _right: bool) -> (Simd, Simd) {
+                let gap_extend = simd_set1_i16(reference.get_gap_extend() as i16);
+                let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
+                let mut D_max = simd_set1_i16(MIN);
+                let mut D_argmax = simd_set1_i16(0);
+                let mut curr_i = simd_set1_i16(0);
 
-        if width == 0 || height == 0 {
-            return (D_max, D_argmax);
-        }
+                let mut idx = 0;
+                let mut gap_open_C = simd_set1_i16(MIN);
+                let mut gap_close_C = simd_set1_i16(MIN);
+                let mut gap_open_R = simd_set1_i16(MIN);
+                let mut gap_close_R = simd_set1_i16(MIN);
 
-        // hottest loop in the whole program
-        for j in 0..width {
-            let mut R01 = simd_set1_i16(MIN);
-            let mut D11 = simd_set1_i16(MIN);
-            let mut R11 = simd_set1_i16(MIN);
-
-            let idx = start_j + j;
-            let gap_open_C = reference.get_gap_open_right_C(idx);
-            let gap_close_C = reference.get_gap_close_right_C(idx);
-            let gap_open_R = reference.get_gap_open_right_R(idx);
-
-            let mut i = 0;
-            while i < height {
-                let D10 = simd_load(D_col.add(i) as _);
-                let C10 = simd_load(C_col.add(i) as _);
-                let D00 = simd_sl_i16!(D10, D_corner, 1);
-                D_corner = D10;
-
-                let scores = reference.get_scores_pos(idx, halfsimd_loadu(query.as_ptr(start_i + i) as _), true);
-                D11 = simd_adds_i16(D00, scores);
-                if start_i + i == 0 && start_j + j == 0 {
-                    D11 = simd_insert_i16!(D11, ZERO, 0);
+                if width == 0 || height == 0 {
+                    return (D_max, D_argmax);
                 }
 
-                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend)));
-                D11 = simd_max_i16(D11, simd_adds_i16(C11, gap_open_R));
-                // at this point, C11 is fully calculated and D11 is partially calculated
+                // hottest loop in the whole program
+                for j in 0..width {
+                    let mut R01 = simd_set1_i16(MIN);
+                    let mut D11 = simd_set1_i16(MIN);
+                    let mut R11 = simd_set1_i16(MIN);
 
-                let D11_open = simd_adds_i16(D11, gap_open_R);
-                R11 = simd_prefix_scan_i16(D11_open, gap_extend, prefix_scan_consts);
-                // do prefix scan before using R01 to break up dependency chain that depends on
-                // the last element of R01 from the previous loop iteration
-                R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
-                // fully calculate D11 using R11
-                D11 = simd_max_i16(D11, R11);
-                R01 = R11;
-
-                #[cfg(feature = "debug")]
-                {
-                    print!("s:   ");
-                    simd_dbg_i16(scores);
-                    print!("D00: ");
-                    simd_dbg_i16(simd_subs_i16(D00, simd_set1_i16(ZERO)));
-                    print!("C11: ");
-                    simd_dbg_i16(simd_subs_i16(C11, simd_set1_i16(ZERO)));
-                    print!("R11: ");
-                    simd_dbg_i16(simd_subs_i16(R11, simd_set1_i16(ZERO)));
-                    print!("D11: ");
-                    simd_dbg_i16(simd_subs_i16(D11, simd_set1_i16(ZERO)));
-                }
-
-                if TRACE {
-                    let trace_D_C = simd_cmpeq_i16(D11, C11);
-                    let trace_D_R = simd_cmpeq_i16(D11, R11);
-                    #[cfg(feature = "debug")]
-                    {
-                        print!("D_C: ");
-                        simd_dbg_i16(trace_D_C);
-                        print!("D_R: ");
-                        simd_dbg_i16(trace_D_R);
+                    if $right {
+                        idx = start_j + j;
+                        gap_open_C = reference.get_gap_open_right_C(idx);
+                        gap_close_C = reference.get_gap_close_right_C(idx);
+                        gap_open_R = reference.get_gap_open_right_R(idx);
                     }
-                    // compress trace with movemask to save space
-                    let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
-                    trace.add_trace(trace_data as TraceType);
+
+                    let mut i = 0;
+                    while i < height {
+                        let D10 = simd_load(D_col.add(i) as _);
+                        let C10 = simd_load(C_col.add(i) as _);
+                        let D00 = simd_sl_i16!(D10, D_corner, 1);
+                        D_corner = D10;
+
+                        if !$right {
+                            idx = start_i + i;
+                            gap_open_C = query.get_gap_open_down_R(idx);
+                            gap_open_R = query.get_gap_open_down_C(idx);
+                            gap_close_R = query.get_gap_close_down_C(idx);
+                        }
+
+                        let scores = if $right {
+                            reference.get_scores_pos(idx, halfsimd_loadu(query.as_ptr(start_i + i) as _), true)
+                        } else {
+                            query.get_scores_aa(idx, reference.get(start_j + j), false)
+                        };
+                        D11 = simd_adds_i16(D00, scores);
+                        if start_i + i == 0 && start_j + j == 0 {
+                            D11 = simd_insert_i16!(D11, ZERO, 0);
+                        }
+
+                        let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend)));
+                        D11 = simd_max_i16(D11, if $right { simd_adds_i16(C11, gap_close_C) } else { C11 });
+                        // at this point, C11 is fully calculated and D11 is partially calculated
+
+                        let D11_open = simd_adds_i16(D11, gap_open_R);
+                        R11 = simd_prefix_scan_i16(D11_open, gap_extend, prefix_scan_consts);
+                        // do prefix scan before using R01 to break up dependency chain that depends on
+                        // the last element of R01 from the previous loop iteration
+                        R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
+                        // fully calculate D11 using R11
+                        D11 = simd_max_i16(D11, if $right { R11 } else { simd_adds_i16(R11, gap_close_R) });
+                        R01 = R11;
+
+                        #[cfg(feature = "debug")]
+                        {
+                            print!("s:   ");
+                            simd_dbg_i16(scores);
+                            print!("D00: ");
+                            simd_dbg_i16(simd_subs_i16(D00, simd_set1_i16(ZERO)));
+                            print!("C11: ");
+                            simd_dbg_i16(simd_subs_i16(C11, simd_set1_i16(ZERO)));
+                            print!("R11: ");
+                            simd_dbg_i16(simd_subs_i16(R11, simd_set1_i16(ZERO)));
+                            print!("D11: ");
+                            simd_dbg_i16(simd_subs_i16(D11, simd_set1_i16(ZERO)));
+                        }
+
+                        if TRACE {
+                            let trace_D_C = simd_cmpeq_i16(D11, C11);
+                            let trace_D_R = simd_cmpeq_i16(D11, R11);
+                            #[cfg(feature = "debug")]
+                            {
+                                print!("D_C: ");
+                                simd_dbg_i16(trace_D_C);
+                                print!("D_R: ");
+                                simd_dbg_i16(trace_D_R);
+                            }
+                            // compress trace with movemask to save space
+                            let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
+                            trace.add_trace(trace_data as TraceType);
+                        }
+
+                        D_max = simd_max_i16(D_max, D11);
+
+                        if X_DROP {
+                            // keep track of the best score and its location
+                            let mask = simd_cmpeq_i16(D_max, D11);
+                            D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
+                            curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+                        }
+
+                        simd_store(D_col.add(i) as _, D11);
+                        simd_store(C_col.add(i) as _, C11);
+                        i += L;
+                    }
+
+                    D_corner = simd_set1_i16(MIN);
+
+                    ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
+                    ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
+
+                    if !X_DROP && start_i + height > query.len()
+                        && start_j + j >= reference.len() {
+                        if TRACE {
+                            // make sure that the trace index is updated since the rest of the loop
+                            // iterations are skipped
+                            trace.add_trace_idx((width - 1 - j) * (height / L));
+                        }
+                        break;
+                    }
                 }
 
-                D_max = simd_max_i16(D_max, D11);
-
-                if X_DROP {
-                    // keep track of the best score and its location
-                    let mask = simd_cmpeq_i16(D_max, D11);
-                    D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
-                    curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
-                }
-
-                simd_store(D_col.add(i) as _, D11);
-                simd_store(C_col.add(i) as _, C11);
-                i += L;
+                (D_max, D_argmax)
             }
-
-            D_corner = simd_set1_i16(MIN);
-
-            ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
-            ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
-
-            if !X_DROP && start_i + height > query.len()
-                && start_j + j >= reference.len() {
-                if TRACE {
-                    // make sure that the trace index is updated since the rest of the loop
-                    // iterations are skipped
-                    trace.add_trace_idx((width - 1 - j) * (height / L));
-                }
-                break;
-            }
-        }
-
-        (D_max, D_argmax)
+        };
     }
 
-    /// Place block right or down.
-    ///
-    /// Assumes all inputs are already relative to the current offset.
-    ///
-    /// Inside this function, everything will be treated as shifting right,
-    /// conceptually. The same process can be trivially used for shifting
-    /// down by calling this function with different parameters.
-    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
-    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
-    #[allow(non_snake_case)]
-    // Want this to be inlined in some places and not others, so let
-    // compiler decide.
-    unsafe fn place_block_profile_down<P: Profile>(state: &StateProfile<P>,
-                                     query: &Profile,
-                                     reference: &PaddedBytes,
-                                     trace: &mut Trace,
-                                     start_i: usize,
-                                     start_j: usize,
-                                     width: usize,
-                                     height: usize,
-                                     D_col: *mut i16,
-                                     C_col: *mut i16,
-                                     D_row: *mut i16,
-                                     R_row: *mut i16,
-                                     mut D_corner: Simd,
-                                     _right: bool) -> (Simd, Simd) {
-        let gap_extend = simd_set1_i16(reference.get_gap_extend() as i16);
-        let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
-        let mut D_max = simd_set1_i16(MIN);
-        let mut D_argmax = simd_set1_i16(0);
-        let mut curr_i = simd_set1_i16(0);
-
-        if width == 0 || height == 0 {
-            return (D_max, D_argmax);
-        }
-
-        // hottest loop in the whole program
-        for j in 0..width {
-            let mut R01 = simd_set1_i16(MIN);
-            let mut D11 = simd_set1_i16(MIN);
-            let mut R11 = simd_set1_i16(MIN);
-
-            let c = reference.get(start_j + j);
-
-            let mut i = 0;
-            while i < height {
-                let D10 = simd_load(D_col.add(i) as _);
-                let C10 = simd_load(C_col.add(i) as _);
-                let D00 = simd_sl_i16!(D10, D_corner, 1);
-                D_corner = D10;
-
-                let idx = start_i + i;
-                let scores = query.get_scores_aa(idx, c, false);
-                D11 = simd_adds_i16(D00, scores);
-                if start_i + i == 0 && start_j + j == 0 {
-                    D11 = simd_insert_i16!(D11, ZERO, 0);
-                }
-
-                let gap_open_C = query.get_gap_open_down_R(idx);
-                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend)));
-                D11 = simd_max_i16(D11, C11);
-                // at this point, C11 is fully calculated and D11 is partially calculated
-
-                let gap_open_R = query.get_gap_open_down_C(idx);
-                let D11_open = simd_adds_i16(D11, gap_open_R);
-                R11 = simd_prefix_scan_i16(D11_open, gap_extend, prefix_scan_consts);
-                // do prefix scan before using R01 to break up dependency chain that depends on
-                // the last element of R01 from the previous loop iteration
-                R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
-                // fully calculate D11 using R11
-                let gap_close_R = query.get_gap_close_down_C(idx);
-                D11 = simd_max_i16(D11, simd_adds_i16(R11, gap_close_R));
-                R01 = R11;
-
-                #[cfg(feature = "debug")]
-                {
-                    print!("s:   ");
-                    simd_dbg_i16(scores);
-                    print!("D00: ");
-                    simd_dbg_i16(simd_subs_i16(D00, simd_set1_i16(ZERO)));
-                    print!("C11: ");
-                    simd_dbg_i16(simd_subs_i16(C11, simd_set1_i16(ZERO)));
-                    print!("R11: ");
-                    simd_dbg_i16(simd_subs_i16(R11, simd_set1_i16(ZERO)));
-                    print!("D11: ");
-                    simd_dbg_i16(simd_subs_i16(D11, simd_set1_i16(ZERO)));
-                }
-
-                if TRACE {
-                    let trace_D_C = simd_cmpeq_i16(D11, C11);
-                    let trace_D_R = simd_cmpeq_i16(D11, R11);
-                    #[cfg(feature = "debug")]
-                    {
-                        print!("D_C: ");
-                        simd_dbg_i16(trace_D_C);
-                        print!("D_R: ");
-                        simd_dbg_i16(trace_D_R);
-                    }
-                    // compress trace with movemask to save space
-                    let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
-                    trace.add_trace(trace_data as TraceType);
-                }
-
-                D_max = simd_max_i16(D_max, D11);
-
-                if X_DROP {
-                    // keep track of the best score and its location
-                    let mask = simd_cmpeq_i16(D_max, D11);
-                    D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
-                    curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
-                }
-
-                simd_store(D_col.add(i) as _, D11);
-                simd_store(C_col.add(i) as _, C11);
-                i += L;
-            }
-
-            D_corner = simd_set1_i16(MIN);
-
-            ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
-            ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
-
-            if !X_DROP && start_i + height > query.len()
-                && start_j + j >= reference.len() {
-                if TRACE {
-                    // make sure that the trace index is updated since the rest of the loop
-                    // iterations are skipped
-                    trace.add_trace_idx((width - 1 - j) * (height / L));
-                }
-                break;
-            }
-        }
-
-        (D_max, D_argmax)
-    }
+    place_block_profile_gen!(place_block_profile_right, &PaddedBytes, &Profile, true);
+    place_block_profile_gen!(place_block_profile_down, &Profile, &PaddedBytes, false);
 
     /// Get the resulting score and ending location of the alignment.
     #[inline]
