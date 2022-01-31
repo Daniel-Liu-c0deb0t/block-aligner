@@ -67,8 +67,8 @@ fn bench_parasailors_aa_core(idx: usize, _trace: bool, _min_size: usize, _max_si
     let matrix = Matrix::new(MatrixType::Blosum62);
     let data = file_data
         .iter()
-        .map(|(q, r)| (Profile::new(q, &matrix), r.to_owned()))
-        .collect::<Vec<(Profile, Vec<u8>)>>();
+        .map(|(q, r)| (parasailors::Profile::new(q, &matrix), r.to_owned()))
+        .collect::<Vec<(parasailors::Profile, Vec<u8>)>>();
 
     let start = Instant::now();
     let mut temp = 0i32;

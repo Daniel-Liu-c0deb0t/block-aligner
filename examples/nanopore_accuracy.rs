@@ -23,7 +23,7 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool) -> (us
 
         // parasail
         let matrix = Matrix::new(MatrixType::IdentityWithPenalty);
-        let profile = Profile::new(q.as_bytes(), &matrix);
+        let profile = parasailors::Profile::new(q.as_bytes(), &matrix);
         let parasail_score = global_alignment_score(&profile, r.as_bytes(), 2, 1);
 
         let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), 2048);
