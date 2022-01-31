@@ -48,6 +48,10 @@ pub unsafe fn simd_load(ptr: *const Simd) -> Simd { _mm256_load_si256(ptr) }
 
 #[target_feature(enable = "avx2")]
 #[inline]
+pub unsafe fn simd_loadu(ptr: *const Simd) -> Simd { _mm256_loadu_si256(ptr) }
+
+#[target_feature(enable = "avx2")]
+#[inline]
 pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { _mm256_store_si256(ptr, a) }
 
 #[target_feature(enable = "avx2")]
@@ -447,13 +451,15 @@ mod tests {
             struct A([i16; L]);
 
             let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
-            let consts = get_prefix_scan_consts(0);
-            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), consts);
+            let gap = simd_set1_i16(0);
+            let (_, consts) = get_prefix_scan_consts(gap);
+            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), gap, consts);
             simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 15, 15, 15, 15]);
 
             let vec = A([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 12, 13, 14, 11]);
-            let consts = get_prefix_scan_consts(-1);
-            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), consts);
+            let gap = simd_set1_i16(-1);
+            let (_, consts) = get_prefix_scan_consts(gap);
+            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), gap, consts);
             simd_assert_vec_eq(res, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 14, 13, 14, 13]);
         }
         unsafe { inner(); }

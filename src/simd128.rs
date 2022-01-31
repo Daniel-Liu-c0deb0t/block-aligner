@@ -48,6 +48,10 @@ pub unsafe fn simd_load(ptr: *const Simd) -> Simd { v128_load(ptr) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
+pub unsafe fn simd_loadu(ptr: *const Simd) -> Simd { v128_load(ptr) }
+
+#[target_feature(enable = "simd128")]
+#[inline]
 pub unsafe fn simd_store(ptr: *mut Simd, a: Simd) { v128_store(ptr, a) }
 
 #[target_feature(enable = "simd128")]
@@ -237,7 +241,7 @@ pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
 #[inline]
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts) -> Simd {
+pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: SIMD, _gap_cost_lane: PrefixScanConsts) -> Simd {
     let mut curr = R_max;
 
     for _i in 0..(L - 1) {
@@ -250,28 +254,25 @@ pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts
     curr
 }
 
-#[target_feature(enable = "simd128")]
-#[inline]
-pub unsafe fn get_gap_extend_all(gap: i16) -> Simd {
-    i16x8(
-        gap * 1, gap * 2, gap * 3, gap * 4,
-        gap * 5, gap * 6, gap * 7, gap * 8
-    )
-}
-
-pub type PrefixScanConsts = Simd;
+pub type PrefixScanConsts = ();
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn get_prefix_scan_consts(gap: i16) -> PrefixScanConsts {
-    let gap_cost = i16x8_splat(gap);
-    gap_cost
+pub unsafe fn get_prefix_scan_consts(gap: Simd) -> (Simd, PrefixScanConsts) {
+    let mut shift1 = simd_sllz_i16!(gap, 1);
+    shift1 = i16x8_add_sat(shift1, gap);
+    let mut shift2 = simd_sllz_i16!(shift1, 2);
+    shift2 = i16x8_add_sat(shift2, shift1);
+    let mut shift4 = simd_sllz_i16!(shift2, 4);
+    shift4 = i16x8_add_sat(shift4, shift2);
+
+    (shift4, ())
 }
 
 #[target_feature(enable = "simd128")]
 #[inline]
 #[allow(non_snake_case)]
-pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: PrefixScanConsts) -> Simd {
+pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: Simd, _gap_cost_lane: PrefixScanConsts) -> Simd {
     let mut shift1 = simd_sllz_i16!(R_max, 1);
     shift1 = i16x8_add_sat(shift1, gap_cost);
     shift1 = i16x8_max(shift1, R_max);
@@ -452,13 +453,15 @@ mod tests {
             struct A([i16; L]);
 
             let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-            let consts = get_prefix_scan_consts(0);
-            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), consts);
+            let gap = simd_set1_i16(0);
+            let consts = get_prefix_scan_consts(gap);
+            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), gap, consts);
             simd_assert_vec_eq(res, [8, 9, 10, 15, 15, 15, 15, 15]);
 
             let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
-            let consts = get_prefix_scan_consts(-1);
-            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), consts);
+            let gap = simd_set1_i16(-1);
+            let consts = get_prefix_scan_consts(gap);
+            let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), gap, consts);
             simd_assert_vec_eq(res, [8, 9, 10, 15, 14, 13, 14, 13]);
         }
         unsafe { inner(); }
