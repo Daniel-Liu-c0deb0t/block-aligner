@@ -551,13 +551,13 @@ macro_rules! align_core_gen {
 /// Right and down shifts must be handled separately since a sequence
 /// is aligned to a profile.
 macro_rules! place_block_profile_gen {
-    ($fn_name:ident, $query: ident, $query_type: ty, $reference: ident, $reference_type: ty, $right: expr) => {
+    ($fn_name:ident, $query: ident, $query_type: ty, $reference: ident, $reference_type: ty, $q: ident, $r: ident, $right: expr) => {
         #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
         #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
         #[allow(non_snake_case)]
-        unsafe fn $fn_name<P: Profile>(state: &StateProfile<P>,
-                                       query: $query_type,
-                                       reference: $reference_type,
+        unsafe fn $fn_name<P: Profile>(_state: &StateProfile<P>,
+                                       $query: $query_type,
+                                       $reference: $reference_type,
                                        trace: &mut Trace,
                                        start_i: usize,
                                        start_j: usize,
@@ -569,7 +569,7 @@ macro_rules! place_block_profile_gen {
                                        R_row: *mut i16,
                                        mut D_corner: Simd,
                                        _right: bool) -> (Simd, Simd) {
-            let gap_extend = simd_set1_i16($reference.get_gap_extend() as i16);
+            let gap_extend = simd_set1_i16($r.get_gap_extend() as i16);
             let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
             let mut D_max = simd_set1_i16(MIN);
             let mut D_argmax = simd_set1_i16(0);
@@ -593,9 +593,9 @@ macro_rules! place_block_profile_gen {
 
                 if $right {
                     idx = start_j + j;
-                    gap_open_C = $reference.get_gap_open_right_C(idx);
-                    gap_close_C = $reference.get_gap_close_right_C(idx);
-                    gap_open_R = $reference.get_gap_open_right_R(idx);
+                    gap_open_C = $r.get_gap_open_right_C(idx);
+                    gap_close_C = $r.get_gap_close_right_C(idx);
+                    gap_open_R = $r.get_gap_open_right_R(idx);
                 }
 
                 let mut i = 0;
@@ -607,15 +607,15 @@ macro_rules! place_block_profile_gen {
 
                     if !$right {
                         idx = start_i + i;
-                        gap_open_C = $reference.get_gap_open_down_R(idx);
-                        gap_open_R = $reference.get_gap_open_down_C(idx);
-                        gap_close_R = $reference.get_gap_close_down_C(idx);
+                        gap_open_C = $r.get_gap_open_down_R(idx);
+                        gap_open_R = $r.get_gap_open_down_C(idx);
+                        gap_close_R = $r.get_gap_close_down_C(idx);
                     }
 
                     let scores = if $right {
-                        $reference.get_scores_pos(idx, halfsimd_loadu($query.as_ptr(start_i + i) as _), true)
+                        $r.get_scores_pos(idx, halfsimd_loadu($q.as_ptr(start_i + i) as _), true)
                     } else {
-                        $reference.get_scores_aa(idx, $query.get(start_j + j), false)
+                        $r.get_scores_aa(idx, $q.get(start_j + j), false)
                     };
                     D11 = simd_adds_i16(D00, scores);
                     if start_i + i == 0 && start_j + j == 0 {
@@ -683,8 +683,8 @@ macro_rules! place_block_profile_gen {
                 ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
                 ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
-                if !X_DROP && start_i + height > $query.len()
-                    && start_j + j >= $reference.len() {
+                if !X_DROP && start_i + height > $q.len()
+                    && start_j + j >= $r.len() {
                     if TRACE {
                         // make sure that the trace index is updated since the rest of the loop
                         // iterations are skipped
@@ -1067,8 +1067,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         (D_max, D_argmax)
     }
 
-    place_block_profile_gen!(place_block_profile_right, query, &PaddedBytes, reference, &P, true);
-    place_block_profile_gen!(place_block_profile_down, reference, &P, query, &PaddedBytes, false);
+    place_block_profile_gen!(place_block_profile_right, query, &PaddedBytes, reference, &P, query, reference, true);
+    place_block_profile_gen!(place_block_profile_down, reference, &P, query, &PaddedBytes, query, reference, false);
 
     /// Get the resulting score and ending location of the alignment.
     #[inline]

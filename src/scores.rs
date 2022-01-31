@@ -301,6 +301,7 @@ pub struct Gaps {
     pub extend: i8
 }
 
+#[allow(non_snake_case)]
 pub trait Profile {
     /// Byte to use as padding.
     const NULL: u8;
@@ -356,6 +357,7 @@ pub trait Profile {
 
 
 /// Amino acid position specific scoring matrix.
+#[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Debug)]
 pub struct AAProfile {
     aa_pos: Vec<i16>,
