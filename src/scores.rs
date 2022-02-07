@@ -308,6 +308,9 @@ pub trait Profile {
 
     /// Create a new profile of a specific length, with default (usually nonsense) values.
     fn new(str_len: usize, block_size: usize, gap_extend: i8) -> Self;
+    /// Create a new profile from a byte string.
+    fn from_bytes(b: &[u8], block_size: usize, match_score: i8, mismatch_score: i8, gap_open_C: i8, gap_close_C: i8, gap_open_R: i8, gap_extend: i8) -> Self;
+
     /// Get the length of the profile.
     fn len(&self) -> usize;
     /// Clear the profile so it can be used for profile lengths less than or equal
@@ -385,6 +388,25 @@ impl Profile for AAProfile {
             len,
             str_len
         }
+    }
+
+    #[allow(non_snake_case)]
+    fn from_bytes(b: &[u8], block_size: usize, match_score: i8, mismatch_score: i8, gap_open_C: i8, gap_close_C: i8, gap_open_R: i8, gap_extend: i8) -> Self {
+        let mut res = Self::new(b.len(), block_size, gap_extend);
+
+        for i in 0..b.len() {
+            for c in b'A'..=b'Z' {
+                res.set(i + 1, c, if c == b[i] { match_score } else { mismatch_score });
+            }
+        }
+
+        for i in 0..b.len() + 1 {
+            res.set_gap_open_C(i, gap_open_C);
+            res.set_gap_close_C(i, gap_close_C);
+            res.set_gap_open_R(i, gap_open_R);
+        }
+
+        res
     }
 
     fn len(&self) -> usize {

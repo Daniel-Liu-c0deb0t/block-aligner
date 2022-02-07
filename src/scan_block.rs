@@ -683,8 +683,8 @@ macro_rules! place_block_profile_gen {
                 ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
                 ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
-                if !X_DROP && start_i + height > $q.len()
-                    && start_j + j >= $r.len() {
+                if !X_DROP && start_i + height > $query.len()
+                    && start_j + j >= $reference.len() {
                     if TRACE {
                         // make sure that the trace index is updated since the rest of the loop
                         // iterations are skipped
@@ -1700,6 +1700,15 @@ mod tests {
         let r = PaddedBytes::from_bytes::<ByteMatrix>(b"abcdefg", 16);
         let q = PaddedBytes::from_bytes::<ByteMatrix>(b"abdefg", 16);
         a.align(&q, &r, &BYTES1, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, 4);
+    }
+
+    #[test]
+    fn test_profile() {
+        let mut a = Block::<false, false>::new(100, 100, 16);
+        let r = AAProfile::from_bytes(b"AAAA", 16, 1, -1, -1, 0, -1, -1);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        a.align_profile(&q, &r, 16..=16, 0);
         assert_eq!(a.res().score, 4);
     }
 }
