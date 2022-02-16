@@ -623,7 +623,8 @@ macro_rules! place_block_profile_gen {
                     }
 
                     let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend)));
-                    D11 = simd_max_i16(D11, if $right { simd_adds_i16(C11, gap_close_C) } else { C11 });
+                    let C11_end = if $right { simd_adds_i16(C11, gap_close_C) } else { C11 };
+                    D11 = simd_max_i16(D11, C11_end);
                     // at this point, C11 is fully calculated and D11 is partially calculated
 
                     let D11_open = simd_adds_i16(D11, gap_open_R);
@@ -632,7 +633,8 @@ macro_rules! place_block_profile_gen {
                     // the last element of R01 from the previous loop iteration
                     R11 = simd_max_i16(R11, simd_adds_i16(simd_broadcasthi_i16(R01), gap_extend_all));
                     // fully calculate D11 using R11
-                    D11 = simd_max_i16(D11, if $right { R11 } else { simd_adds_i16(R11, gap_close_R) });
+                    let R11_end = if $right { R11 } else { simd_adds_i16(R11, gap_close_R) };
+                    D11 = simd_max_i16(D11, R11_end);
                     R01 = R11;
 
                     #[cfg(feature = "debug")]
@@ -650,8 +652,8 @@ macro_rules! place_block_profile_gen {
                     }
 
                     if TRACE {
-                        let trace_D_C = simd_cmpeq_i16(D11, C11);
-                        let trace_D_R = simd_cmpeq_i16(D11, R11);
+                        let trace_D_C = simd_cmpeq_i16(D11, C11_end);
+                        let trace_D_R = simd_cmpeq_i16(D11, R11_end);
                         #[cfg(feature = "debug")]
                         {
                             print!("D_C: ");
@@ -1710,5 +1712,34 @@ mod tests {
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         a.align_profile(&q, &r, 16..=16, 0);
         assert_eq!(a.res().score, 4);
+
+        let r = AAProfile::from_bytes(b"AATTAA", 16, 1, -1, -1, 0, -1, -1);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        a.align_profile(&q, &r, 16..=16, 0);
+        assert_eq!(a.res().score, 1);
+
+        let r = AAProfile::from_bytes(b"AATTAA", 16, 1, -1, -1, -1, -1, -1);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        a.align_profile(&q, &r, 16..=16, 0);
+        assert_eq!(a.res().score, 0);
+
+        let mut a = Block::<true, false>::new(100, 100, 16);
+        let mut cigar = Cigar::new(100, 100);
+
+        let r = AAProfile::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, 1, -1, -1, 0, -1, -1);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
+        a.align_profile(&q, &r, 16..=16, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "2M6I16M3D");
+
+        let r = AAProfile::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, 1, -1, -1, -1, -1, -1);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
+        a.align_profile(&q, &r, 16..=16, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 6, query_idx: 24, reference_idx: 21 });
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "2M6I16M3D");
     }
 }
