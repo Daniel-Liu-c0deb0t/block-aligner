@@ -590,6 +590,7 @@ macro_rules! place_block_profile_gen {
                 let mut R01 = simd_set1_i16(MIN);
                 let mut D11 = simd_set1_i16(MIN);
                 let mut R11 = simd_set1_i16(MIN);
+                let mut prev_trace_R = simd_set1_i16(0);
 
                 if $right {
                     idx = start_j + j;
@@ -622,7 +623,8 @@ macro_rules! place_block_profile_gen {
                         D11 = simd_insert_i16!(D11, ZERO, 0);
                     }
 
-                    let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend)));
+                    let C11_open = simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend));
+                    let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), C11_open);
                     let C11_end = if $right { simd_adds_i16(C11, gap_close_C) } else { C11 };
                     D11 = simd_max_i16(D11, C11_end);
                     // at this point, C11 is fully calculated and D11 is partially calculated
@@ -662,8 +664,12 @@ macro_rules! place_block_profile_gen {
                             simd_dbg_i16(trace_D_R);
                         }
                         // compress trace with movemask to save space
-                        let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
-                        trace.add_trace(trace_data as TraceType);
+                        let mask = simd_set1_i16(0xFF00u16 as i16);
+                        let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, mask));
+                        let trace_R = simd_sl_i16!(simd_cmpeq_i16(R11, D11_open), prev_trace_R, 1);
+                        let trace_data2 = simd_movemask_i8(simd_blend_i8(simd_cmpeq_i16(C11, C11_open), trace_R, mask));
+                        prev_trace_R = trace_R;
+                        trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                     }
 
                     D_max = simd_max_i16(D_max, D11);
@@ -972,6 +978,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             let mut R01 = simd_set1_i16(MIN);
             let mut D11 = simd_set1_i16(MIN);
             let mut R11 = simd_set1_i16(MIN);
+            let mut prev_trace_R = simd_set1_i16(0);
 
             let c = reference.get(start_j + j);
 
@@ -991,7 +998,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
                 }
 
-                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), simd_adds_i16(D10, gap_open));
+                let C11_open = simd_adds_i16(D10, gap_open);
+                let C11 = simd_max_i16(simd_adds_i16(C10, gap_extend), C11_open);
                 D11 = simd_max_i16(D11, C11);
                 // at this point, C11 is fully calculated and D11 is partially calculated
 
@@ -1029,8 +1037,12 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                         simd_dbg_i16(trace_D_R);
                     }
                     // compress trace with movemask to save space
-                    let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, simd_set1_i16(0xFF00u16 as i16)));
-                    trace.add_trace(trace_data as TraceType);
+                    let mask = simd_set1_i16(0xFF00u16 as i16);
+                    let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, mask));
+                    let trace_R = simd_sl_i16!(simd_cmpeq_i16(R11, D11_open), prev_trace_R, 1);
+                    let trace_data2 = simd_movemask_i8(simd_blend_i8(simd_cmpeq_i16(C11, C11_open), trace_R, mask));
+                    prev_trace_R = trace_R;
+                    trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                 }
 
                 D_max = simd_max_i16(D_max, D11);
@@ -1183,6 +1195,7 @@ impl Allocated {
 #[derive(Clone)]
 pub struct Trace {
     trace: Vec<TraceType>,
+    trace2: Vec<TraceType>,
     right: Vec<u64>,
     block_start: Vec<u32>,
     block_size: Vec<u16>,
@@ -1199,12 +1212,14 @@ impl Trace {
     fn new(query_len: usize, reference_len: usize, max_size: usize) -> Self {
         let len = query_len + reference_len;
         let trace = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
+        let trace2 = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
         let right = vec![0u64; div_ceil(len, 64)];
         let block_start = vec![0u32; len * 2];
         let block_size = vec![0u16; len * 2];
 
         Self {
             trace,
+            trace2,
             right,
             block_start,
             block_size,
@@ -1232,9 +1247,10 @@ impl Trace {
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
-    unsafe fn add_trace(&mut self, t: TraceType) {
+    unsafe fn add_trace(&mut self, t: TraceType, t2: TraceType) {
         debug_assert!(self.trace_idx < self.trace.len());
         store_trace(self.trace.as_mut_ptr().add(self.trace_idx), t);
+        store_trace(self.trace2.as_mut_ptr().add(self.trace_idx), t2);
         self.trace_idx += 1;
     }
 
@@ -1292,15 +1308,54 @@ impl Trace {
             let mut right;
 
             // use lookup table instead of hard to predict branches
-            static OP_LUT: [(Operation, usize, usize); 8] = [
-                (Operation::M, 1, 1), // 0b000
-                (Operation::I, 1, 0), // 0b001
-                (Operation::D, 0, 1), // 0b010
-                (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
-                (Operation::M, 1, 1), // 0b100
-                (Operation::D, 0, 1), // 0b101
-                (Operation::I, 1, 0), // 0b110
-                (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
+            // right, trace, trace2, prev
+            static OP_LUT: [(Operation, usize, usize); 8] = {
+                let mut lut = [(Operation::I, 0, 1); 128];
+                for right in 0..2 {
+                    for trace in 0..4 {
+                        for trace2 in 0..4 {
+                            for prev in 0..4 {
+                                let res = if ;
+                                lut[(right << 6) | (trace << 4) | (trace2 << 2) | prev] = res;
+                            }
+                        }
+                    }
+                }
+            };
+            static OP_LUT: [[(Operation, usize, usize); 8]; 3] = [
+                // D table
+                [
+                    (Operation::M, 1, 1), // 0b000
+                    (Operation::I, 1, 0), // 0b001
+                    (Operation::D, 0, 1), // 0b010
+                    (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
+                    (Operation::M, 1, 1), // 0b100
+                    (Operation::D, 0, 1), // 0b101
+                    (Operation::I, 1, 0), // 0b110
+                    (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
+                ],
+                // C table
+                [
+                    (Operation::M, 1, 1), // 0b000
+                    (Operation::I, 1, 0), // 0b001
+                    (Operation::D, 0, 1), // 0b010
+                    (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
+                    (Operation::M, 1, 1), // 0b100
+                    (Operation::D, 0, 1), // 0b101
+                    (Operation::I, 1, 0), // 0b110
+                    (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
+                ],
+                // R table
+                [
+                    (Operation::M, 1, 1), // 0b000
+                    (Operation::I, 1, 0), // 0b001
+                    (Operation::D, 0, 1), // 0b010
+                    (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
+                    (Operation::M, 1, 1), // 0b100
+                    (Operation::D, 0, 1), // 0b101
+                    (Operation::I, 1, 0), // 0b110
+                    (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
+                ]
             ];
 
             while i > 0 || j > 0 {
@@ -1324,6 +1379,7 @@ impl Trace {
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
+                        let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let lut_idx = right | t;
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
@@ -1336,10 +1392,16 @@ impl Trace {
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
-                        let lut_idx = right | t;
-                        let op = OP_LUT[lut_idx].0;
-                        i -= OP_LUT[lut_idx].1;
-                        j -= OP_LUT[lut_idx].2;
+                        let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
+                        let lut = match t {
+                            0 => 0,
+                            1 => 1,
+                            _ => 2
+                        };
+                        let lut_idx = right | if t > 0 { t2 } else { t };
+                        let op = OP_LUT[lut][lut_idx].0;
+                        i -= OP_LUT[lut][lut_idx].1;
+                        j -= OP_LUT[lut][lut_idx].2;
                         cigar.add(op);
                     }
                 }
