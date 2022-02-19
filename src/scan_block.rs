@@ -1307,20 +1307,51 @@ impl Trace {
             let mut block_height;
             let mut right;
 
+            #[derive(Copy, Clone, PartialEq)]
+            enum Table {
+                D = 0b00,
+                C = 0b01,
+                R = 0b10
+            }
+
             // use lookup table instead of hard to predict branches
-            // right, trace, trace2, prev
-            static OP_LUT: [(Operation, usize, usize); 8] = {
-                let mut lut = [(Operation::I, 0, 1); 128];
+            static OP_LUT: [(Operation, usize, usize, Table); 128] = {
+                let mut lut = [(Operation::I, 0, 1, Table::D); 128];
+
                 for right in 0..2 {
                     for trace in 0..4 {
                         for trace2 in 0..4 {
-                            for prev in 0..4 {
-                                let res = if ;
-                                lut[(right << 6) | (trace << 4) | (trace2 << 2) | prev] = res;
+                            for table in 0..4 {
+                                let table = match table {
+                                    0b00 => Table::D,
+                                    0b01 => Table::C,
+                                    _ => Table::R
+                                };
+
+                                let res = if right == 1 {
+                                    match (trace, trace2, table) {
+                                        (_, 0b00 | 0b10, Table::C) => (Operation::D, 0, 1, Table::C), // C table gap extend
+                                        (_, 0b01 | 0b11, Table::C) => (Operation::D, 0, 1, Table::D), // C table gap open
+                                        (_, 0b00 | 0b01, Table::R) => (Operation::I, 1, 0, Table::R), // R table gap extend
+                                        (_, 0b10 | 0b11, Table::R) => (Operation::I, 1, 0, Table::D), // R table gap open
+                                        (0b00, _, Table::D) => (Operation::M, 1, 1, Table::D), // D table match/mismatch
+                                        (0b01, 0b00 | 0b10, Table::D) => (Operation::D, 0, 1, Table::C), // D table C gap extend
+                                        (0b01, 0b01 | 0b11, Table::D) => (Operation::D, 0, 1, Table::D), // D table C gap open
+                                        (0b10, 0b00 | 0b01, Table::D) => (Operation::I, 1, 0, Table::R), // D table R gap extend
+                                        (0b10, 0b10 | 0b11, Table::D) => (Operation::I, 1, 0, Table::D), // D table R gap open
+                                        _ => (Operation::I, 0, 1, Table::D)
+                                    }
+                                } else {
+
+                                };
+
+                                lut[(right << 6) | (trace << 4) | (trace2 << 2) | table] = res;
                             }
                         }
                     }
                 }
+
+                lut
             };
             static OP_LUT: [[(Operation, usize, usize); 8]; 3] = [
                 // D table
@@ -1334,28 +1365,6 @@ impl Trace {
                     (Operation::I, 1, 0), // 0b110
                     (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
                 ],
-                // C table
-                [
-                    (Operation::M, 1, 1), // 0b000
-                    (Operation::I, 1, 0), // 0b001
-                    (Operation::D, 0, 1), // 0b010
-                    (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
-                    (Operation::M, 1, 1), // 0b100
-                    (Operation::D, 0, 1), // 0b101
-                    (Operation::I, 1, 0), // 0b110
-                    (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
-                ],
-                // R table
-                [
-                    (Operation::M, 1, 1), // 0b000
-                    (Operation::I, 1, 0), // 0b001
-                    (Operation::D, 0, 1), // 0b010
-                    (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
-                    (Operation::M, 1, 1), // 0b100
-                    (Operation::D, 0, 1), // 0b101
-                    (Operation::I, 1, 0), // 0b110
-                    (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
-                ]
             ];
 
             while i > 0 || j > 0 {
