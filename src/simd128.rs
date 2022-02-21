@@ -241,7 +241,7 @@ pub unsafe fn simd_hargmax_i16(v: Simd, max: i16) -> usize {
 #[inline]
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: SIMD, _gap_cost_lane: PrefixScanConsts) -> Simd {
+pub unsafe fn simd_naive_prefix_scan_i16(R_max: Simd, gap_cost: Simd, _gap_cost_lane: PrefixScanConsts) -> Simd {
     let mut curr = R_max;
 
     for _i in 0..(L - 1) {

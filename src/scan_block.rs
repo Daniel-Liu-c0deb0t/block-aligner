@@ -1826,5 +1826,15 @@ mod tests {
         assert_eq!(res, AlignResult { score: 6, query_idx: 24, reference_idx: 21 });
         a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
         assert_eq!(cigar.to_string(), "2M6I16M3D");
+
+        let mut r = AAProfile::from_bytes(b"TTAAAAAAATTTTTTTTTTTT", 16, 1, -1, -2, -1, -1, -1);
+        r.set_gap_close_C(17, -1);
+        r.set_gap_close_C(19, 0);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"TTTTTTTTAAAAAAATTTTTTTTT", 16);
+        a.align_profile(&q, &r, 16..=16, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 6, query_idx: 24, reference_idx: 21 });
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "2M6I14M3D2M");
     }
 }
