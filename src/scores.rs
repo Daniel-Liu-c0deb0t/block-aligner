@@ -86,6 +86,7 @@ impl Matrix for AAMatrix {
         unsafe { self.scores.as_ptr().add(i * 32) }
     }
 
+    // TODO: get rid of lookup for around half of the shifts by constructing position specific scoring matrix?
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[inline]
@@ -298,4 +299,241 @@ pub type GapParams<const GAP_OPEN: i8, const GAP_EXTEND: i8> = Params<{ GAP_OPEN
 pub struct Gaps {
     pub open: i8,
     pub extend: i8
+}
+
+#[allow(non_snake_case)]
+pub trait Profile {
+    /// Byte to use as padding.
+    const NULL: u8;
+
+    /// Create a new profile of a specific length, with default (usually nonsense) values.
+    fn new(str_len: usize, block_size: usize, gap_extend: i8) -> Self;
+    /// Create a new profile from a byte string.
+    fn from_bytes(b: &[u8], block_size: usize, match_score: i8, mismatch_score: i8, gap_open_C: i8, gap_close_C: i8, gap_open_R: i8, gap_extend: i8) -> Self;
+
+    /// Get the length of the profile.
+    fn len(&self) -> usize;
+    /// Clear the profile so it can be used for profile lengths less than or equal
+    /// to the length this struct was created with.
+    fn clear(&mut self, str_len: usize);
+    /// Set the score for a position and byte.
+    fn set(&mut self, i: usize, b: u8, score: i8);
+    /// Set the gap open cost for a column.
+    fn set_gap_open_C(&mut self, i: usize, gap: i8);
+    /// Set the gap close cost for a column.
+    fn set_gap_close_C(&mut self, i: usize, gap: i8);
+    /// Set the gap open cost for a row.
+    fn set_gap_open_R(&mut self, i: usize, gap: i8);
+
+    /// Get the score for a position and byte.
+    fn get(&self, i: usize, b: u8) -> i8;
+    /// Get the gap extend cost.
+    fn get_gap_extend(&self) -> i8;
+    /// Get the pointer for a specific index.
+    fn as_ptr_pos(&self, i: usize) -> *const i8;
+    /// Get the pointer for a specific amino acid.
+    fn as_ptr_aa(&self, a: usize) -> *const i16;
+
+    /// Get the scores for a certain SIMD vector of bytes at a specific position in the profile.
+    unsafe fn get_scores_pos(&self, i: usize, v: HalfSimd, right: bool) -> Simd;
+    /// Get the scores for a certain byte starting at a specific position in the profile.
+    unsafe fn get_scores_aa(&self, i: usize, c: u8, right: bool) -> Simd;
+
+    /// Get the gap open cost for a column.
+    unsafe fn get_gap_open_right_C(&self, i: usize) -> Simd;
+    /// Get the gap close cost for a column.
+    unsafe fn get_gap_close_right_C(&self, i: usize) -> Simd;
+    /// Get the gap open cost for a row.
+    unsafe fn get_gap_open_right_R(&self, i: usize) -> Simd;
+
+    /// Get the gap open cost for a column.
+    unsafe fn get_gap_open_down_C(&self, i: usize) -> Simd;
+    /// Get the gap close cost for a column.
+    unsafe fn get_gap_close_down_C(&self, i: usize) -> Simd;
+    /// Get the gap open cost for a row.
+    unsafe fn get_gap_open_down_R(&self, i: usize) -> Simd;
+
+    /// Convert a byte to a better storage format that makes retrieving scores
+    /// easier.
+    fn convert_char(c: u8) -> u8;
+}
+
+
+/// Amino acid position specific scoring matrix.
+#[allow(non_snake_case)]
+#[derive(Clone, PartialEq, Debug)]
+pub struct AAProfile {
+    aa_pos: Vec<i16>,
+    pos_aa: Vec<i8>,
+    gap_extend: i8,
+    pos_gap_open_C: Vec<i16>,
+    pos_gap_close_C: Vec<i16>,
+    pos_gap_open_R: Vec<i16>,
+    len: usize,
+    str_len: usize
+}
+
+impl Profile for AAProfile {
+    const NULL: u8 = b'A' + 26u8;
+
+    fn new(str_len: usize, block_size: usize, gap_extend: i8) -> Self {
+        let len = str_len + block_size + 1;
+        Self {
+            aa_pos: vec![i8::MIN as i16; 32 * len],
+            pos_aa: vec![i8::MIN; len * 32],
+            gap_extend,
+            pos_gap_open_C: vec![i8::MIN as i16; len * 32],
+            pos_gap_close_C: vec![i8::MIN as i16; len * 32],
+            pos_gap_open_R: vec![i8::MIN as i16; len * 32],
+            len,
+            str_len
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn from_bytes(b: &[u8], block_size: usize, match_score: i8, mismatch_score: i8, gap_open_C: i8, gap_close_C: i8, gap_open_R: i8, gap_extend: i8) -> Self {
+        let mut res = Self::new(b.len(), block_size, gap_extend);
+
+        for i in 0..b.len() {
+            for c in b'A'..=b'Z' {
+                res.set(i + 1, c, if c == b[i] { match_score } else { mismatch_score });
+            }
+        }
+
+        for i in 0..b.len() + 1 {
+            res.set_gap_open_C(i, gap_open_C);
+            res.set_gap_close_C(i, gap_close_C);
+            res.set_gap_open_R(i, gap_open_R);
+        }
+
+        res
+    }
+
+    fn len(&self) -> usize {
+        self.str_len
+    }
+
+    fn clear(&mut self, str_len: usize) {
+        assert!(str_len <= self.len);
+        self.aa_pos.fill(i8::MIN as i16);
+        self.pos_aa.fill(i8::MIN);
+        self.pos_gap_open_C.fill(i8::MIN as i16);
+        self.pos_gap_close_C.fill(i8::MIN as i16);
+        self.pos_gap_open_R.fill(i8::MIN as i16);
+        self.str_len = str_len;
+    }
+
+    fn set(&mut self, i: usize, b: u8, score: i8) {
+        let b = b.to_ascii_uppercase();
+        assert!(b'A' <= b && b <= b'Z' + 1);
+        let idx = i * 32 + ((b - b'A') as usize);
+        self.pos_aa[idx] = score;
+        let idx = ((b - b'A') as usize) * self.len + i;
+        self.aa_pos[idx] = score as i16;
+    }
+
+    fn set_gap_open_C(&mut self, i: usize, gap: i8) {
+        assert!(gap < 0, "Gap open cost must be negative!");
+        self.pos_gap_open_C[i] = gap as i16;
+    }
+
+    fn set_gap_close_C(&mut self, i: usize, gap: i8) {
+        self.pos_gap_close_C[i] = gap as i16;
+    }
+
+    fn set_gap_open_R(&mut self, i: usize, gap: i8) {
+        assert!(gap < 0, "Gap open cost must be negative!");
+        self.pos_gap_open_R[i] = gap as i16;
+    }
+
+    fn get(&self, i: usize, b: u8) -> i8 {
+        let b = b.to_ascii_uppercase();
+        assert!(b'A' <= b && b <= b'Z' + 1);
+        let idx = i * 32 + ((b - b'A') as usize);
+        self.pos_aa[idx]
+    }
+
+    fn get_gap_extend(&self) -> i8 {
+        self.gap_extend
+    }
+
+    #[inline]
+    fn as_ptr_pos(&self, i: usize) -> *const i8 {
+        debug_assert!(i < self.len);
+        unsafe { self.pos_aa.as_ptr().add(i * 32) }
+    }
+
+    #[inline]
+    fn as_ptr_aa(&self, a: usize) -> *const i16 {
+        debug_assert!(a < 27);
+        unsafe { self.aa_pos.as_ptr().add(a * self.len) }
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_scores_pos(&self, i: usize, v: HalfSimd, _right: bool) -> Simd {
+        // efficiently lookup scores for each character in v
+        let matrix_ptr = self.as_ptr_pos(i);
+        let scores1 = halfsimd_loadu(matrix_ptr as *const HalfSimd);
+        let scores2 = halfsimd_loadu((matrix_ptr as *const HalfSimd).add(1));
+        halfsimd_lookup2_i16(scores1, scores2, v)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_scores_aa(&self, i: usize, c: u8, _right: bool) -> Simd {
+        let matrix_ptr = self.as_ptr_aa(c as usize);
+        simd_loadu(matrix_ptr.add(i) as *const Simd)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_open_right_C(&self, i: usize) -> Simd {
+        simd_set1_i16(*self.pos_gap_open_C.as_ptr().add(i))
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_close_right_C(&self, i: usize) -> Simd {
+        simd_set1_i16(*self.pos_gap_close_C.as_ptr().add(i))
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_open_right_R(&self, i: usize) -> Simd {
+        simd_set1_i16(*self.pos_gap_open_R.as_ptr().add(i))
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_open_down_C(&self, i: usize) -> Simd {
+        simd_loadu(self.pos_gap_open_C.as_ptr().add(i) as *const Simd)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_close_down_C(&self, i: usize) -> Simd {
+        simd_loadu(self.pos_gap_close_C.as_ptr().add(i) as *const Simd)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[inline]
+    unsafe fn get_gap_open_down_R(&self, i: usize) -> Simd {
+        simd_loadu(self.pos_gap_open_R.as_ptr().add(i) as *const Simd)
+    }
+
+    #[inline]
+    fn convert_char(c: u8) -> u8 {
+        let c = c.to_ascii_uppercase();
+        assert!(c >= b'A' && c <= Self::NULL);
+        c - b'A'
+    }
 }

@@ -61,8 +61,8 @@ fn bench_parasailors_nuc_core(file: bool, _trace: bool, _max_size: usize) -> (i3
     let matrix = Matrix::new(MatrixType::IdentityWithPenalty);
     let data = file_data
         .iter()
-        .map(|(q, r)| (Profile::new(q, &matrix), r.to_owned()))
-        .collect::<Vec<(Profile, Vec<u8>)>>();
+        .map(|(q, r)| (parasailors::Profile::new(q, &matrix), r.to_owned()))
+        .collect::<Vec<(parasailors::Profile, Vec<u8>)>>();
 
     let start = Instant::now();
     let mut temp = 0i32;

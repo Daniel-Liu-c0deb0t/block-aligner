@@ -36,7 +36,7 @@ fn bench_parasailors_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     let r = black_box(rand_str(len, &AMINO_ACIDS, &mut rng));
     let q = black_box(rand_mutate(&r, K, &AMINO_ACIDS, &mut rng));
     let matrix = Matrix::new(MatrixType::Blosum62);
-    let profile = Profile::new(&q, &matrix);
+    let profile = parasailors::Profile::new(&q, &matrix);
 
     b.iter(|| {
         global_alignment_score(&profile, &r, 11, 1)
