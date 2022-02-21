@@ -454,13 +454,13 @@ mod tests {
 
             let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
             let gap = simd_set1_i16(0);
-            let consts = get_prefix_scan_consts(gap);
+            let (_, consts) = get_prefix_scan_consts(gap);
             let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), gap, consts);
             simd_assert_vec_eq(res, [8, 9, 10, 15, 15, 15, 15, 15]);
 
             let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
             let gap = simd_set1_i16(-1);
-            let consts = get_prefix_scan_consts(gap);
+            let (_, consts) = get_prefix_scan_consts(gap);
             let res = simd_prefix_scan_i16(simd_load(vec.0.as_ptr() as *const Simd), gap, consts);
             simd_assert_vec_eq(res, [8, 9, 10, 15, 14, 13, 14, 13]);
         }
