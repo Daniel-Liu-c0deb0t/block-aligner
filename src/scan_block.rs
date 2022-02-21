@@ -1316,13 +1316,24 @@ impl Trace {
 
             // use lookup table instead of hard to predict branches
             static OP_LUT: [(Operation, usize, usize, Table); 128] = {
-                let mut lut = [(Operation::I, 0, 1, Table::D); 128];
+                let mut lut = [(Operation::D, 0, 1, Table::D); 128];
 
-                for right in 0..2 {
-                    for trace in 0..4 {
-                        for trace2 in 0..4 {
-                            for table in 0..4 {
-                                let table = match table {
+                // table: the current DP table, D, C, or R
+                // trace: 2 bits, first bit is whether the max equals C table entry, second bit is
+                // whether the max equals R table entry
+                // trace2: 2 bits, first bit is whether the max in the C table is the gap beginning, second
+                // bit is whether the max in the R table is the gap beginning
+                // right: whether the current block contains vectors laid out vertically
+
+                let mut right = 0;
+                while right < 2 {
+                    let mut trace = 0;
+                    while trace < 4 {
+                        let mut trace2 = 0;
+                        while trace2 < 4 {
+                            let mut table_idx = 0;
+                            while table_idx < 3 {
+                                let table = match table_idx {
                                     0b00 => Table::D,
                                     0b01 => Table::C,
                                     _ => Table::R
@@ -1335,37 +1346,41 @@ impl Trace {
                                         (_, 0b00 | 0b01, Table::R) => (Operation::I, 1, 0, Table::R), // R table gap extend
                                         (_, 0b10 | 0b11, Table::R) => (Operation::I, 1, 0, Table::D), // R table gap open
                                         (0b00, _, Table::D) => (Operation::M, 1, 1, Table::D), // D table match/mismatch
-                                        (0b01, 0b00 | 0b10, Table::D) => (Operation::D, 0, 1, Table::C), // D table C gap extend
-                                        (0b01, 0b01 | 0b11, Table::D) => (Operation::D, 0, 1, Table::D), // D table C gap open
+                                        (0b01 | 0b11, 0b00 | 0b10, Table::D) => (Operation::D, 0, 1, Table::C), // D table C gap extend
+                                        (0b01 | 0b11, 0b01 | 0b11, Table::D) => (Operation::D, 0, 1, Table::D), // D table C gap open
                                         (0b10, 0b00 | 0b01, Table::D) => (Operation::I, 1, 0, Table::R), // D table R gap extend
                                         (0b10, 0b10 | 0b11, Table::D) => (Operation::I, 1, 0, Table::D), // D table R gap open
-                                        _ => (Operation::I, 0, 1, Table::D)
+                                        _ => (Operation::D, 0, 1, Table::D)
                                     }
                                 } else {
-
+                                    match (trace, trace2, table) {
+                                        (_, 0b00 | 0b10, Table::C) => (Operation::I, 1, 0, Table::C), // C table gap extend
+                                        (_, 0b01 | 0b11, Table::C) => (Operation::I, 1, 0, Table::D), // C table gap open
+                                        (_, 0b00 | 0b01, Table::R) => (Operation::D, 0, 1, Table::R), // R table gap extend
+                                        (_, 0b10 | 0b11, Table::R) => (Operation::D, 0, 1, Table::D), // R table gap open
+                                        (0b00, _, Table::D) => (Operation::M, 1, 1, Table::D), // D table match/mismatch
+                                        (0b01 | 0b11, 0b00 | 0b10, Table::D) => (Operation::I, 1, 0, Table::C), // D table C gap extend
+                                        (0b01 | 0b11, 0b01 | 0b11, Table::D) => (Operation::I, 1, 0, Table::D), // D table C gap open
+                                        (0b10, 0b00 | 0b01, Table::D) => (Operation::D, 0, 1, Table::R), // D table R gap extend
+                                        (0b10, 0b10 | 0b11, Table::D) => (Operation::D, 0, 1, Table::D), // D table R gap open
+                                        _ => (Operation::I, 1, 0, Table::D)
+                                    }
                                 };
 
-                                lut[(right << 6) | (trace << 4) | (trace2 << 2) | table] = res;
+                                lut[(right << 6) | (trace << 4) | (trace2 << 2) | (table as usize)] = res;
+                                table_idx += 1;
                             }
+                            trace2 += 1;
                         }
+                        trace += 1;
                     }
+                    right += 1;
                 }
 
                 lut
             };
-            static OP_LUT: [[(Operation, usize, usize); 8]; 3] = [
-                // D table
-                [
-                    (Operation::M, 1, 1), // 0b000
-                    (Operation::I, 1, 0), // 0b001
-                    (Operation::D, 0, 1), // 0b010
-                    (Operation::I, 1, 0), // 0b011, bias towards i -= 1 to avoid going out of bounds
-                    (Operation::M, 1, 1), // 0b100
-                    (Operation::D, 0, 1), // 0b101
-                    (Operation::I, 1, 0), // 0b110
-                    (Operation::D, 0, 1) // 0b111, bias towards j -= 1 to avoid going out of bounds
-                ],
-            ];
+
+            let mut table = Table::D;
 
             while i > 0 || j > 0 {
                 loop {
@@ -1377,7 +1392,7 @@ impl Trace {
                     trace_idx -= block_width * block_height / L;
 
                     if i >= block_i && j >= block_j {
-                        right = (((*self.right.as_ptr().add(block_idx / 64) >> (block_idx % 64)) & 0b1) << 2) as usize;
+                        right = ((*self.right.as_ptr().add(block_idx / 64) >> (block_idx % 64)) & 0b1) as usize;
                         break;
                     }
                 }
@@ -1389,10 +1404,12 @@ impl Trace {
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
-                        let lut_idx = right | t;
+                        let lut_idx = (right << 6) | (t << 4) | (t2 << 2) | (table as usize);
+
                         let op = OP_LUT[lut_idx].0;
                         i -= OP_LUT[lut_idx].1;
                         j -= OP_LUT[lut_idx].2;
+                        table = OP_LUT[lut_idx].3;
                         cigar.add(op);
                     }
                 } else {
@@ -1402,15 +1419,12 @@ impl Trace {
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
-                        let lut = match t {
-                            0 => 0,
-                            1 => 1,
-                            _ => 2
-                        };
-                        let lut_idx = right | if t > 0 { t2 } else { t };
-                        let op = OP_LUT[lut][lut_idx].0;
-                        i -= OP_LUT[lut][lut_idx].1;
-                        j -= OP_LUT[lut][lut_idx].2;
+                        let lut_idx = (right << 6) | (t << 4) | (t2 << 2) | (table as usize);
+
+                        let op = OP_LUT[lut_idx].0;
+                        i -= OP_LUT[lut_idx].1;
+                        j -= OP_LUT[lut_idx].2;
+                        table = OP_LUT[lut_idx].3;
                         cigar.add(op);
                     }
                 }
