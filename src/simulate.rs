@@ -40,35 +40,35 @@ pub fn rand_mutate_insert<R: Rng>(a: &[u8], k: usize, alpha: &[u8], insert_len: 
 
 /// Given an input byte string, craete a randomly mutated copy.
 pub fn rand_mutate<R: Rng>(a: &[u8], k: usize, alpha: &[u8], rng: &mut R) -> Vec<u8> {
-    let mut edits = vec![0u8; a.len()];
-    let curr_k: usize = rng.gen_range(k * 3 / 4..k + 1);
-    let mut idx: Vec<usize> = (0usize..a.len()).collect();
-    idx.shuffle(rng);
-
-    // generate edit types
-    for i in 0..curr_k {
-        edits[idx[i]] = rng.gen_range(1u8..4u8);
-    }
-
     let mut b = vec![];
+    let mut i = 0;
+    let mut edits = 0;
 
-    for i in 0..a.len() {
-        match edits[i] {
-            0u8 => { // same
-                b.push(a[i]);
-            },
-            1u8 => { // diff
-                let mut iter = alpha.choose_multiple(rng, 2);
-                let first = *iter.next().unwrap();
-                let second = *iter.next().unwrap();
-                b.push(if first == a[i] { second } else { first });
-            },
-            2u8 => { // insert
-                b.push(*alpha.choose(rng).unwrap());
-                b.push(a[i]);
-            },
-            3u8 => (), // delete
-            _ => panic!("This should not have been reached!")
+    while i < a.len() {
+        if edits < k && rng.gen_range(0..a.len()) < k {
+            let edit = rng.gen_range(1..4);
+
+            match edit {
+                1 => { // mismatch
+                    let mut iter = alpha.choose_multiple(rng, 2);
+                    let first = *iter.next().unwrap();
+                    let second = *iter.next().unwrap();
+                    b.push(if first == a[i] { second } else { first });
+                    i += 1;
+                },
+                2 => { // delete
+                    i += 1;
+                },
+                3 => { // insert
+                    b.push(*alpha.choose(rng).unwrap());
+                },
+                _ => panic!("Not possible!")
+            }
+
+            edits += 1;
+        } else {
+            b.push(a[i]);
+            i += 1;
         }
     }
 
