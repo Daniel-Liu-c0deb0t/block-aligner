@@ -23,6 +23,17 @@ pub struct SizeRange {
 }
 
 
+// AAMatrix
+
+/// Create a new simple AAMatrix with custom match and mismatch scores.
+///
+/// Note that the match score must be positive and the mismatch score must be negative.
+#[no_mangle]
+pub unsafe extern fn block_new_simple_aamatrix(match_score: i8, mismatch_score: i8) -> AAMatrix {
+    AAMatrix::new_simple(match_score, mismatch_score)
+}
+
+
 // CIGAR
 
 /// Create a new empty CIGAR string.
