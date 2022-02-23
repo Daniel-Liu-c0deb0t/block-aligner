@@ -1,5 +1,6 @@
 //! SIMD-accelerated library for computing global and X-drop affine
-//! gap sequence alignments using an adaptive block-based algorithm.
+//! gap penalty sequence-to-sequence or sequence-to-profile alignments
+//! using an adaptive block-based algorithm.
 //!
 //! Currently, AVX2 and WASM SIMD are supported.
 //!
