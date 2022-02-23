@@ -29,8 +29,15 @@ pub struct SizeRange {
 ///
 /// Note that the match score must be positive and the mismatch score must be negative.
 #[no_mangle]
-pub unsafe extern fn block_new_simple_aamatrix(match_score: i8, mismatch_score: i8) -> AAMatrix {
-    AAMatrix::new_simple(match_score, mismatch_score)
+pub unsafe extern fn block_new_simple_aamatrix(match_score: i8, mismatch_score: i8) -> *mut AAMatrix {
+    let matrix = Box::new(AAMatrix::new_simple(match_score, mismatch_score));
+    Box::into_raw(matrix)
+}
+
+/// Frees an AAMatrix.
+#[no_mangle]
+pub unsafe extern fn block_free_simple_aamatrix(matrix: *mut AAMatrix) {
+    drop(Box::from_raw(matrix));
 }
 
 
