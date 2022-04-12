@@ -2,6 +2,7 @@ import random
 
 lookup_path = "../data/scop/scop_lookup.fix.tsv"
 pssm_path = "../data/scop/scop_mmseqs_pssm.pssm"
+seq_path = "../data/scop/scop.fasta"
 res_path = "../data/scop/pairs.pssm"
 
 seq_to_scop = {}
@@ -11,9 +12,10 @@ with open(lookup_path) as f:
     for line in f:
         seq_id, scop_id = line.strip().split()
         seq_to_scop[seq_id] = scop_id
-        families[scop_id] = []
+        families[scop_id] = ([], [])
 
 seq_lines = {}
+seq_seqs = {}
 
 with open(pssm_path) as f:
     curr_seq = None
@@ -24,27 +26,41 @@ with open(pssm_path) as f:
         else:
             seq_lines[curr_seq].append(line.strip())
 
-for (seq_id, pssm) in seq_lines.items():
-    scop_id = seq_to_scop[seq_id]
-    families[scop_id].append(pssm)
+with open(seq_path) as f:
+    curr_seq = None
+    for line in f:
+        if line.startswith(">"):
+            curr_seq = line[1:].strip()
+            seq_seqs[curr_seq] = ""
+        else:
+            seq_seqs[curr_seq] += line.strip()
 
-sorted_families = list(sorted(families.items(), key = lambda x: len(x[1]), reverse = True))
+for seq_id, pssm in seq_lines.items():
+    scop_id = seq_to_scop[seq_id]
+    families[scop_id][0].append(pssm)
+
+for seq_id, seq in seq_seqs.items():
+    if not seq_id in seq_to_scop:
+        continue
+    scop_id = seq_to_scop[seq_id]
+    families[scop_id][1].append(seq)
+
 seq_pssm_pairs = []
 
 def consensus_seq(lines):
     return "".join([s.split()[1] for s in lines[1:]])
 
-for _, family in sorted_families:
-    if len(family) <= 2:
-        continue
-    random.shuffle(family)
-    for i in range(0, len(family) - (len(family) % 2), 2):
-        seq_pssm_pairs.append((consensus_seq(family[i]), consensus_seq(family[i + 1]), family[i + 1]))
+for _, (pssm_family, seq_family) in families.items():
+    random.shuffle(pssm_family)
+    random.shuffle(seq_family)
+    for pssm in pssm_family[:5]:
+        for seq in seq_family[:5]:
+            seq_pssm_pairs.append((seq, consensus_seq(pssm), pssm))
 
 print("Number of seq-pssm pairs:", len(seq_pssm_pairs))
 
 with open(res_path, "w") as f:
-    for cns, pssm_cns, pssm in seq_pssm_pairs:
+    for seq, cns, pssm in seq_pssm_pairs:
+        f.write("#" + seq + "\n")
         f.write("#" + cns + "\n")
-        f.write("#" + pssm_cns + "\n")
         f.write("\n".join(pssm) + "\n")

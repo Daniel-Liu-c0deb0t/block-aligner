@@ -83,6 +83,8 @@ fn main() {
 
     println!("# size, time");
 
+    bench_ours(&pairs, min_sizes[0], max_sizes[0]);
+
     for (&min_size, &max_size) in min_sizes.iter().zip(&max_sizes) {
         let duration = bench_ours(&pairs, min_size, max_size);
         println!("{}-{}, {}", min_size, max_size, duration.as_secs_f64());
