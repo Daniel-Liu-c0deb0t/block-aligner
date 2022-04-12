@@ -8,9 +8,13 @@ res_path = "../data/scop/pairs.pssm"
 seq_to_scop = {}
 families = {}
 
+def process_scop_id(scop_id):
+    return scop_id[:scop_id.rindex(".")]
+
 with open(lookup_path) as f:
     for line in f:
         seq_id, scop_id = line.strip().split()
+        scop_id = process_scop_id(scop_id)
         seq_to_scop[seq_id] = scop_id
         families[scop_id] = ([], [])
 
@@ -53,9 +57,10 @@ def consensus_seq(lines):
 for _, (pssm_family, seq_family) in families.items():
     random.shuffle(pssm_family)
     random.shuffle(seq_family)
-    for pssm in pssm_family[:5]:
-        for seq in seq_family[:5]:
-            seq_pssm_pairs.append((seq, consensus_seq(pssm), pssm))
+    for i in range(min(len(pssm_family), len(seq_family))):
+        pssm = pssm_family[i]
+        seq = seq_family[i]
+        seq_pssm_pairs.append((seq, consensus_seq(pssm), pssm))
 
 print("Number of seq-pssm pairs:", len(seq_pssm_pairs))
 
