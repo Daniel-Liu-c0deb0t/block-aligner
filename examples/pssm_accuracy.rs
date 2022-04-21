@@ -15,7 +15,7 @@ fn run_ours(r: &AAProfile, q: &PaddedBytes, min_size: &[usize], max_size: &[usiz
         let score = block_aligner.res().score;
         let mut cigar = Cigar::new(q.len(), r.len());
         block_aligner.trace().cigar(q.len(), r.len(), &mut cigar);
-        println!("{} {}", score, cigar);
+        //println!("{} {}", score, cigar);
         scores.push(score);
     }
 

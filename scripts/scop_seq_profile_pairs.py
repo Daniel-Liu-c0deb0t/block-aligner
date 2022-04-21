@@ -9,7 +9,8 @@ seq_to_scop = {}
 families = {}
 
 def process_scop_id(scop_id):
-    return scop_id[:scop_id.rindex(".")]
+    #return scop_id[:scop_id.rindex(".")]
+    return scop_id
 
 with open(lookup_path) as f:
     for line in f:
