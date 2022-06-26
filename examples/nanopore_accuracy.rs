@@ -2,7 +2,7 @@
 fn main() {}
 
 #[cfg(feature = "simd_avx2")]
-fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool) -> (usize, f64, usize) {
+fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, f64, usize) {
     use parasailors::{Matrix, *};
 
     use block_aligner::scan_block::*;
@@ -35,6 +35,18 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool) -> (us
         block_aligner.align(&q_padded, &r_padded, &NW1, run_gaps, min_size..=max_size, 0);
         let scan_score = block_aligner.res().score;
 
+        write!(
+            writer,
+            "{}, {}-{}, {}, {}, {}, {}\n",
+            name,
+            min_size,
+            max_size,
+            q.len(),
+            r.len(),
+            scan_score,
+            parasail_score
+        ).unwrap();
+
         if parasail_score != scan_score {
             wrong += 1;
             wrong_avg += ((parasail_score - scan_score) as f64) / (parasail_score as f64);
@@ -61,6 +73,8 @@ fn test(file_name: &str, min_size: usize, max_size: usize, verbose: bool) -> (us
 #[cfg(feature = "simd_avx2")]
 fn main() {
     use std::env;
+    use std::fs::File;
+    use std::io::{Write, BufWriter};
 
     let arg1 = env::args().skip(1).next();
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
@@ -69,10 +83,14 @@ fn main() {
     let min_size = [32, 32, 32];
     let max_size = [32, 128, 256];
 
+    let out_file_name = "data/nanopore_accuracy.csv";
+    let mut writer = BufWriter::new(File::create(out_file_name).unwrap());
+    write!(writer, "dataset, size, query len, reference len, pred score, true score\n").unwrap();
+
     println!("\ndataset, size, total, wrong, wrong % error");
 
     for ((path, name), (&min_size, &max_size)) in paths.iter().zip(&names).zip(min_size.iter().zip(&max_size)) {
-        let (wrong, wrong_avg, count) = test(path, min_size, max_size, verbose);
+        let (wrong, wrong_avg, count) = test(path, min_size, max_size, name, verbose, &mut writer);
         println!("\n{}, {}-{}, {}, {}, {}", name, min_size, max_size, count, wrong, wrong_avg);
     }
 

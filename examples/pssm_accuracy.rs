@@ -3,7 +3,7 @@ use block_aligner::scores::*;
 use block_aligner::cigar::*;
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, Write, BufReader, BufWriter};
 use std::usize;
 
 fn run_ours(r: &AAProfile, q: &PaddedBytes, min_size: &[usize], max_size: &[usize]) -> Vec<i32> {
@@ -24,11 +24,14 @@ fn run_ours(r: &AAProfile, q: &PaddedBytes, min_size: &[usize], max_size: &[usiz
 
 static MAP: [u8; 20] = *b"ACDEFGHIKLMNPQRSTVWY";
 
-fn test(file_name: &str, min_size: &[usize], max_size: &[usize], padding: usize, gap_open: i8, gap_extend: i8) {
+fn test(file_name: &str, out_file_name: &str, min_size: &[usize], max_size: &[usize], padding: usize, gap_open: i8, gap_extend: i8) {
     let mut reader = BufReader::new(File::open(file_name).unwrap());
+    let mut writer = BufWriter::new(File::create(out_file_name).unwrap());
     let mut seq_string = String::new();
     let mut pssm_string = String::new();
     let mut matches = vec![0usize; min_size.len()];
+
+    write!(writer, "size, seq len, profile len, pred score, true score\n").unwrap();
 
     loop {
         seq_string.clear();
@@ -65,6 +68,16 @@ fn test(file_name: &str, min_size: &[usize], max_size: &[usize], padding: usize,
 
         let scores = run_ours(&r, &q, min_size, max_size);
         for i in 0..matches.len() {
+            write!(
+                writer,
+                "{}-{}, {}, {}, {}, {}\n",
+                min_size[i],
+                max_size[i],
+                q.len(),
+                r.len(),
+                scores[i],
+                scores[scores.len() - 1]
+            ).unwrap();
             matches[i] += if scores[i] == scores[scores.len() - 1] { 1 } else { 0 };
         }
     }
@@ -76,12 +89,13 @@ fn test(file_name: &str, min_size: &[usize], max_size: &[usize], padding: usize,
 
 fn main() {
     let file_name = "data/scop/pairs.pssm";
+    let out_file_name = "data/pssm_accuracy.csv";
     let min_sizes = [32, 32, 32, 2048];
     let max_sizes = [32, 64, 128, 2048];
     let gap_open = -10;
     let gap_extend = -1;
 
-    test(file_name, &min_sizes, &max_sizes, 2048, gap_open, gap_extend);
+    test(file_name, out_file_name, &min_sizes, &max_sizes, 2048, gap_open, gap_extend);
 
     println!("# Done!");
 }
