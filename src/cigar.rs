@@ -3,16 +3,26 @@
 use std::fmt;
 
 /// A match/mistmatch, insertion, or deletion operation.
+///
+/// When aligning `q` against `r`, this represents the edit operations to get from `r` to `q`.
 #[derive(Debug, PartialEq, Copy, Clone)]
 #[repr(u8)]
 pub enum Operation {
     /// Placeholder variant.
     Sentinel = 0u8,
     /// Match or mismatch.
+    ///
+    /// This is a diagonal transition in the DP matrix with `|q|` rows and `|r|` columns.
     M = 1u8,
     /// Insertion.
+    ///
+    /// When aligning sequences `q` against `r`, this is a gap in `r`.
+    /// This is a row transition in the DP matrix with `|q|` rows and `|r|` columns.
     I = 2u8,
     /// Deletion.
+    ///
+    /// When aligning sequences `q` against `r`, this is a gap in `q`.
+    /// This is a column transition in the DP matrix with `|q|` rows and `|r|` columns.
     D = 3u8
 }
 

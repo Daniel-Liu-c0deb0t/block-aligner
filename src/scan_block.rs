@@ -755,8 +755,13 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// This is fast, but it may be slightly less accurate than computing the entire the alignment
     /// dynamic programming matrix. Growing the size of the block allows larger gaps and
     /// other potentially difficult regions to be handled correctly.
+    /// The algorithm also allows shrinking the block size for greater efficiency when handling
+    /// regions in the sequences with no gaps.
     /// 16-bit deltas and 32-bit offsets are used to ensure that accurate scores are
     /// computed, even when the the strings are long.
+    ///
+    /// When aligning sequences `q` against `r`, this algorithm computes cells in the DP matrix
+    /// with `|q|` rows and `|r|` columns.
     ///
     /// X-drop alignment with `ByteMatrix` is not supported.
     pub fn align<M: Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
@@ -813,8 +818,13 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// This is fast, but it may be slightly less accurate than computing the entire the alignment
     /// dynamic programming matrix. Growing the size of the block allows larger gaps and
     /// other potentially difficult regions to be handled correctly.
+    /// The algorithm also allows shrinking the block size for greater efficiency when handling
+    /// regions in the sequences with no gaps.
     /// 16-bit deltas and 32-bit offsets are used to ensure that accurate scores are
     /// computed, even when the the strings are long.
+    ///
+    /// When aligning sequence `q` against profile `p`, this algorithm computes cells in the DP matrix
+    /// with `|q|` rows and `|p|` columns.
     pub fn align_profile<P: Profile>(&mut self, query: &PaddedBytes, profile: &P, size: RangeInclusive<usize>, x_drop: i32) {
         // check invariants so bad stuff doesn't happen later
         assert!(profile.get_gap_extend() < 0, "Gap extend cost must be negative!");
@@ -1293,6 +1303,8 @@ impl Trace {
 
     /// Create a CIGAR string that represents a single traceback path ending on the specified
     /// location.
+    ///
+    /// When aligning `q` against `r`, this represents the edits to go from `r` to `q`.
     pub fn cigar(&self, mut i: usize, mut j: usize, cigar: &mut Cigar) {
         assert!(i <= self.query_len && j <= self.reference_len, "Traceback cigar end position must be in bounds!");
 

@@ -73,6 +73,10 @@ pub unsafe extern fn block_set_aaprofile(profile: *mut AAProfile, i: usize, b: u
 }
 
 /// Set the gap open cost for a column.
+///
+/// When aligning a sequence `q` to a profile `r`, this is the gap open cost at column `i` for a
+/// column transition in the DP matrix with `|q|` rows and `|r|` columns.
+/// This represents starting a gap in `q`.
 #[no_mangle]
 pub unsafe extern fn block_set_gap_open_C_aaprofile(profile: *mut AAProfile, i: usize, gap: i8) {
     let profile = &mut *profile;
@@ -80,6 +84,10 @@ pub unsafe extern fn block_set_gap_open_C_aaprofile(profile: *mut AAProfile, i: 
 }
 
 /// Set the gap close cost for a column.
+///
+/// When aligning a sequence `q` to a profile `r`, this is the gap close cost at column `i` for
+/// ending column transitions in the DP matrix with `|q|` rows and `|r|` columns.
+/// This represents ending a gap in `q`.
 #[no_mangle]
 pub unsafe extern fn block_set_gap_close_C_aaprofile(profile: *mut AAProfile, i: usize, gap: i8) {
     let profile = &mut *profile;
@@ -87,6 +95,10 @@ pub unsafe extern fn block_set_gap_close_C_aaprofile(profile: *mut AAProfile, i:
 }
 
 /// Set the gap open cost for a row.
+///
+/// When aligning a sequence `q` to a profile `r`, this is the gap open cost at column `i` for
+/// a row transition in the DP matrix with `|q|` rows and `|r|` columns.
+/// This represents starting a gap in `r`.
 #[no_mangle]
 pub unsafe extern fn block_set_gap_open_R_aaprofile(profile: *mut AAProfile, i: usize, gap: i8) {
     let profile = &mut *profile;
