@@ -39,12 +39,14 @@ assert_eq!(cigar.to_string(), "2M6I16M3D");
 
 ## Algorithm
 Pairwise alignment (weighted edit distance) involves computing the scores for each cell of a
-2D dynamic programming matrix to find out how two strings can optimally align.
+2D dynamic programming matrix to find out how two strings (or a string and a profile) optimally aligns.
 However, often it is possible to obtain accurate alignment scores without computing
 the entire DP matrix, through banding or other means.
 
 Block aligner provides a new efficient way to compute alignments on proteins, DNA sequences,
 and byte strings.
+Block aligner also supports aligning sequences to profiles, which are position-specific
+scoring matrices and position-specific gap open costs.
 Scores are calculated in a small square block that is shifted down or right in a greedy
 manner, based on the scores at the edges of the block.
 This dynamic approach results in a much smaller calculated block area, at the expense of
@@ -54,6 +56,7 @@ of iterations without seeing score increases. We call this "Y-drop", where Y is 
 number of iterations.
 When the Y-drop condition is met, the block goes "back in time" to the previous best
 checkpoint, and the size of the block dynamically increases to attempt to span the large gap.
+The block size can also dynamically decrease when a large block size detected to not be needed.
 
 Block aligner is built to exploit SIMD parallelism on modern CPUs.
 Currently, AVX2 (256-bit vectors) and WASM SIMD (128-bit vectors) are supported.
@@ -90,7 +93,7 @@ cargo build --target=wasm32-wasi --features simd_wasm --release
 Most of the instructions below are for benchmarking and testing block aligner.
 
 ## Data
-Some Illumina/Nanopore (DNA) and Uniclust30 (protein) data are used in some tests and benchmarks.
+Some Illumina/Nanopore (DNA), Uniclust30 (protein), and SCOP (protein profile) data are used in some tests and benchmarks.
 You will need to download them by following the instructions in the [data readme](data/README.md).
 
 ## Test
@@ -161,11 +164,6 @@ the [C readme](c/README.md).
 ## Data analysis and visualizations
 Use the Jupyter notebook in the `vis/` directory to gather data and plot them. An easier way
 to run the whole notebook is to run the `vis/run_vis.sh` script.
-
-## Other SIMD instruction sets
-* [ ] SSE4.1 (Depends on demand)
-* [ ] AVX-512 (I don't have a machine to test)
-* [ ] NEON (I don't have a machine to test)
 
 ## Old ideas and history
 See the [ideas](ideas.md) file.
