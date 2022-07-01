@@ -81,7 +81,7 @@ fn main() {
 
     let pairs = get_pairs(file_name, 2048, gap_open, gap_extend);
 
-    println!("# size, time");
+    println!("size, time");
 
     bench_ours(&pairs, min_sizes[0], max_sizes[0]);
 

@@ -31,6 +31,7 @@ fn test(file_name: &str, out_file_name: &str, min_size: &[usize], max_size: &[us
     let mut pssm_string = String::new();
     let mut matches = vec![0usize; min_size.len()];
 
+    println!("size, correct");
     write!(writer, "size, seq len, profile len, pred score, true score\n").unwrap();
 
     loop {
@@ -83,8 +84,10 @@ fn test(file_name: &str, out_file_name: &str, min_size: &[usize], max_size: &[us
     }
 
     for (i, m) in matches.iter().enumerate() {
-        println!("# {}-{} == {}-{}: {} pairs", min_size[i], max_size[i], min_size[min_size.len() - 1], max_size[max_size.len() - 1], m);
+        println!("{}-{}, {}", min_size[i], max_size[i], m);
     }
+
+    println!("# compared to {}-{}", min_size[min_size.len() - 1], max_size[max_size.len() - 1]);
 }
 
 fn main() {
