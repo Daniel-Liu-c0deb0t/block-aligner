@@ -1319,7 +1319,7 @@ impl Trace {
             let mut block_height;
             let mut right;
 
-            #[derive(Copy, Clone, PartialEq)]
+            #[derive(Copy, Clone, PartialEq, Debug)]
             enum Table {
                 D = 0b00,
                 C = 0b01,
@@ -1330,11 +1330,11 @@ impl Trace {
             static OP_LUT: [(Operation, usize, usize, Table); 128] = {
                 let mut lut = [(Operation::D, 0, 1, Table::D); 128];
 
-                // table: the current DP table, D, C, or R
+                // table: the current DP table, D, C, or R (tables are standardized to right = true)
                 // trace: 2 bits, first bit is whether the max equals C table entry, second bit is
-                // whether the max equals R table entry
+                // whether the max equals R table entry (vice versa for right = false)
                 // trace2: 2 bits, first bit is whether the max in the C table is the gap beginning, second
-                // bit is whether the max in the R table is the gap beginning
+                // bit is whether the max in the R table is the gap beginning (vice versa for right = false)
                 // right: whether the current block contains vectors laid out vertically
 
                 let mut right = 0;
@@ -1366,15 +1366,15 @@ impl Trace {
                                     }
                                 } else {
                                     match (trace, trace2, table) {
-                                        (_, 0b00 | 0b10, Table::C) => (Operation::I, 1, 0, Table::C), // C table gap extend
-                                        (_, 0b01 | 0b11, Table::C) => (Operation::I, 1, 0, Table::D), // C table gap open
-                                        (_, 0b00 | 0b01, Table::R) => (Operation::D, 0, 1, Table::R), // R table gap extend
-                                        (_, 0b10 | 0b11, Table::R) => (Operation::D, 0, 1, Table::D), // R table gap open
+                                        (_, 0b00 | 0b10, Table::R) => (Operation::I, 1, 0, Table::R), // R table gap extend
+                                        (_, 0b01 | 0b11, Table::R) => (Operation::I, 1, 0, Table::D), // R table gap open
+                                        (_, 0b00 | 0b01, Table::C) => (Operation::D, 0, 1, Table::C), // C table gap extend
+                                        (_, 0b10 | 0b11, Table::C) => (Operation::D, 0, 1, Table::D), // C table gap open
                                         (0b00, _, Table::D) => (Operation::M, 1, 1, Table::D), // D table match/mismatch
-                                        (0b01 | 0b11, 0b00 | 0b10, Table::D) => (Operation::I, 1, 0, Table::C), // D table C gap extend
-                                        (0b01 | 0b11, 0b01 | 0b11, Table::D) => (Operation::I, 1, 0, Table::D), // D table C gap open
-                                        (0b10, 0b00 | 0b01, Table::D) => (Operation::D, 0, 1, Table::R), // D table R gap extend
-                                        (0b10, 0b10 | 0b11, Table::D) => (Operation::D, 0, 1, Table::D), // D table R gap open
+                                        (0b01 | 0b11, 0b00 | 0b10, Table::D) => (Operation::I, 1, 0, Table::R), // D table R gap extend
+                                        (0b01 | 0b11, 0b01 | 0b11, Table::D) => (Operation::I, 1, 0, Table::D), // D table R gap open
+                                        (0b10, 0b00 | 0b01, Table::D) => (Operation::D, 0, 1, Table::C), // D table C gap extend
+                                        (0b10, 0b10 | 0b11, Table::D) => (Operation::D, 0, 1, Table::D), // D table C gap open
                                         _ => (Operation::I, 1, 0, Table::D)
                                     }
                                 };

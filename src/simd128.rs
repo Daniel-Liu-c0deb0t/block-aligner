@@ -225,7 +225,7 @@ macro_rules! simd_suffix_hmax_i16 {
             if $num > 1 {
                 v = i16x8_max(v, simd_sl_i16!(v, v, 1));
             }
-            simd_extract_i16!(v, 15)
+            simd_extract_i16!(v, 7)
         }
     };
 }
