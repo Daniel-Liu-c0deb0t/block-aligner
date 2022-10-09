@@ -40,8 +40,8 @@ and [`0.95` coverage](uc30_0.95_pairwise_aln.sh).
 4. `tar -xvf uc30_0.95.tar.gz`
 
 ## SCOP PSSM data
-This data is generated with `mmseqs2` and the [SCOPe](https://scop.berkeley.edu/astral/ver=2.08) dataset.
-This data is used for aligning sequences to profiles (position-specific scoring matrices).
+This data is generated with `mmseqs2` and the [SCOPe](https://scop.berkeley.edu/astral/ver=2.01) dataset.
+This data is used for aligning sequences to profiles (position-specific scoring matrices) of protein domains.
 
 1. `mkdir scop && cd scop`
 2. `curl -OL https://github.com/Daniel-Liu-c0deb0t/block-aligner/releases/download/v0.0.0/scop.tar.gz`
