@@ -74,8 +74,8 @@ fn get_pairs(file_name: &str, padding: usize, gap_open: i8, gap_extend: i8) -> V
 
 fn main() {
     let file_name = "data/scop/pairs.pssm";
-    let min_sizes = [32, 32, 32, 2048];
-    let max_sizes = [32, 64, 128, 2048];
+    let min_sizes = [32, 32, 32, 128];
+    let max_sizes = [32, 64, 128, 128];
     let gap_open = -10;
     let gap_extend = -1;
 

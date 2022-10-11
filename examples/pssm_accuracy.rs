@@ -93,8 +93,8 @@ fn test(file_name: &str, out_file_name: &str, min_size: &[usize], max_size: &[us
 fn main() {
     let file_name = "data/scop/pairs.pssm";
     let out_file_name = "data/pssm_accuracy.csv";
-    let min_sizes = [32, 32, 32, 2048];
-    let max_sizes = [32, 64, 128, 2048];
+    let min_sizes = [32, 32, 32, 128, 2048];
+    let max_sizes = [32, 64, 128, 128, 2048];
     let gap_open = -10;
     let gap_extend = -1;
 
