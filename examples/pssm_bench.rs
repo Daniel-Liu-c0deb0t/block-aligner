@@ -1,5 +1,8 @@
 #![feature(bench_black_box)]
 
+#[cfg(not(feature = "simd_wasm"))]
+use parasailors;
+
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 use block_aligner::cigar::*;
@@ -25,13 +28,28 @@ fn bench_ours(pairs: &[(AAProfile, PaddedBytes)], min_size: usize, max_size: usi
     start.elapsed()
 }
 
+#[cfg(not(feature = "simd_wasm"))]
+fn bench_parasail(pairs: &[(Vec<u8>, Vec<u8>)], gap_open: i8, gap_extend: i8) -> Duration {
+    let matrix = parasailors::Matrix::new(parasailors::MatrixType::Blosum62);
+
+    let start = Instant::now();
+
+    for (r, q) in pairs {
+        let p = parasailors::Profile::new(&q, &matrix);
+        black_box(parasailors::global_alignment_score(&p, r, -(gap_open + gap_extend) as i32, -gap_extend as i32));
+    }
+
+    start.elapsed()
+}
+
 static MAP: [u8; 20] = *b"ACDEFGHIKLMNPQRSTVWY";
 
-fn get_pairs(file_name: &str, padding: usize, gap_open: i8, gap_extend: i8) -> Vec<(AAProfile, PaddedBytes)> {
+fn get_pairs(file_name: &str, padding: usize, gap_open: i8, gap_extend: i8) -> (Vec<(AAProfile, PaddedBytes)>, Vec<(Vec<u8>, Vec<u8>)>) {
     let mut reader = BufReader::new(File::open(file_name).unwrap());
     let mut seq_string = String::new();
     let mut pssm_string = String::new();
-    let mut pairs = Vec::new();
+    let mut pssm_pairs = Vec::new();
+    let mut cns_pairs = Vec::new();
 
     loop {
         seq_string.clear();
@@ -44,6 +62,7 @@ fn get_pairs(file_name: &str, padding: usize, gap_open: i8, gap_extend: i8) -> V
         reader.read_line(&mut pssm_string).unwrap();
         let pssm = pssm_string.trim_end();
         let len = pssm.len() - 1;
+        let cns = pssm[1..].as_bytes().to_owned();
         let mut r = AAProfile::new(len, padding, gap_extend);
         let q = PaddedBytes::from_str::<AAMatrix>(&seq[1..], padding);
 
@@ -66,10 +85,11 @@ fn get_pairs(file_name: &str, padding: usize, gap_open: i8, gap_extend: i8) -> V
             r.set_gap_open_R(i, gap_open);
         }
 
-        pairs.push((r, q));
+        pssm_pairs.push((r, q));
+        cns_pairs.push((cns, seq[1..].as_bytes().to_owned()));
     }
 
-    pairs
+    (pssm_pairs, cns_pairs)
 }
 
 fn main() {
@@ -79,15 +99,21 @@ fn main() {
     let gap_open = -10;
     let gap_extend = -1;
 
-    let pairs = get_pairs(file_name, 2048, gap_open, gap_extend);
+    let (pssm_pairs, cns_pairs) = get_pairs(file_name, 2048, gap_open, gap_extend);
 
     println!("size, time");
 
-    bench_ours(&pairs, min_sizes[0], max_sizes[0]);
+    bench_ours(&pssm_pairs, min_sizes[0], max_sizes[0]);
 
     for (&min_size, &max_size) in min_sizes.iter().zip(&max_sizes) {
-        let duration = bench_ours(&pairs, min_size, max_size);
+        let duration = bench_ours(&pssm_pairs, min_size, max_size);
         println!("{}-{}, {}", min_size, max_size, duration.as_secs_f64());
+    }
+
+    #[cfg(not(feature = "simd_wasm"))]
+    {
+        let duration = bench_parasail(&cns_pairs, gap_open, gap_extend);
+        println!("parasail, {}", duration.as_secs_f64());
     }
 
     println!("# Done!");
