@@ -16,13 +16,15 @@ exclude = ["vis/*", "!vis/block_img1.png"]
 features = ["simd_avx2"]
 
 [lib]
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
 # Enable AVX2
 simd_avx2 = []
 # Enable WASM SIMD
 simd_wasm = []
+# Enable Neon
+simd_neon = []
 
 # Print lots of debug information
 debug = ["debug_size"]
@@ -50,7 +52,7 @@ bio = "^0.33"
 [build-dependencies]
 cbindgen = "^0.20.0"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+[target.'cfg(not(any(target_arch = "wasm32", target_arch="aarch64")))'.dev-dependencies]
 parasailors = "^0.3.1"
 image = "^0.23.14"
 imageproc = "^0.22.0"

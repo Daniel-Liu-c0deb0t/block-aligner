@@ -414,6 +414,112 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_smoke() {
+        #[target_feature(enable = "simd128")]
+        unsafe fn inner() {
+            #[repr(align(16))]
+            struct A([i16; L]);
+
+            let test = A([1, 2, 3, 4, 5, 6, 7, 8]);
+            let test_rev = A([8, 7, 6, 5, 4, 3, 2, 1]);
+            let test_mask = A([0, 1, 0, 1, 0, 1, 0, 1]);
+            let vec0 = simd_load(test.0.as_ptr() as *const Simd);
+            let vec0_rev = simd_load(test_rev.0.as_ptr() as *const Simd);
+            let vec0_mask = simd_load(test_mask.0.as_ptr() as *const Simd);
+            let mut vec1 = simd_sl_i16!(vec0, vec0, 1);
+            simd_assert_vec_eq(vec1, [8, 1, 2, 3, 4, 5, 6, 7]);
+
+            vec1 = simd_sr_i16!(vec0, vec0, 1);
+            simd_assert_vec_eq(vec1, [2, 3, 4, 5, 6, 7, 8, 1]);
+
+            vec1 = simd_adds_i16(vec0, vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [2, 4, 6, 8, 10, 12, 14, 16]);
+
+            vec1 = simd_subs_i16(vec0, vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [0, 0, 0, 0, 0, 0, 0, 0]);
+
+            vec1 = simd_max_i16(vec0, vec0_rev);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [8, 7, 6, 5, 5, 6, 7, 8]);
+
+            vec1 = simd_cmpeq_i16(vec0, vec0_rev);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [0, 0, 0, 0, 0, 0, 0, 0]);
+
+            vec1 = simd_cmpeq_i16(vec0, vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [-1, -1, -1, -1, -1, -1, -1, -1]);
+
+            vec1 = simd_cmpgt_i16(vec0, vec0_rev);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [0, 0, 0, 0, -1, -1, -1, -1]);
+
+            vec1 = simd_blend_i8(vec0, vec0_rev, vec0_mask);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [1, 3, 3, 5, 5, 7, 7, 9]);
+
+            let mut val = simd_extract_i16!(vec0, 0);
+            assert_eq!(val, 1);
+
+            val = simd_slow_extract_i16(vec0, 0);
+            assert_eq!(val, 1);
+
+            vec1 = simd_insert_i16!(vec0, 0, 2);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [1, 2, 0, 4, 5, 6, 7, 8]);
+
+            let mut val1 = simd_movemask_i8(vec0);
+            assert_eq!(val1, 0);
+
+            vec1 = simd_sllz_i16!(vec0, 1);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [0, 1, 2, 3, 4, 5, 6, 7]);
+
+            vec1 = simd_broadcasthi_i16(vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [8, 8, 8, 8, 8, 8, 8, 8]);
+
+            val = simd_hmax_i16(vec0);
+            assert_eq!(val, 8);
+
+            val = simd_prefix_hadd_i16!(vec0, 4);
+            assert_eq!(val, -32768);
+
+            val = simd_prefix_hmax_i16!(vec0, 4);
+            assert_eq!(val, 4);
+
+            val = simd_suffix_hmax_i16!(vec0, 4);
+            assert_eq!(val, 8);
+
+            let val2 = simd_hargmax_i16(vec0, 4);
+            assert_eq!(val2, 3);
+
+            vec1 = halfsimd_lookup2_i16(vec0, vec0, vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [0, 1, 2, 1, 0, 1, 3, 1]);
+
+            vec1 = halfsimd_lookup1_i16(vec0, vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [0, 1, 2, 1, 0, 1, 3, 1]);
+
+            vec1 = halfsimd_lookup_bytes_i16(vec0, vec0, vec0, vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [1, 0, 2, 0, 3, 0, 4, 0]);
+
+            vec1 = halfsimd_sub_i8(vec0, vec0);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [0, 0, 0, 0, 0, 0, 0, 0]);
+
+            vec1 = halfsimd_sr_i8!(vec0, vec0, 1);
+            simd_dbg_i16(vec1);
+            simd_assert_vec_eq(vec1, [512, 768, 1024, 256, 5, 6, 7, 8]);
+        }
+        unsafe { inner(); }
+    }
+
+    #[test]
     fn test_endianness() {
         #[target_feature(enable = "simd128")]
         unsafe fn inner() {

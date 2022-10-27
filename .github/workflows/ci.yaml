@@ -49,3 +49,26 @@ jobs:
     - name: Test WASM
       run: |
         cargo build --target=wasm32-wasi --features simd_wasm
+
+  ci-aarch64:
+    runs-on: ${{matrix.os}}
+
+    strategy:
+      matrix:
+        #os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install Rust Nightly
+      uses: actions-rs/toolchain@v1
+      with:
+        override: true
+        target: aarch64-unknown-linux-gnu
+
+    - name: Test Neon
+      run: |
+        sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+        cargo --version
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64 -L /usr/aarch64-linux-gnu" cargo test --target=aarch64-unknown-linux-gnu --features simd_neon

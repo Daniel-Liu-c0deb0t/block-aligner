@@ -59,15 +59,24 @@ pub mod simd128;
 #[cfg(feature = "simd_wasm")]
 pub use simd128::L;
 
-#[cfg(any(feature = "simd_avx2", feature = "simd_wasm"))]
+#[cfg(feature = "simd_neon")]
+#[macro_use]
+#[doc(hidden)]
+/// cbindgen:ignore
+pub mod neon;
+
+#[cfg(feature = "simd_neon")]
+pub use neon::L;
+
+#[cfg(any(feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
 pub mod scan_block;
-#[cfg(any(feature = "simd_avx2", feature = "simd_wasm"))]
+#[cfg(any(feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
 pub mod scores;
-#[cfg(any(feature = "simd_avx2", feature = "simd_wasm"))]
+#[cfg(any(feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
 pub mod cigar;
-#[cfg(any(feature = "simd_avx2", feature = "simd_wasm"))]
+#[cfg(any(feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
 pub mod simulate;
 
-#[cfg(feature = "simd_avx2")]
+#[cfg(any(feature = "simd_avx2", feature = "simd_neon"))]
 #[doc(hidden)]
 pub mod ffi;
