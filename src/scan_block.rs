@@ -89,7 +89,6 @@ macro_rules! align_core_gen {
             let mut dir = Direction::Grow;
             let mut prev_size = 0;
             let mut block_size = state.min_size;
-            let mut step = STEP;
 
             // 32-bit score offsets
             let mut off = 0i32;
@@ -129,7 +128,7 @@ macro_rules! align_core_gen {
                         let off_add = simd_set1_i16(clamp(prev_off - off));
 
                         if TRACE {
-                            self.allocated.trace.add_block(state.i, state.j + block_size - step, step, block_size, true);
+                            self.allocated.trace.add_block(state.i, state.j + block_size - STEP, STEP, block_size, true);
                         }
 
                         // offset previous columns with newly computed offset
@@ -143,8 +142,8 @@ macro_rules! align_core_gen {
                             state.reference,
                             &mut self.allocated.trace,
                             state.i,
-                            state.j + block_size - step,
-                            step,
+                            state.j + block_size - STEP,
+                            STEP,
                             block_size,
                             self.allocated.D_col.as_mut_ptr(),
                             self.allocated.C_col.as_mut_ptr(),
@@ -155,7 +154,7 @@ macro_rules! align_core_gen {
                         );
 
                         // sum of a couple elements on the right border
-                        let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
+                        let right_max = Self::prefix_max(self.allocated.D_col.as_ptr());
 
                         // shift and offset bottom row
                         D_corner = Self::shift_and_offset(
@@ -164,11 +163,10 @@ macro_rules! align_core_gen {
                             self.allocated.R_row.as_mut_ptr(),
                             self.allocated.temp_buf1.as_mut_ptr(),
                             self.allocated.temp_buf2.as_mut_ptr(),
-                            off_add,
-                            step
+                            off_add
                         );
                         // sum of a couple elements on the bottom border
-                        let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
+                        let down_max = Self::prefix_max(self.allocated.D_row.as_ptr());
 
                         (D_max, D_argmax, right_max, down_max)
                     },
@@ -179,7 +177,7 @@ macro_rules! align_core_gen {
                         let off_add = simd_set1_i16(clamp(prev_off - off));
 
                         if TRACE {
-                            self.allocated.trace.add_block(state.i + block_size - step, state.j, block_size, step, false);
+                            self.allocated.trace.add_block(state.i + block_size - STEP, state.j, block_size, STEP, false);
                         }
 
                         // offset previous rows with newly computed offset
@@ -193,8 +191,8 @@ macro_rules! align_core_gen {
                             state.query,
                             &mut self.allocated.trace,
                             state.j,
-                            state.i + block_size - step,
-                            step,
+                            state.i + block_size - STEP,
+                            STEP,
                             block_size,
                             self.allocated.D_row.as_mut_ptr(),
                             self.allocated.R_row.as_mut_ptr(),
@@ -205,7 +203,7 @@ macro_rules! align_core_gen {
                         );
 
                         // sum of a couple elements on the bottom border
-                        let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
+                        let down_max = Self::prefix_max(self.allocated.D_row.as_ptr());
 
                         // shift and offset last column
                         D_corner = Self::shift_and_offset(
@@ -214,11 +212,10 @@ macro_rules! align_core_gen {
                             self.allocated.C_col.as_mut_ptr(),
                             self.allocated.temp_buf1.as_mut_ptr(),
                             self.allocated.temp_buf2.as_mut_ptr(),
-                            off_add,
-                            step
+                            off_add
                         );
                         // sum of a couple elements on the right border
-                        let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
+                        let right_max = Self::prefix_max(self.allocated.D_col.as_ptr());
 
                         (D_max, D_argmax, right_max, down_max)
                     },
@@ -280,8 +277,8 @@ macro_rules! align_core_gen {
                             true
                         );
 
-                        let right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
-                        let down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
+                        let right_max = Self::prefix_max(self.allocated.D_col.as_ptr());
+                        let down_max = Self::prefix_max(self.allocated.D_row.as_ptr());
                         grow_D_max = D_max1;
                         grow_D_argmax = D_argmax1;
 
@@ -326,7 +323,7 @@ macro_rules! align_core_gen {
                         let lane_idx = simd_hargmax_i16(D_max, D_max_max);
                         let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
                         let r = (idx % (block_size / L)) * L + lane_idx;
-                        let c = (block_size - step) + idx / (block_size / L);
+                        let c = (block_size - STEP) + idx / (block_size / L);
 
                         match dir {
                             Direction::Right => {
@@ -400,29 +397,26 @@ macro_rules! align_core_gen {
 
                 // first check if the shift direction is "forced" to avoid going out of bounds
                 if state.j + block_size > state.reference.len() {
-                    state.i += step;
+                    state.i += STEP;
                     dir = Direction::Down;
                     continue;
                 }
                 if state.i + block_size > state.query.len() {
-                    state.j += step;
+                    state.j += STEP;
                     dir = Direction::Right;
                     continue;
                 }
 
                 // check if it is possible to grow
-                let next_size = if GROW_EXP { block_size * 2 } else { block_size + GROW_STEP };
+                let next_size = block_size * 2;
                 if next_size <= state.max_size {
                     // if approximately (block_size / step) iterations has passed since the last best
                     // max, then it is time to grow
-                    if y_drop_iter > (block_size / step) - 1 || grow_no_max {
+                    if y_drop_iter > (block_size / STEP) - 1 || grow_no_max {
                         // y drop grow block
                         prev_size = block_size;
                         block_size = next_size;
                         dir = Direction::Grow;
-                        if STEP != LARGE_STEP && block_size >= (LARGE_STEP / STEP) * state.min_size {
-                            step = LARGE_STEP;
-                        }
 
                         // return to checkpoint
                         state.i = i_ckpt;
@@ -450,8 +444,8 @@ macro_rules! align_core_gen {
                 // check if it is possible to shrink
                 if SHRINK && block_size > state.min_size && y_drop_iter == 0 {
                     let shrink_max = cmp::max(
-                        Self::suffix_max(self.allocated.D_row.as_ptr(), block_size, step),
-                        Self::suffix_max(self.allocated.D_col.as_ptr(), block_size, step)
+                        Self::suffix_max(self.allocated.D_row.as_ptr(), block_size),
+                        Self::suffix_max(self.allocated.D_col.as_ptr(), block_size)
                     );
                     if shrink_max >= max {
                         // just to make sure it is not right or down shift so D_corner is not used
@@ -483,8 +477,8 @@ macro_rules! align_core_gen {
                             i += L;
                         }
 
-                        right_max = Self::prefix_max(self.allocated.D_col.as_ptr(), step);
-                        down_max = Self::prefix_max(self.allocated.D_row.as_ptr(), step);
+                        right_max = Self::prefix_max(self.allocated.D_col.as_ptr());
+                        down_max = Self::prefix_max(self.allocated.D_row.as_ptr());
 
                         if TRACE {
                             self.allocated.trace.save_ckpt();
@@ -496,10 +490,10 @@ macro_rules! align_core_gen {
 
                 // move according to where the max is
                 if down_max > right_max {
-                    state.i += step;
+                    state.i += STEP;
                     dir = Direction::Down;
                 } else {
-                    state.j += step;
+                    state.j += STEP;
                     dir = Direction::Right;
                 }
             }
@@ -709,12 +703,10 @@ macro_rules! place_block_profile_gen {
 
 // increasing step size gives a bit extra speed but results in lower accuracy
 // current settings are fast, at the expense of some accuracy, and step size does not grow
-const STEP: usize = if L / 2 < 8 { L / 2 } else { 8 };
-const LARGE_STEP: usize = STEP; // use larger step size when the block size gets large
-const GROW_STEP: usize = L; // used when not growing by powers of 2
-const GROW_EXP: bool = true; // grow by powers of 2
+const STEP: usize = 8;
 const X_DROP_ITER: usize = 2; // make sure that the X-drop iteration is truly met instead of just one "bad" step
 const SHRINK: bool = true; // whether to allow the block size to shrink by powers of 2
+const SHRINK_SUFFIX_LEN: usize = STEP / 4;
 impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// Allocate a block aligner instance with an upper bound query length,
     /// reference length, and max block size.
@@ -723,11 +715,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// as the aligned sequence lengths and block sizes do not exceed the specified
     /// upper bounds.
     pub fn new(query_len: usize, reference_len: usize, max_size: usize) -> Self {
-        if GROW_EXP {
-            assert!(max_size.is_power_of_two(), "Block size must be a power of two!");
-        } else {
-            assert!(max_size % L == 0, "Block size must be multiples of {}!", L);
-        }
+        assert!(max_size.is_power_of_two(), "Block size must be a power of two!");
 
         Self {
             res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
@@ -773,11 +761,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         let min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
         assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
-        if GROW_EXP {
-            assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
-        } else {
-            assert!(min_size % L == 0 && max_size % L == 0, "Block sizes must be multiples of {}!", L);
-        }
+        assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
         if X_DROP {
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
         }
@@ -831,11 +815,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         let min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
         assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
-        if GROW_EXP {
-            assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
-        } else {
-            assert!(min_size % L == 0 && max_size % L == 0, "Block sizes must be multiples of {}!", L);
-        }
+        assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
         if X_DROP {
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
         }
@@ -876,49 +856,29 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn prefix_max(buf: *const i16, step: usize) -> i16 {
-        if STEP == LARGE_STEP {
-            simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
-        } else {
-            if step == STEP {
-                simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
-            } else {
-                simd_prefix_hadd_i16!(simd_load(buf as _), LARGE_STEP)
-            }
-        }
+    unsafe fn prefix_max(buf: *const i16) -> i16 {
+        simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn suffix_max(buf: *const i16, buf_len: usize, step: usize) -> i16 {
-        if STEP == LARGE_STEP {
-            simd_suffix_hmax_i16!(simd_load(buf.add(buf_len - L) as _), STEP / 4)
-        } else {
-            if step == STEP {
-                simd_suffix_hmax_i16!(simd_load(buf.add(buf_len - L) as _), STEP / 4)
-            } else {
-                simd_suffix_hmax_i16!(simd_load(buf.add(buf_len - L) as _), LARGE_STEP / 4)
-            }
-        }
+    unsafe fn suffix_max(buf: *const i16, buf_len: usize) -> i16 {
+        simd_suffix_hmax_i16!(simd_load(buf.add(buf_len - L) as _), SHRINK_SUFFIX_LEN)
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[allow(non_snake_case)]
     #[inline]
-    unsafe fn shift_and_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd, step: usize) -> Simd {
+    unsafe fn shift_and_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> Simd {
         #[inline]
-        unsafe fn sr(a: Simd, b: Simd, step: usize) -> Simd {
-            if STEP == LARGE_STEP {
-                simd_sr_i16!(a, b, STEP)
+        unsafe fn sr(a: Simd, b: Simd) -> Simd {
+            if STEP == L {
+                a
             } else {
-                if step == STEP {
-                    simd_sr_i16!(a, b, STEP)
-                } else {
-                    simd_sr_i16!(a, b, LARGE_STEP)
-                }
+                simd_sr_i16!(a, b, STEP)
             }
         }
         let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
@@ -929,9 +889,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         while i < block_size - L {
             let next1 = simd_adds_i16(simd_load(buf1.add(i + L) as _), off_add);
             let next2 = simd_adds_i16(simd_load(buf2.add(i + L) as _), off_add);
-            let shifted = sr(next1, curr1, step);
-            simd_store(buf1.add(i) as _, shifted);
-            simd_store(buf2.add(i) as _, sr(next2, curr2, step));
+            simd_store(buf1.add(i) as _, sr(next1, curr1));
+            simd_store(buf2.add(i) as _, sr(next2, curr2));
             curr1 = next1;
             curr2 = next2;
             i += L;
@@ -939,9 +898,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
         let next1 = simd_load(temp_buf1 as _);
         let next2 = simd_load(temp_buf2 as _);
-        let shifted = sr(next1, curr1, step);
-        simd_store(buf1.add(block_size - L) as _, shifted);
-        simd_store(buf2.add(block_size - L) as _, sr(next2, curr2, step));
+        simd_store(buf1.add(block_size - L) as _, sr(next1, curr1));
+        simd_store(buf2.add(block_size - L) as _, sr(next2, curr2));
         D_corner
     }
 
