@@ -7,12 +7,41 @@ on:
     branches: [main]
 
 jobs:
-  ci:
+  ci-x86:
     runs-on: ${{matrix.os}}
 
     strategy:
       matrix:
-        #os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install Rust Nightly
+      uses: actions-rs/toolchain@v1
+
+    - name: Test AVX2
+      run: |
+        cargo --version
+        cargo test --all-targets --features simd_avx2
+        cargo test --doc --features simd_avx2
+
+    - name: Install Rust Stable
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Test AVX2
+      run: |
+        cargo --version
+        cargo build --features simd_avx2
+
+  ci-wasm32:
+    runs-on: ${{matrix.os}}
+
+    strategy:
+      matrix:
         os: [ubuntu-latest]
 
     steps:
@@ -23,15 +52,10 @@ jobs:
       with:
         target: wasm32-wasi
 
-    - name: Test AVX2
-      run: |
-        cargo --version
-        cargo test --all-targets --features simd_avx2
-        cargo test --doc --features simd_avx2
-
     - name: Test WASM
       # needs wasmtime to actually run
       run: |
+        cargo --version
         cargo test --target=wasm32-wasi --features simd_wasm --all-targets --no-run -- --nocapture
 
     - name: Install Rust Stable
@@ -41,13 +65,9 @@ jobs:
         override: true
         target: wasm32-wasi
 
-    - name: Test AVX2
-      run: |
-        cargo --version
-        cargo build --features simd_avx2
-
     - name: Test WASM
       run: |
+        cargo --version
         cargo build --target=wasm32-wasi --features simd_wasm
 
   ci-aarch64:
@@ -70,4 +90,4 @@ jobs:
       run: |
         sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
         cargo --version
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64 -L /usr/aarch64-linux-gnu" cargo test --target=aarch64-unknown-linux-gnu --features simd_neon
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64 -L /usr/aarch64-linux-gnu" cargo test --target=aarch64-unknown-linux-gnu --all-targets --features simd_neon

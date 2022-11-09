@@ -2,7 +2,7 @@
 //! gap penalty sequence-to-sequence or sequence-to-profile alignments
 //! using an adaptive block-based algorithm.
 //!
-//! Currently, AVX2 and WASM SIMD are supported.
+//! Currently, AVX2, Neon, and WASM SIMD are supported.
 //!
 //! ## Example
 //! ```
@@ -29,7 +29,7 @@
 //! ```
 //!
 //! When building your code that uses this library, it is important to specify the
-//! correct feature flags: `simd_avx2` or `simd_wasm`.
+//! correct feature flags: `simd_avx2`, `simd_neon`, or `simd_wasm`.
 
 #![cfg_attr(feature = "mca", feature(asm))]
 

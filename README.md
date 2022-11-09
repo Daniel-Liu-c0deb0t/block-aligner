@@ -59,7 +59,7 @@ checkpoint, and the size of the block dynamically increases to attempt to span t
 The block size can also dynamically decrease when a large block size detected to not be needed.
 
 Block aligner is built to exploit SIMD parallelism on modern CPUs.
-Currently, AVX2 (256-bit vectors) and WASM SIMD (128-bit vectors) are supported.
+Currently, AVX2 (256-bit vectors), Neon (128-bit vectors), and WASM SIMD (128-bit vectors) are supported.
 For score calculations, 16-bit score values (lanes) and 32-bit per block offsets are used.
 
 ## Install
@@ -72,9 +72,10 @@ To use this as a crate in your Rust project, add the following to your `Cargo.to
 [dependencies]
 block-aligner = { version = "^0.2.0", features = ["simd_avx2"] }
 ```
-Use the `simd_wasm` feature flag for WASM SIMD support. It is your responsibility to ensure
-the correct feature to be enabled and supported by the platform that runs the code
-because this library does not automatically detect the supported SIMD instruction set.
+Use the `simd_neon` or `simd_wasm` feature flag for ARM Neon or WASM SIMD support, respectively.
+It is your responsibility to ensure the correct feature to be enabled and supported by the
+platform that runs the code because this library does not automatically detect the supported
+SIMD instruction set.
 
 For developing, testing, or using the C API, you should clone this repo
 and use Rust nightly. In general, when building, you need to specify the
@@ -83,6 +84,11 @@ correct feature flags through the command line.
 For x86 AVX2:
 ```
 cargo build --features simd_avx2 --release
+```
+
+For ARM Neon:
+```
+cargo build --target=aarch64-unknown-linux-gnu --features simd_neon --release
 ```
 
 For WASM SIMD:
