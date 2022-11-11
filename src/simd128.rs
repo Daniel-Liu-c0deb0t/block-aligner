@@ -461,7 +461,7 @@ mod tests {
             simd_assert_vec_eq(vec1, [0, 0, 0, 0, -1, -1, -1, -1]);
 
             vec1 = simd_blend_i8(vec0, vec0_rev, vec0_mask);
-            simd_assert_vec_eq(vec1, [1, 3, 3, 5, 5, 7, 7, 9]);
+            simd_assert_vec_eq(vec1, [1, 7, 3, 5, 5, 3, 7, 1]);
 
             let mut val = simd_extract_i16!(vec0, 0);
             assert_eq!(val, 1);
