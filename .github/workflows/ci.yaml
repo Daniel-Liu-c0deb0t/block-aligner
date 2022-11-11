@@ -54,10 +54,12 @@ jobs:
 
     - name: Test WASM
       run: |
-        curl -L https://github.com/bytecodealliance/wasmtime/releases/download/v2.0.2/wasmtime-v2.0.2-x86_64-linux.tar.xz -o wasmtime.tar.xz
-        tar -xvf wasmtime.tar.xz
+        WASMTIME_DIR=wasmtime-v2.0.2-x86_64-linux
+        curl -OL https://github.com/bytecodealliance/wasmtime/releases/download/v2.0.2/${WASMTIME_DIR}.tar.xz
+        tar -xvf ${WASMTIME_DIR}.tar.xz
+        mv ${WASMTIME_DIR}/wasmtime ./
         cargo --version
-        CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime/wasmtime --wasm-features simd --" cargo test --target=wasm32-wasi --features simd_wasm --all-targets -- --nocapture
+        CARGO_TARGET_WASM32_WASI_RUNNER="./wasmtime --wasm-features simd --" cargo test --target=wasm32-wasi --features simd_wasm --all-targets -- --nocapture
 
     - name: Install Rust Stable
       uses: actions-rs/toolchain@v1
