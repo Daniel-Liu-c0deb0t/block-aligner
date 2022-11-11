@@ -53,10 +53,11 @@ jobs:
         target: wasm32-wasi
 
     - name: Test WASM
-      # needs wasmtime to actually run
       run: |
+        curl -L https://github.com/bytecodealliance/wasmtime/releases/download/v2.0.2/wasmtime-v2.0.2-x86_64-linux.tar.xz -o wasmtime.tar.xz
+        tar -xvf wasmtime.tar.xz
         cargo --version
-        cargo test --target=wasm32-wasi --features simd_wasm --all-targets --no-run -- --nocapture
+        CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime/wasmtime --wasm-features simd --" cargo test --target=wasm32-wasi --features simd_wasm --all-targets -- --nocapture
 
     - name: Install Rust Stable
       uses: actions-rs/toolchain@v1
@@ -83,7 +84,6 @@ jobs:
     - name: Install Rust Nightly
       uses: actions-rs/toolchain@v1
       with:
-        override: true
         target: aarch64-unknown-linux-gnu
 
     - name: Test Neon
