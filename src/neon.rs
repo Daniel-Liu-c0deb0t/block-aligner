@@ -90,11 +90,11 @@ macro_rules! simd_insert_i16 {
 #[inline]
 pub unsafe fn simd_movemask_i8(a: Simd) -> u16 {
     // assume that each byte is either 0 or -1
-    static pow2: [u8; 16] = [
+    static POW2: [u8; 16] = [
         1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7,
         1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7
     ];
-    let mask = vld1q_u8(pow2.as_ptr());
+    let mask = vld1q_u8(POW2.as_ptr());
     let masked = vandq_u8(vreinterpretq_u8_s16(a), mask);
     let lo = vaddv_u8(vget_low_u8(masked)) as u16;
     let hi = vaddv_u8(vget_high_u8(masked)) as u16;
