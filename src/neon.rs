@@ -297,7 +297,7 @@ pub unsafe fn halfsimd_lookup1_i16(lut: LutSimd, v: HalfSimd) -> Simd {
 #[inline]
 pub unsafe fn halfsimd_lookup_bytes_i16(match_scores: HalfSimd, mismatch_scores: HalfSimd, a: HalfSimd, b: HalfSimd) -> Simd {
     let mask = vceq_s8(a, b);
-    let c = vbsl_s8(vreinterpretq_u8_s8(mask), match_scores, mismatch_scores);
+    let c = vbsl_s8(vreinterpret_u8_s8(mask), match_scores, mismatch_scores);
     vmovl_s8(c)
 }
 
