@@ -3,6 +3,7 @@ use std::arch::wasm32::*;
 pub type Simd = v128;
 // no v64 type, so HalfSimd is just v128 with upper half ignored
 pub type HalfSimd = v128;
+pub type LutSimd = v128;
 pub type TraceType = i16;
 /// Number of 16-bit lanes in a SIMD vector.
 pub const L: usize = 8;
@@ -288,7 +289,7 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: Simd, _gap_cost_lane: 
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) -> Simd {
+pub unsafe fn halfsimd_lookup2_i16(lut1: LutSimd, lut2: LutSimd, v: HalfSimd) -> Simd {
     // must use a mask to avoid zeroing lanes that are too large
     let mask = i8x16_splat(0b1111);
     let v_mask = v128_and(v, mask);
@@ -301,7 +302,7 @@ pub unsafe fn halfsimd_lookup2_i16(lut1: HalfSimd, lut2: HalfSimd, v: HalfSimd) 
 
 #[target_feature(enable = "simd128")]
 #[inline]
-pub unsafe fn halfsimd_lookup1_i16(lut: HalfSimd, v: HalfSimd) -> Simd {
+pub unsafe fn halfsimd_lookup1_i16(lut: LutSimd, v: HalfSimd) -> Simd {
     i16x8_extend_low_i8x16(i8x16_swizzle(lut, v128_and(v, i8x16_splat(0b1111))))
 }
 
@@ -320,6 +321,14 @@ pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
 #[target_feature(enable = "simd128")]
 #[inline]
 pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { v128_load(ptr) }
+
+#[target_feature(enable = "simd128")]
+#[inline]
+pub unsafe fn lutsimd_load(ptr: *const LutSimd) -> LutSimd { v128_load(ptr) }
+
+#[target_feature(enable = "simd128")]
+#[inline]
+pub unsafe fn lutsimd_loadu(ptr: *const LutSimd) -> LutSimd { v128_load(ptr) }
 
 #[target_feature(enable = "simd128")]
 #[inline]
@@ -426,6 +435,7 @@ mod tests {
             let vec0 = simd_load(test.0.as_ptr() as *const Simd);
             let vec0_rev = simd_load(test_rev.0.as_ptr() as *const Simd);
             let vec0_mask = simd_load(test_mask.0.as_ptr() as *const Simd);
+
             let mut vec1 = simd_sl_i16!(vec0, vec0, 1);
             simd_assert_vec_eq(vec1, [8, 1, 2, 3, 4, 5, 6, 7]);
 
@@ -462,8 +472,8 @@ mod tests {
             vec1 = simd_insert_i16!(vec0, 0, 2);
             simd_assert_vec_eq(vec1, [1, 2, 0, 4, 5, 6, 7, 8]);
 
-            let mut val1 = simd_movemask_i8(vec0);
-            assert_eq!(val1, 0);
+            let mut val1 = simd_movemask_i8(vec0_mask);
+            assert_eq!(val1, 0b1100110011001100);
 
             vec1 = simd_sllz_i16!(vec0, 1);
             simd_assert_vec_eq(vec1, [0, 1, 2, 3, 4, 5, 6, 7]);

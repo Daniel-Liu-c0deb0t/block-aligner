@@ -3,6 +3,7 @@ use std::arch::aarch64::*;
 
 pub type Simd = int16x8_t;
 pub type HalfSimd = int8x8_t;
+pub type LutSimd = int8x16_t;
 pub type TraceType = i16;
 /// Number of 16-bit lanes in a SIMD vector.
 pub const L: usize = 8;
@@ -11,14 +12,7 @@ pub const HALFSIMD_MUL: usize = 2;
 pub const ZERO: i16 = 1 << 14;
 pub const MIN: i16 = 0;
 
-// TODO: add special type for LUTs
-// TODO: fix tests
-// TODO: double check alignment of loads and stores (16-bit aligned)
-// TODO: optimize movemask
-// TODO: add comments for confusing parts of the code (many assumptions where result of cmp is all
-// ones for example)
-
-// Non-temporal store to avoid cluttering cache with traces
+// No non-temporal store in Neon
 #[target_feature(enable = "neon")]
 #[inline]
 pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { *ptr = trace; }
@@ -46,6 +40,7 @@ pub unsafe fn simd_cmpgt_i16(a: Simd, b: Simd) -> Simd { vreinterpretq_s16_u16(v
 #[target_feature(enable = "neon")]
 #[inline]
 pub unsafe fn simd_blend_i8(a: Simd, b: Simd, mask: Simd) -> Simd {
+    // assume that each element in mask is either 0 or -1
     vbslq_s16(vreinterpretq_u16_s16(mask), b, a)
 }
 
@@ -93,19 +88,17 @@ macro_rules! simd_insert_i16 {
 
 #[target_feature(enable = "neon")]
 #[inline]
-pub unsafe fn simd_movemask_i8(a: Simd) -> u32 {
-    // see https://github.com/simd-everywhere/simde/blob/e1bc968696e6533d6b0bf8dddb0614737c983479/simde/x86/sse2.h#L3763
-    const MD: [u8; 16] = [
-        1 << 0, 1 << 1, 1 << 2, 1 << 3,
-        1 << 4, 1 << 5, 1 << 6, 1 << 7,
-        1 << 0, 1 << 1, 1 << 2, 1 << 3,
-        1 << 4, 1 << 5, 1 << 6, 1 << 7,
+pub unsafe fn simd_movemask_i8(a: Simd) -> u16 {
+    // assume that each byte is either 0 or -1
+    static pow2: [u8; 16] = [
+        1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7,
+        1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6, 1 << 7
     ];
-    let extended = vreinterpretq_u8_s8(vshrq_n_s8(vreinterpretq_s8_s16(a), 7));
-    let masked = vandq_u8(vld1q_u8(&MD[0] as *const u8), extended);
-    let tmp = vzip_u8(vget_low_u8(masked), vget_high_u8(masked));
-    let x = vreinterpretq_u16_u8(vcombine_u8(tmp.0, tmp.1));
-    vaddvq_u16(x) as u32
+    let mask = vld1q_u8(pow2.as_ptr());
+    let masked = vandq_u8(vreinterpretq_u8_s16(a), mask);
+    let lo = vaddv_u8(vget_low_u8(masked)) as u16;
+    let hi = vaddv_u8(vget_high_u8(masked)) as u16;
+    (hi << 8) | lo
 }
 
 #[macro_export]
@@ -286,7 +279,7 @@ pub unsafe fn simd_prefix_scan_i16(R_max: Simd, gap_cost: Simd, _gap_cost_lane: 
 
 #[target_feature(enable = "neon")]
 #[inline]
-pub unsafe fn halfsimd_lookup2_i16(lut1: Simd, lut2: Simd, v: HalfSimd) -> Simd {
+pub unsafe fn halfsimd_lookup2_i16(lut1: LutSimd, lut2: LutSimd, v: HalfSimd) -> Simd {
     let v2 = vcombine_u8(vreinterpret_u8_s8(v), vdup_n_u8(0));
     let c = vget_low_s8(vqtbl2q_s8(int8x16x2_t(lut1, lut2), v2));
     vmovl_s8(c)
@@ -294,7 +287,7 @@ pub unsafe fn halfsimd_lookup2_i16(lut1: Simd, lut2: Simd, v: HalfSimd) -> Simd 
 
 #[target_feature(enable = "neon")]
 #[inline]
-pub unsafe fn halfsimd_lookup1_i16(lut: Simd, v: HalfSimd) -> Simd {
+pub unsafe fn halfsimd_lookup1_i16(lut: LutSimd, v: HalfSimd) -> Simd {
     let v2 = vcombine_u8(vand_u8(vreinterpret_u8_s8(v), vdup_n_u8(0b1111)), vdup_n_u8(0));
     let c = vget_low_s8(vqtbl1q_s8(lut, v2));
     vmovl_s8(c)
@@ -315,6 +308,14 @@ pub unsafe fn halfsimd_load(ptr: *const HalfSimd) -> HalfSimd { vld1_s8(ptr as *
 #[target_feature(enable = "neon")]
 #[inline]
 pub unsafe fn halfsimd_loadu(ptr: *const HalfSimd) -> HalfSimd { vld1_s8(ptr as *const i8) }
+
+#[target_feature(enable = "neon")]
+#[inline]
+pub unsafe fn lutsimd_load(ptr: *const LutSimd) -> LutSimd { vld1q_s8(ptr as *const i8) }
+
+#[target_feature(enable = "neon")]
+#[inline]
+pub unsafe fn lutsimd_loadu(ptr: *const LutSimd) -> LutSimd { vld1q_s8(ptr as *const i8) }
 
 #[target_feature(enable = "neon")]
 #[inline]
@@ -410,8 +411,11 @@ mod tests {
 
             let test = A([1, 2, 3, 4, 5, 6, 7, 8]);
             let test_rev = A([8, 7, 6, 5, 4, 3, 2, 1]);
+            let test_mask = A([0, -1, 0, -1, 0, -1, 0, -1]);
             let vec0 = simd_load(test.0.as_ptr() as *const Simd);
             let vec0_rev = simd_load(test_rev.0.as_ptr() as *const Simd);
+            let vec0_mask = simd_load(test_mask.0.as_ptr() as *const Simd);
+
             let mut vec1 = simd_sl_i16!(vec0, vec0, 1);
             simd_assert_vec_eq(vec1, [8, 1, 2, 3, 4, 5, 6, 7]);
 
@@ -419,33 +423,24 @@ mod tests {
             simd_assert_vec_eq(vec1, [2, 3, 4, 5, 6, 7, 8, 1]);
 
             vec1 = simd_adds_i16(vec0, vec0);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [2, 4, 6, 8, 10, 12, 14, 16]);
 
             vec1 = simd_subs_i16(vec0, vec0);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [0, 0, 0, 0, 0, 0, 0, 0]);
 
             vec1 = simd_max_i16(vec0, vec0_rev);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [8, 7, 6, 5, 5, 6, 7, 8]);
 
             vec1 = simd_cmpeq_i16(vec0, vec0_rev);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [0, 0, 0, 0, 0, 0, 0, 0]);
 
             vec1 = simd_cmpeq_i16(vec0, vec0);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [-1, -1, -1, -1, -1, -1, -1, -1]);
 
             vec1 = simd_cmpgt_i16(vec0, vec0_rev);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [0, 0, 0, 0, -1, -1, -1, -1]);
 
-            let test_mask = A([0, -1, 0, -1, 0, -1, 0, -1]);
-            let vec0_mask = simd_load(test_mask.0.as_ptr() as *const Simd);
             vec1 = simd_blend_i8(vec0, vec0_rev, vec0_mask);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [1, 3, 3, 5, 5, 7, 7, 9]);
 
             let mut val = simd_extract_i16!(vec0, 0);
@@ -455,25 +450,23 @@ mod tests {
             assert_eq!(val, 1);
 
             vec1 = simd_insert_i16!(vec0, 0, 2);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [1, 2, 0, 4, 5, 6, 7, 8]);
 
-            let val1 = simd_movemask_i8(vec0);
-            assert_eq!(val1, 0);
+            let val1 = simd_movemask_i8(vec0_mask);
+            assert_eq!(val1, 0b1100110011001100);
 
             vec1 = simd_sllz_i16!(vec0, 1);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [0, 1, 2, 3, 4, 5, 6, 7]);
 
             vec1 = simd_broadcasthi_i16(vec0);
-            simd_dbg_i16(vec1);
             simd_assert_vec_eq(vec1, [8, 8, 8, 8, 8, 8, 8, 8]);
 
             val = simd_hmax_i16(vec0);
             assert_eq!(val, 8);
 
-            val = simd_prefix_hadd_i16!(vec0, 4);
-            assert_eq!(val, -32768);
+            let zeros = simd_set1_i16(ZERO);
+            val = simd_prefix_hadd_i16!(simd_adds_i16(vec0, zeros), 4);
+            assert_eq!(val, 10);
 
             val = simd_prefix_hmax_i16!(vec0, 4);
             assert_eq!(val, 4);
@@ -483,26 +476,6 @@ mod tests {
 
             let val2 = simd_hargmax_i16(vec0, 4);
             assert_eq!(val2, 3);
-
-            vec1 = halfsimd_lookup2_i16(vec0, vec0, vec0);
-            simd_dbg_i16(vec1);
-            simd_assert_vec_eq(vec1, [0, 1, 2, 1, 0, 1, 3, 1]);
-
-            vec1 = halfsimd_lookup1_i16(vec0, vec0);
-            simd_dbg_i16(vec1);
-            simd_assert_vec_eq(vec1, [0, 1, 2, 1, 0, 1, 3, 1]);
-
-            vec1 = halfsimd_lookup_bytes_i16(vec0, vec0, vec0, vec0);
-            simd_dbg_i16(vec1);
-            simd_assert_vec_eq(vec1, [1, 0, 2, 0, 3, 0, 4, 0]);
-
-            vec1 = halfsimd_sub_i8(vec0, vec0);
-            simd_dbg_i16(vec1);
-            simd_assert_vec_eq(vec1, [0, 0, 0, 0, 0, 0, 0, 0]);
-
-            // vec1 = halfsimd_sr_i8!(vec0, vec0, 1);
-            // simd_dbg_i16(vec1);
-            // simd_assert_vec_eq(vec1, [512, 768, 1024, 256, 5, 6, 7, 8]);
         }
         unsafe { inner(); }
     }

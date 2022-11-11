@@ -97,8 +97,8 @@ impl Matrix for AAMatrix {
     unsafe fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
         // efficiently lookup scores for each character in v
         let matrix_ptr = self.as_ptr(c as usize);
-        let scores1 = halfsimd_load(matrix_ptr as *const HalfSimd);
-        let scores2 = halfsimd_load((matrix_ptr as *const HalfSimd).add(1));
+        let scores1 = lutsimd_load(matrix_ptr as *const LutSimd);
+        let scores2 = lutsimd_load((matrix_ptr as *const LutSimd).add(1));
         halfsimd_lookup2_i16(scores1, scores2, v)
     }
 
@@ -175,7 +175,7 @@ impl Matrix for NucMatrix {
     unsafe fn get_scores(&self, c: u8, v: HalfSimd, _right: bool) -> Simd {
         // efficiently lookup scores for each character in v
         let matrix_ptr = self.as_ptr(c as usize);
-        let scores = halfsimd_load(matrix_ptr as *const HalfSimd);
+        let scores = lutsimd_load(matrix_ptr as *const LutSimd);
         halfsimd_lookup1_i16(scores, v)
     }
 
@@ -494,8 +494,8 @@ impl Profile for AAProfile {
     unsafe fn get_scores_pos(&self, i: usize, v: HalfSimd, _right: bool) -> Simd {
         // efficiently lookup scores for each character in v
         let matrix_ptr = self.as_ptr_pos(i);
-        let scores1 = halfsimd_loadu(matrix_ptr as *const HalfSimd);
-        let scores2 = halfsimd_loadu((matrix_ptr as *const HalfSimd).add(1));
+        let scores1 = lutsimd_loadu(matrix_ptr as *const LutSimd);
+        let scores2 = lutsimd_loadu((matrix_ptr as *const LutSimd).add(1));
         halfsimd_lookup2_i16(scores1, scores2, v)
     }
 
