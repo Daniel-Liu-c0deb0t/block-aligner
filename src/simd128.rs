@@ -472,7 +472,7 @@ mod tests {
             vec1 = simd_insert_i16!(vec0, 0, 2);
             simd_assert_vec_eq(vec1, [1, 2, 0, 4, 5, 6, 7, 8]);
 
-            let mut val1 = simd_movemask_i8(vec0_mask);
+            let val1 = simd_movemask_i8(vec0_mask);
             assert_eq!(val1, 0b1100110011001100);
 
             vec1 = simd_sllz_i16!(vec0, 1);
