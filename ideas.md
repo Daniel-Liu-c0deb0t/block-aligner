@@ -14,8 +14,7 @@ However, with vertical or horizontal bands, I quickly realized that it was too h
 identify the direction to shift. I also thought about using L-shaped areas and other shapes
 to tile the DP matrix, but eventually I settled on square blocks due to their flexibility.
 
-WASM SIMD support was especially interesting due to Apple's M1 CPU, because ARM CPUs may
-be more widespread and focusing only on x86 SIMD instructions would be bad.
+WASM SIMD support was especially interesting since it is cross-platform.
 
 ## Some failed ideas
 1. What if we took Daily's prefix scan idea and made it faster and made it banded using

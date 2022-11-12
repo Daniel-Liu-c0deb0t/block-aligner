@@ -1,4 +1,3 @@
-#[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
 
 pub type Simd = int16x8_t;
@@ -8,7 +7,7 @@ pub type TraceType = i16;
 /// Number of 16-bit lanes in a SIMD vector.
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
-pub const HALFSIMD_MUL: usize = 2;
+pub const HALFSIMD_MUL: usize = 1;
 pub const ZERO: i16 = 1 << 14;
 pub const MIN: i16 = 0;
 
@@ -486,6 +485,7 @@ mod tests {
         unsafe fn inner() {
             #[repr(align(16))]
             struct A([i16; L]);
+
             let vec = A([8, 9, 10, 15, 12, 13, 14, 11]);
             let gap = simd_set1_i16(0);
             let (_, consts) = get_prefix_scan_consts(gap);
