@@ -6,6 +6,9 @@ use crate::avx2::*;
 #[cfg(feature = "simd_wasm")]
 use crate::simd128::*;
 
+#[cfg(feature = "simd_neon")]
+use crate::neon::*;
+
 use crate::scores::*;
 use crate::cigar::*;
 
@@ -78,6 +81,7 @@ macro_rules! align_core_gen {
     ($fn_name:ident, $matrix_or_profile:tt, $state:tt, $place_block_right_fn:path, $place_block_down_fn:path) => {
         #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
         #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+        #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
         #[allow(non_snake_case)]
         unsafe fn $fn_name<M: $matrix_or_profile>(&mut self, mut state: $state<M>) {
             // store the best alignment ending location for x drop alignment
@@ -548,6 +552,7 @@ macro_rules! place_block_profile_gen {
     ($fn_name:ident, $query: ident, $query_type: ty, $reference: ident, $reference_type: ty, $q: ident, $r: ident, $right: expr) => {
         #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
         #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+        #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
         #[allow(non_snake_case)]
         unsafe fn $fn_name<P: Profile>(_state: &StateProfile<P>,
                                        $query: $query_type,
@@ -839,6 +844,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn just_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, off_add: Simd) {
@@ -854,6 +860,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn prefix_max(buf: *const i16) -> i16 {
@@ -862,6 +869,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn suffix_max(buf: *const i16, buf_len: usize) -> i16 {
@@ -870,6 +878,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn shift_and_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> Simd {
@@ -915,6 +924,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// sequence to sequence alignment is symmetric.
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[allow(non_snake_case)]
     unsafe fn place_block<M: Matrix>(state: &State<M>,
                                      query: &PaddedBytes,
@@ -1139,6 +1149,7 @@ impl Allocated {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     unsafe fn clear(&mut self, query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) {
         // do not overwrite query_len, reference_len, etc. because they are upper bounds
         assert!(query_len + reference_len <= self.query_len + self.reference_len);
@@ -1214,6 +1225,7 @@ impl Trace {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[inline]
     unsafe fn add_trace(&mut self, t: TraceType, t2: TraceType) {
         debug_assert!(self.trace_idx < self.trace.len());
@@ -1457,6 +1469,7 @@ impl Aligned {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     pub unsafe fn clear(&mut self, block_size: usize) {
         let mut i = 0;
         while i < block_size {
@@ -1467,6 +1480,7 @@ impl Aligned {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[inline]
     pub unsafe fn set_vec(&mut self, o: &Aligned, idx: usize) {
         simd_store(self.ptr.add(idx) as _, simd_load(o.as_ptr().add(idx) as _));
@@ -1474,6 +1488,7 @@ impl Aligned {
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
     #[inline]
     pub unsafe fn copy_vec(&mut self, new_idx: usize, idx: usize) {
         simd_store(self.ptr.add(new_idx) as _, simd_load(self.ptr.add(idx) as _));

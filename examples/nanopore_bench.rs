@@ -1,6 +1,6 @@
 #![feature(bench_black_box)]
 
-#[cfg(not(feature = "simd_wasm"))]
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use parasailors::{Matrix, *};
 
 use rand::prelude::*;
@@ -54,7 +54,7 @@ fn get_data(file_name: Option<&str>) -> Vec<(Vec<u8>, Vec<u8>)> {
     }
 }
 
-#[cfg(not(feature = "simd_wasm"))]
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 #[allow(dead_code)]
 fn bench_parasailors_nuc_core(file: bool, _trace: bool, _max_size: usize) -> (i32, Duration) {
     let file_data = get_data(if file { Some(&FILE_NAME) } else { None });

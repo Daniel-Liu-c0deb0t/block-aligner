@@ -1,6 +1,6 @@
 #![feature(bench_black_box)]
 
-#[cfg(not(feature = "simd_wasm"))]
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use parasailors;
 
 use block_aligner::scan_block::*;
@@ -28,7 +28,7 @@ fn bench_ours(pairs: &[(AAProfile, PaddedBytes)], min_size: usize, max_size: usi
     start.elapsed()
 }
 
-#[cfg(not(feature = "simd_wasm"))]
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 fn bench_parasail(pairs: &[(Vec<u8>, Vec<u8>)], gap_open: i8, gap_extend: i8) -> Duration {
     let matrix = parasailors::Matrix::new(parasailors::MatrixType::Blosum62);
 
@@ -110,7 +110,7 @@ fn main() {
         println!("{}-{}, {}", min_size, max_size, duration.as_secs_f64());
     }
 
-    #[cfg(not(feature = "simd_wasm"))]
+    #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
     {
         let duration = bench_parasail(&cns_pairs, gap_open, gap_extend);
         println!("parasail, {}", duration.as_secs_f64());
