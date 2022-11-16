@@ -28,6 +28,8 @@
 //! assert_eq!(cigar.to_string(), "2M6I16M3D");
 //! ```
 //!
+//! Using a minimum block size of 32 is recommended for most applications.
+//!
 //! When building your code that uses this library, it is important to specify the
 //! correct feature flags: `simd_avx2`, `simd_neon`, or `simd_wasm`.
 

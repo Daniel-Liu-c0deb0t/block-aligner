@@ -37,30 +37,32 @@ a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
 assert_eq!(cigar.to_string(), "2M6I16M3D");
 ```
 
-## Algorithm
-Pairwise alignment (weighted edit distance) involves computing the scores for each cell of a
-2D dynamic programming matrix to find out how two strings (or a string and a profile) optimally aligns.
-However, often it is possible to obtain accurate alignment scores without computing
-the entire DP matrix, through banding or other means.
+Using a minimum block size of 32 is recommended for most applications.
 
-Block aligner provides a new efficient way to compute alignments on proteins, DNA sequences,
-and byte strings.
+## Algorithm
+Block aligner provides a new efficient way to compute pairwise alignments on proteins, DNA sequences,
+and byte strings with dynamic programming.
 Block aligner also supports aligning sequences to profiles, which are position-specific
 scoring matrices and position-specific gap open costs.
-Scores are calculated in a small square block that is shifted down or right in a greedy
+It works by calculating scores in a small square block that is shifted down or right in a greedy
 manner, based on the scores at the edges of the block.
-This dynamic approach results in a much smaller calculated block area, at the expense of
-some accuracy.
-To address problems with handling large gaps, we detect gaps by keeping track of the number
-of iterations without seeing score increases. We call this "Y-drop", where Y is the threshold
-number of iterations.
-When the Y-drop condition is met, the block goes "back in time" to the previous best
-checkpoint, and the size of the block dynamically increases to attempt to span the large gap.
-The block size can also dynamically decrease when a large block size detected to not be needed.
+This dynamic approach results in a much smaller calculated block area compared to previous approaches,
+though at the expense of some accuracy.
+The block can also go back to a previous best checkpoint and grow larger, to handle difficult regions
+with large gaps.
+The block size can also dynamically shrink when it detects that a large block is not needed.
+Both block growing and shrinking are based on heuristics.
 
-Block aligner is built to exploit SIMD parallelism on modern CPUs.
+By trading off some accuracy for speed, block aligner is able to efficiently handle a variety of scoring matrices and
+adapt to sequences of varying sequence identities. In practice, it is still very accurate on a variety of protein and
+nucleotide sequences.
+
+Block aligner is designed to exploit SIMD parallelism on modern CPUs.
 Currently, AVX2 (256-bit vectors), Neon (128-bit vectors), and WASM SIMD (128-bit vectors) are supported.
 For score calculations, 16-bit score values (lanes) and 32-bit per block offsets are used.
+
+Block aligner behaves similarly to an (adaptive) banded aligner when the minimum and maximum block size is set to
+the same value.
 
 ## Install
 This library can be used on both stable and nightly Rust channels.
@@ -70,7 +72,7 @@ and benchmarks need to run on Linux or MacOS.
 To use this as a crate in your Rust project, add the following to your `Cargo.toml`:
 ```
 [dependencies]
-block-aligner = { version = "^0.2.0", features = ["simd_avx2"] }
+block-aligner = { version = "^0.3.0", features = ["simd_avx2"] }
 ```
 Use the `simd_neon` or `simd_wasm` feature flag for ARM Neon or WASM SIMD support, respectively.
 It is your responsibility to ensure the correct feature to be enabled and supported by the
