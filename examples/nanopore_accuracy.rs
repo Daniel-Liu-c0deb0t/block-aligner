@@ -5,6 +5,8 @@ fn main() {}
 fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, f64, usize) {
     use parasailors::{Matrix, *};
 
+    use bio::alignment::distance::simd::levenshtein;
+
     use block_aligner::scan_block::*;
     use block_aligner::scores::*;
 
@@ -52,10 +54,12 @@ fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: 
             wrong_avg += ((parasail_score - scan_score) as f64) / (parasail_score as f64);
 
             if verbose {
+                let edit_dist = levenshtein(q.as_bytes(), r.as_bytes());
                 println!(
-                    "parasail: {}, ours: {}\nq (len = {}): {}\nr (len = {}): {}",
+                    "parasail: {}, ours: {}, edit dist: {}\nq (len = {}): {}\nr (len = {}): {}",
                     parasail_score,
                     scan_score,
+                    edit_dist,
                     q.len(),
                     q,
                     r.len(),
