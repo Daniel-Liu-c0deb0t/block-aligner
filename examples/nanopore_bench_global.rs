@@ -50,14 +50,18 @@ fn bench_parasailors(file: &str) -> f64 {
 }
 
 #[cfg(not(feature = "simd_wasm"))]
-fn bench_wfa2(file: &str) -> f64 {
+fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
     let data = get_data(file);
 
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
         let mut wfa = WFAlignerGapAffine::new(1, 2, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
-        wfa.set_heuristic(Heuristic::None);
+        if use_heuristic {
+            wfa.set_heuristic(Heuristic::BandedAdaptive(-10, 10, 1));
+        } else {
+            wfa.set_heuristic(Heuristic::None);
+        }
         wfa.align_end_to_end(&q, &r);
         temp = temp.wrapping_add(wfa.score());
     }
@@ -100,13 +104,19 @@ fn main() {
     for (file, name) in files.iter().zip(&names) {
         let _t = bench_ours(file, false, 32);
 
+        let t = bench_ours(file, false, 32);
+        println!("{}, ours (32-32), {}", name, t);
+
         let t = bench_ours(file, false, 128);
         println!("{}, ours (32-128), {}", name, t);
 
         #[cfg(not(feature = "simd_wasm"))]
         {
-            let t = bench_wfa2(file);
+            let t = bench_wfa2(file, false);
             println!("{}, wfa2, {}", name, t);
+
+            let t = bench_wfa2(file, true);
+            println!("{}, wfa2 adaptive band, {}", name, t);
         }
 
         #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
