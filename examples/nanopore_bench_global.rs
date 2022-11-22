@@ -56,9 +56,9 @@ fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
     let start = Instant::now();
     let mut temp = 0i32;
     for (q, r) in &data {
-        let mut wfa = WFAlignerGapAffine::new(1, 2, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+        let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
         if use_heuristic {
-            wfa.set_heuristic(Heuristic::BandedAdaptive(-10, 10, 1));
+            wfa.set_heuristic(Heuristic::BandedAdaptive(-5, 5, 1));
         } else {
             wfa.set_heuristic(Heuristic::None);
         }
