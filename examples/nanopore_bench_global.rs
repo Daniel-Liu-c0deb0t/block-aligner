@@ -69,11 +69,11 @@ fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
     start.elapsed().as_secs_f64()
 }
 
-fn bench_ours(file: &str, trace: bool, max_size: usize) -> f64 {
+fn bench_ours(file: &str, trace: bool, size: (usize, usize)) -> f64 {
     let file_data = get_data(file);
     let data = file_data
         .iter()
-        .map(|(q, r)| (PaddedBytes::from_bytes::<NucMatrix>(q, 2048), PaddedBytes::from_bytes::<NucMatrix>(r, 2048)))
+        .map(|(q, r)| (PaddedBytes::from_bytes::<NucMatrix>(q, size.1), PaddedBytes::from_bytes::<NucMatrix>(r, size.1)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     let bench_gaps = Gaps { open: -2, extend: -1 };
 
@@ -81,12 +81,12 @@ fn bench_ours(file: &str, trace: bool, max_size: usize) -> f64 {
     let mut temp = 0i32;
     for (q, r) in &data {
         if trace {
-            let mut a = Block::<true, false>::new(q.len(), r.len(), max_size);
-            a.align(&q, &r, &NW1, bench_gaps, 32..=max_size, 0);
+            let mut a = Block::<true, false>::new(q.len(), r.len(), size.1);
+            a.align(&q, &r, &NW1, bench_gaps, size.0..=size.1, 0);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         } else {
-            let mut a = Block::<false, false>::new(q.len(), r.len(), max_size);
-            a.align(&q, &r, &NW1, bench_gaps, 32..=max_size, 0);
+            let mut a = Block::<false, false>::new(q.len(), r.len(), size.1);
+            a.align(&q, &r, &NW1, bench_gaps, size.0..=size.1, 0);
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         }
     }
@@ -95,20 +95,21 @@ fn bench_ours(file: &str, trace: bool, max_size: usize) -> f64 {
 }
 
 fn main() {
-    let files = ["data/real.ont.b10M.txt"];
-    let names = ["nanopore 1kbp"];
+    let files = ["data/real.ont.b10M.txt", "data/seq_pairs.10kbps.5000.txt", "data/seq_pairs.50kbps.10000.txt"];
+    let names = ["nanopore 1kbp", "nanopore <10kbp", "nanopore <50kbp"];
+    let sizes = [[(32, 32), (32, 128)], [(128, 128), (128, 1024)], [(512, 512), (512, 4096)]];
+    let run_parasail_arr = [true, true, false];
 
     println!("# time (s)");
     println!("dataset, algorithm, time");
 
-    for (file, name) in files.iter().zip(&names) {
-        let _t = bench_ours(file, false, 32);
+    for (((file, name), size), &run_parasail) in files.iter().zip(&names).zip(&sizes).zip(&run_parasail_arr) {
+        let _t = bench_ours(file, false, (32, 32));
 
-        let t = bench_ours(file, false, 32);
-        println!("{}, ours (32-32), {}", name, t);
-
-        let t = bench_ours(file, false, 128);
-        println!("{}, ours (32-128), {}", name, t);
+        for &s in size {
+            let t = bench_ours(file, false, s);
+            println!("{}, ours ({}-{}), {}", name, s.0, s.1, t);
+        }
 
         #[cfg(not(feature = "simd_wasm"))]
         {
@@ -119,10 +120,12 @@ fn main() {
             println!("{}, wfa2 adaptive band, {}", name, t);
         }
 
-        #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
-        {
-            let t = bench_parasailors(file);
-            println!("{}, parasail, {}", name, t);
+        if run_parasail {
+            #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
+            {
+                let t = bench_parasailors(file);
+                println!("{}, parasail, {}", name, t);
+            }
         }
     }
 }

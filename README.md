@@ -37,6 +37,8 @@ a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
 assert_eq!(cigar.to_string(), "2M6I16M3D");
 ```
 
+To give an example of good block sizes to use, a min block size of ~1% sequence length and a max block size
+of ~10% sequence length performs well for Nanopore reads.
 Using a minimum block size of 32 is recommended for most applications.
 
 ## Algorithm
