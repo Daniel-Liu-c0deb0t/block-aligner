@@ -58,7 +58,7 @@ fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
     for (q, r) in &data {
         let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
         if use_heuristic {
-            wfa.set_heuristic(Heuristic::BandedAdaptive(-5, 5, 1));
+            wfa.set_heuristic(Heuristic::WFadaptive(10, 50, 1));
         } else {
             wfa.set_heuristic(Heuristic::None);
         }
@@ -117,7 +117,7 @@ fn main() {
             println!("{}, wfa2, {}", name, t);
 
             let t = bench_wfa2(file, true);
-            println!("{}, wfa2 adaptive band, {}", name, t);
+            println!("{}, wfa2 adaptive, {}", name, t);
         }
 
         if run_parasail {
