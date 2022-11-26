@@ -95,17 +95,15 @@ fn bench_ours(file: &str, trace: bool, size: (usize, usize)) -> f64 {
 }
 
 fn main() {
-    let files = ["data/real.ont.b10M.txt", "data/seq_pairs.10kbps.5000.txt", "data/seq_pairs.50kbps.10000.txt"];
-    let names = ["nanopore 1kbp", "nanopore <10kbp", "nanopore <50kbp"];
-    let sizes = [[(32, 32), (32, 128)], [(128, 128), (128, 1024)], [(512, 512), (512, 4096)]];
-    let run_parasail_arr = [true, true, false];
+    let files = ["data/real.illumina.b10M.txt", "data/real.ont.b10M.txt", "data/seq_pairs.10kbps.5000.txt", "data/seq_pairs.50kbps.10000.txt"];
+    let names = ["illumina", "nanopore 1kbp", "nanopore <10kbp", "nanopore <50kbp"];
+    let sizes = [[(32, 32), (32, 32)], [(32, 32), (32, 128)], [(128, 128), (128, 1024)], [(512, 512), (512, 4096)]];
+    let run_parasail_arr = [true, true, true, false];
 
     println!("# time (s)");
     println!("dataset, algorithm, time");
 
     for (((file, name), size), &run_parasail) in files.iter().zip(&names).zip(&sizes).zip(&run_parasail_arr) {
-        let _t = bench_ours(file, false, (32, 32));
-
         for &s in size {
             let t = bench_ours(file, false, s);
             println!("{}, ours ({}-{}), {}", name, s.0, s.1, t);
