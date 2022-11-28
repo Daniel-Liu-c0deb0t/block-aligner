@@ -12,6 +12,20 @@ by Suzuki and Kasahara.
 1. `curl -OL https://github.com/Daniel-Liu-c0deb0t/diff-bench-paper/releases/download/v1.0/sequences.txt.gz`
 2. `gunzip sequences.txt.gz`
 
+Since these reads are filtered to only have gaps smaller than 20bp, it is not representative of typical reads. Therefore,
+this dataset will be rarely used.
+
+## \<10kbp and \<50kbp Nanopore data
+This data is from the BiWFA [repository](https://github.com/smarco/BiWFA-paper/tree/main/evaluation/data)
+and reformatted.
+
+1. `curl -OL https://github.com/Daniel-Liu-c0deb0t/block-aligner/releases/download/v0.0.0/seq_pairs.10kbps.5000.txt.gz`
+2. `curl -OL https://github.com/Daniel-Liu-c0deb0t/block-aligner/releases/download/v0.0.0/seq_pairs.50kbps.10000.txt.gz`
+3. `gunzip seq_pairs.10kbps.5000.txt.gz`
+4. `gunzip seq_pairs.50kbps.10000.txt.gz`
+
+These files contain pairs of reads that are alignable.
+
 ## Illumina and 1kbp Nanopore data
 This data is from the Wavefront Aligner [paper](https://academic.oup.com/bioinformatics/article/37/4/456/5904262).
 

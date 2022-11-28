@@ -37,7 +37,13 @@ a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
 assert_eq!(cigar.to_string(), "2M6I16M3D");
 ```
 
+## Tuning block sizes
+
+For long, noisy Nanopore reads, a min block size of ~1% sequence length and a max block size
+of ~10% sequence length performs well (tested with reads up to ~50kbps).
+For proteins, a min block size of 32 and a max block size of 256 performs well.
 Using a minimum block size of 32 is recommended for most applications.
+Let me know how block aligner performs on your data!
 
 ## Algorithm
 Block aligner provides a new efficient way to compute pairwise alignments on proteins, DNA sequences,

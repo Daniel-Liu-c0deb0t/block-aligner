@@ -52,6 +52,10 @@ bio = "^0.33"
 [build-dependencies]
 cbindgen = "^0.20.0"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Includes small changes that ensures wfa2 code autovectorizes
+rust-wfa2 = { git = "https://github.com/Daniel-Liu-c0deb0t/rust-wfa2" }
+
 [target.'cfg(not(any(target_arch = "wasm32", target_arch = "aarch64")))'.dev-dependencies]
 parasailors = "^0.3.1"
 image = "^0.23.14"
