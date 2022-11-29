@@ -83,7 +83,8 @@ block-aligner = { version = "^0.3.0", features = ["simd_avx2"] }
 Use the `simd_neon` or `simd_wasm` feature flag for ARM Neon or WASM SIMD support, respectively.
 It is your responsibility to ensure the correct feature to be enabled and supported by the
 platform that runs the code because this library does not automatically detect the supported
-SIMD instruction set.
+SIMD instruction set. More information on specifying different features for different platforms
+with the same dependency [here](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#platform-specific-dependencies).
 
 For developing, testing, or using the C API, you should clone this repo
 and use Rust nightly. In general, when building, you need to specify the

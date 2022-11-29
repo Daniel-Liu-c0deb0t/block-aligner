@@ -38,6 +38,8 @@
 //!
 //! When building your code that uses this library, it is important to specify the
 //! correct feature flags: `simd_avx2`, `simd_neon`, or `simd_wasm`.
+//! More information on specifying different features for different platforms
+//! with the same dependency [here](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#platform-specific-dependencies).
 
 #![cfg_attr(feature = "mca", feature(asm))]
 
