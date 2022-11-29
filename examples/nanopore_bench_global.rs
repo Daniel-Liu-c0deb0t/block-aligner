@@ -53,7 +53,7 @@ fn bench_parasailors(file: &str) -> f64 {
 fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
     let data = get_data(file);
 
-    let start = Instant::now();
+    let mut total_time = 0f64;
     let mut temp = 0i32;
     for (q, r) in &data {
         let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
@@ -62,11 +62,13 @@ fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
         } else {
             wfa.set_heuristic(Heuristic::None);
         }
+        let start = Instant::now();
         wfa.align_end_to_end(&q, &r);
+        total_time += start.elapsed().as_secs_f64();
         temp = temp.wrapping_add(wfa.score());
     }
     black_box(temp);
-    start.elapsed().as_secs_f64()
+    total_time
 }
 
 fn bench_ours(file: &str, trace: bool, size: (usize, usize)) -> f64 {
@@ -77,21 +79,25 @@ fn bench_ours(file: &str, trace: bool, size: (usize, usize)) -> f64 {
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     let bench_gaps = Gaps { open: -2, extend: -1 };
 
-    let start = Instant::now();
+    let mut total_time = 0f64;
     let mut temp = 0i32;
     for (q, r) in &data {
         if trace {
             let mut a = Block::<true, false>::new(q.len(), r.len(), size.1);
+            let start = Instant::now();
             a.align(&q, &r, &NW1, bench_gaps, size.0..=size.1, 0);
+            total_time += start.elapsed().as_secs_f64();
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         } else {
             let mut a = Block::<false, false>::new(q.len(), r.len(), size.1);
+            let start = Instant::now();
             a.align(&q, &r, &NW1, bench_gaps, size.0..=size.1, 0);
+            total_time += start.elapsed().as_secs_f64();
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         }
     }
     black_box(temp);
-    start.elapsed().as_secs_f64()
+    total_time
 }
 
 fn main() {
