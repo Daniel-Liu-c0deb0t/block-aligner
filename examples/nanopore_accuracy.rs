@@ -2,8 +2,10 @@
 fn main() {}
 
 #[cfg(feature = "simd_avx2")]
-fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, f64, usize) {
+fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, usize, f64, usize) {
     use parasailors::{Matrix, *};
+
+    use rust_wfa2::aligner::*;
 
     use bio::alignment::distance::simd::levenshtein;
 
@@ -14,6 +16,7 @@ fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: 
     use std::io::{BufRead, BufReader};
 
     let mut wrong = 0usize;
+    let mut wfa_wrong = 0usize;
     let mut wrong_avg = 0f64;
     let mut count = 0usize;
     let reader = BufReader::new(File::open(file_name).unwrap());
@@ -83,10 +86,26 @@ fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: 
             }
         }
 
+        let wfa_adaptive_score = {
+            let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+            wfa.set_heuristic(Heuristic::WFadaptive(10, 50, 1));
+            wfa.align_end_to_end(q.as_bytes(), r.as_bytes());
+            wfa.score()
+        };
+        let wfa_score = {
+            let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+            wfa.set_heuristic(Heuristic::None);
+            wfa.align_end_to_end(q.as_bytes(), r.as_bytes());
+            wfa.score()
+        };
+        if wfa_adaptive_score != wfa_score {
+            wfa_wrong += 1;
+        }
+
         count += 1;
     }
 
-    (wrong, wrong_avg / (wrong as f64), count)
+    (wrong, wfa_wrong, wrong_avg / (wrong as f64), count)
 }
 
 #[cfg(feature = "simd_avx2")]
@@ -106,11 +125,11 @@ fn main() {
     let mut writer = BufWriter::new(File::create(out_file_name).unwrap());
     write!(writer, "dataset, size, query len, reference len, pred score, true score\n").unwrap();
 
-    println!("\ndataset, size, total, wrong, wrong % error");
+    println!("\ndataset, size, total, wrong, wrong % error, wfa wrong");
 
     for ((path, name), (&min_size, &max_size)) in paths.iter().zip(&names).zip(min_size.iter().zip(&max_size)) {
-        let (wrong, wrong_avg, count) = test(path, min_size, max_size, name, verbose, &mut writer);
-        println!("\n{}, {}-{}, {}, {}, {}", name, min_size, max_size, count, wrong, wrong_avg);
+        let (wrong, wfa_wrong, wrong_avg, count) = test(path, min_size, max_size, name, verbose, &mut writer);
+        println!("\n{}, {}-{}, {}, {}, {}, {}", name, min_size, max_size, count, wrong, wrong_avg, wfa_wrong);
     }
 
     println!("# Done!");
