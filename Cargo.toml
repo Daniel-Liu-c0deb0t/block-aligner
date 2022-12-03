@@ -48,8 +48,6 @@ rand = { version = "^0.8", default-features = false, features = ["std_rng", "all
 
 [dev-dependencies]
 bio = "^0.33"
-# Removed logging and extra dependencies
-edlib_rs = { git = "https://github.com/Daniel-Liu-c0deb0t/edlib-rs" }
 
 [build-dependencies]
 cbindgen = "^0.20.0"
@@ -60,3 +58,5 @@ image = "^0.23.14"
 imageproc = "^0.22.0"
 # Includes small changes that ensures wfa2 code autovectorizes
 rust-wfa2 = { git = "https://github.com/Daniel-Liu-c0deb0t/rust-wfa2" }
+# Removed logging and extra dependencies
+edlib_rs = { git = "https://github.com/Daniel-Liu-c0deb0t/edlib-rs" }

@@ -6,6 +6,7 @@ use parasailors::{Matrix, *};
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use rust_wfa2::aligner::*;
 
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use edlib_rs::edlibrs::*;
 
 use block_aligner::scan_block::*;
@@ -76,6 +77,7 @@ fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
     total_time
 }
 
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 fn bench_edlib(file: &str) -> f64 {
     let data = get_data(file);
 
@@ -135,8 +137,11 @@ fn main() {
             println!("{}, ours ({}-{}), {}", name, s.0, s.1, t);
         }
 
-        let t = bench_edlib(file);
-        println!("{}, edlib, {}", name, t);
+        #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
+        {
+            let t = bench_edlib(file);
+            println!("{}, edlib, {}", name, t);
+        }
 
         #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
         {
