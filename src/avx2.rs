@@ -15,9 +15,10 @@ pub const ZERO: i16 = 1 << 14;
 pub const MIN: i16 = 0;
 
 // Non-temporal store to avoid cluttering cache with traces
+// Actually, non-temporal stores are slower in benchmarks!
 #[target_feature(enable = "avx2")]
 #[inline]
-pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { _mm_stream_si32(ptr, trace); }
+pub unsafe fn store_trace(ptr: *mut TraceType, trace: TraceType) { *ptr = trace; } // _mm_stream_si32(ptr, trace);
 
 #[target_feature(enable = "avx2")]
 #[inline]

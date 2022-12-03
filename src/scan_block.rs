@@ -15,6 +15,9 @@ use crate::cigar::*;
 use std::{cmp, ptr, i16, alloc};
 use std::ops::RangeInclusive;
 
+#[cfg(feature = "mca")]
+use std::arch::asm;
+
 // Notes:
 //
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11 (includes extension), gap extend = -1
@@ -1297,8 +1300,8 @@ impl Trace {
             }
 
             // use lookup table instead of hard to predict branches
-            static OP_LUT: [(Operation, usize, usize, Table); 128] = {
-                let mut lut = [(Operation::D, 0, 1, Table::D); 128];
+            static OP_LUT: [[(Operation, usize, usize, Table); 64]; 2] = {
+                let mut lut = [[(Operation::D, 0, 1, Table::D); 64]; 2];
 
                 // table: the current DP table, D, C, or R (tables are standardized to right = true)
                 // trace: 2 bits, first bit is whether the max equals C table entry, second bit is
@@ -1349,7 +1352,7 @@ impl Trace {
                                     }
                                 };
 
-                                lut[(right << 6) | (trace << 4) | (trace2 << 2) | (table as usize)] = res;
+                                lut[right][(trace << 4) | (trace2 << 2) | (table as usize)] = res;
                                 table_idx += 1;
                             }
                             trace2 += 1;
@@ -1365,6 +1368,7 @@ impl Trace {
             let mut table = Table::D;
 
             while i > 0 || j > 0 {
+                // find the current block that contains (i, j)
                 loop {
                     block_idx -= 1;
                     block_i = *self.block_start.as_ptr().add(block_idx * 2) as usize;
@@ -1379,6 +1383,8 @@ impl Trace {
                     }
                 }
 
+                // compute traceback within the current block
+                let lut = &OP_LUT[right];
                 if right > 0 {
                     while i >= block_i && j >= block_j && (i > 0 || j > 0) {
                         let curr_i = i - block_i;
@@ -1386,12 +1392,12 @@ impl Trace {
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
-                        let lut_idx = (right << 6) | (t << 4) | (t2 << 2) | (table as usize);
+                        let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
 
-                        let op = OP_LUT[lut_idx].0;
-                        i -= OP_LUT[lut_idx].1;
-                        j -= OP_LUT[lut_idx].2;
-                        table = OP_LUT[lut_idx].3;
+                        let op = lut[lut_idx].0;
+                        i -= lut[lut_idx].1;
+                        j -= lut[lut_idx].2;
+                        table = lut[lut_idx].3;
                         cigar.add(op);
                     }
                 } else {
@@ -1401,12 +1407,12 @@ impl Trace {
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
-                        let lut_idx = (right << 6) | (t << 4) | (t2 << 2) | (table as usize);
+                        let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
 
-                        let op = OP_LUT[lut_idx].0;
-                        i -= OP_LUT[lut_idx].1;
-                        j -= OP_LUT[lut_idx].2;
-                        table = OP_LUT[lut_idx].3;
+                        let op = lut[lut_idx].0;
+                        i -= lut[lut_idx].1;
+                        j -= lut[lut_idx].2;
+                        table = lut[lut_idx].3;
                         cigar.add(op);
                     }
                 }

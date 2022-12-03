@@ -41,8 +41,6 @@
 //! More information on specifying different features for different platforms
 //! with the same dependency [here](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#platform-specific-dependencies).
 
-#![cfg_attr(feature = "mca", feature(asm))]
-
 //use wee_alloc::WeeAlloc;
 
 //#[global_allocator]
