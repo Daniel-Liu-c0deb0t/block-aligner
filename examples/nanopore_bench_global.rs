@@ -6,6 +6,8 @@ use parasailors::{Matrix, *};
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use rust_wfa2::aligner::*;
 
+use edlib_rs::edlibrs::*;
+
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 
@@ -40,13 +42,16 @@ fn bench_parasailors(file: &str) -> f64 {
         .map(|(q, r)| (parasailors::Profile::new(q, &matrix), r.to_owned()))
         .collect::<Vec<(parasailors::Profile, Vec<u8>)>>();
 
-    let start = Instant::now();
+    let mut total_time = 0f64;
     let mut temp = 0i32;
     for (p, r) in &data {
-        temp = temp.wrapping_add(global_alignment_score(p, r, 2, 1));
+        let start = Instant::now();
+        let res = global_alignment_score(p, r, 2, 1);
+        total_time += start.elapsed().as_secs_f64();
+        temp = temp.wrapping_add(res);
     }
     black_box(temp);
-    start.elapsed().as_secs_f64()
+    total_time
 }
 
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
@@ -66,6 +71,21 @@ fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
         wfa.align_end_to_end(&q, &r);
         total_time += start.elapsed().as_secs_f64();
         temp = temp.wrapping_add(wfa.score());
+    }
+    black_box(temp);
+    total_time
+}
+
+fn bench_edlib(file: &str) -> f64 {
+    let data = get_data(file);
+
+    let mut total_time = 0f64;
+    let mut temp = 0i32;
+    for (q, r) in &data {
+        let start = Instant::now();
+        let res = edlibAlignRs(&q, &r, &EdlibAlignConfigRs::default());
+        total_time += start.elapsed().as_secs_f64();
+        temp = temp.wrapping_add(res.editDistance);
     }
     black_box(temp);
     total_time
@@ -114,6 +134,9 @@ fn main() {
             let t = bench_ours(file, false, s);
             println!("{}, ours ({}-{}), {}", name, s.0, s.1, t);
         }
+
+        let t = bench_edlib(file);
+        println!("{}, edlib, {}", name, t);
 
         #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
         {

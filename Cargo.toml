@@ -48,6 +48,8 @@ rand = { version = "^0.8", default-features = false, features = ["std_rng", "all
 
 [dev-dependencies]
 bio = "^0.33"
+# Removed logging and extra dependencies
+edlib_rs = { git = "https://github.com/Daniel-Liu-c0deb0t/edlib-rs" }
 
 [build-dependencies]
 cbindgen = "^0.20.0"
