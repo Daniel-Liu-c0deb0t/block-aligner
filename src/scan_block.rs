@@ -1384,7 +1384,7 @@ impl Trace {
                 }
 
                 // compute traceback within the current block
-                let lut = &OP_LUT[right];
+                let lut = &*OP_LUT.as_ptr().add(right);
                 if right > 0 {
                     while i >= block_i && j >= block_j && (i > 0 || j > 0) {
                         let curr_i = i - block_i;
@@ -1393,11 +1393,12 @@ impl Trace {
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
+                        let lut_entry = &*lut.as_ptr().add(lut_idx);
 
-                        let op = lut[lut_idx].0;
-                        i -= lut[lut_idx].1;
-                        j -= lut[lut_idx].2;
-                        table = lut[lut_idx].3;
+                        let op = lut_entry.0;
+                        i -= lut_entry.1;
+                        j -= lut_entry.2;
+                        table = lut_entry.3;
                         cigar.add(op);
                     }
                 } else {
@@ -1408,11 +1409,12 @@ impl Trace {
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
+                        let lut_entry = &*lut.as_ptr().add(lut_idx);
 
-                        let op = lut[lut_idx].0;
-                        i -= lut[lut_idx].1;
-                        j -= lut[lut_idx].2;
-                        table = lut[lut_idx].3;
+                        let op = lut_entry.0;
+                        i -= lut_entry.1;
+                        j -= lut_entry.2;
+                        table = lut_entry.3;
                         cigar.add(op);
                     }
                 }
