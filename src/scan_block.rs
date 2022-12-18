@@ -668,9 +668,10 @@ macro_rules! place_block_profile_gen {
                         // compress trace with movemask to save space
                         let mask = simd_set1_i16(0xFF00u16 as i16);
                         let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, mask));
-                        let trace_R = simd_sl_i16!(simd_cmpeq_i16(R11, D11_open), prev_trace_R, 1);
+                        let temp_trace_R = simd_cmpeq_i16(R11, D11_open);
+                        let trace_R = simd_sl_i16!(temp_trace_R, prev_trace_R, 1);
                         let trace_data2 = simd_movemask_i8(simd_blend_i8(simd_cmpeq_i16(C11, C11_open), trace_R, mask));
-                        prev_trace_R = trace_R;
+                        prev_trace_R = temp_trace_R;
                         trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                     }
 
@@ -1020,9 +1021,10 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     // compress trace with movemask to save space
                     let mask = simd_set1_i16(0xFF00u16 as i16);
                     let trace_data = simd_movemask_i8(simd_blend_i8(trace_D_C, trace_D_R, mask));
-                    let trace_R = simd_sl_i16!(simd_cmpeq_i16(R11, D11_open), prev_trace_R, 1);
+                    let temp_trace_R = simd_cmpeq_i16(R11, D11_open);
+                    let trace_R = simd_sl_i16!(temp_trace_R, prev_trace_R, 1);
                     let trace_data2 = simd_movemask_i8(simd_blend_i8(simd_cmpeq_i16(C11, C11_open), trace_R, mask));
-                    prev_trace_R = trace_R;
+                    prev_trace_R = temp_trace_R;
                     trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                 }
 
@@ -1764,6 +1766,24 @@ mod tests {
         assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
         a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
         assert_eq!(cigar.to_string(), "2M6I16M3D");
+
+        let mut a = Block::<true, false>::new(100, 100, 32);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAATTGCGCT", 32);
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAAAAAGCGC", 32);
+
+        a.align(&q, &r, &NW1, test_gaps2, 32..=32, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 8, query_idx: 16, reference_idx: 13 });
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "9M2I4M1I");
+
+        let matrix = NucMatrix::new_simple(2, -1);
+        let test_gaps3 = Gaps { open: -5, extend: -2 };
+        a.align(&q, &r, &matrix, test_gaps3, 32..=32, 0);
+        let res = a.res();
+        assert_eq!(res, AlignResult { score: 14, query_idx: 16, reference_idx: 13 });
+        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "9M2I4M1I");
     }
 
     #[test]
