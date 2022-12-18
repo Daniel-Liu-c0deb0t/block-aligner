@@ -1280,8 +1280,25 @@ impl Trace {
     /// location.
     ///
     /// When aligning `q` against `r`, this represents the edits to go from `r` to `q`.
-    pub fn cigar(&self, mut i: usize, mut j: usize, cigar: &mut Cigar) {
+    /// Matches and mismatches are both represented with `M`.
+    pub fn cigar(&self, i: usize, j: usize, cigar: &mut Cigar) {
+        self.cigar_core::<false>(i, j, None, None, cigar);
+    }
+
+    /// Create a CIGAR string that represents a single traceback path ending on the specified
+    /// location.
+    ///
+    /// When aligning `q` against `r`, this represents the edits to go from `r` to `q`.
+    /// Matches are represented using `=` and mismatches are represented using `X`.
+    pub fn cigar_eq(&self, query: &PaddedBytes, reference: &PaddedBytes, i: usize, j: usize, cigar: &mut Cigar) {
+        self.cigar_core::<true>(i, j, Some(query), Some(reference), cigar);
+    }
+
+    fn cigar_core<const EQ: bool>(&self, mut i: usize, mut j: usize, q: Option<&PaddedBytes>, r: Option<&PaddedBytes>, cigar: &mut Cigar) {
         assert!(i <= self.query_len && j <= self.reference_len, "Traceback cigar end position must be in bounds!");
+        if EQ {
+            assert!(q.is_some() && r.is_some());
+        }
 
         cigar.clear(i, j);
 
@@ -1397,7 +1414,15 @@ impl Trace {
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
                         let lut_entry = &*lut.as_ptr().add(lut_idx);
 
-                        let op = lut_entry.0;
+                        let op = if EQ && lut_entry.0 == Operation::M {
+                            if q.unwrap_unchecked().get(i) == r.unwrap_unchecked().get(j) {
+                                Operation::Eq
+                            } else {
+                                Operation::X
+                            }
+                        } else {
+                            lut_entry.0
+                        };
                         i -= lut_entry.1;
                         j -= lut_entry.2;
                         table = lut_entry.3;
@@ -1413,7 +1438,15 @@ impl Trace {
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
                         let lut_entry = &*lut.as_ptr().add(lut_idx);
 
-                        let op = lut_entry.0;
+                        let op = if EQ && lut_entry.0 == Operation::M {
+                            if q.unwrap_unchecked().get(i) == r.unwrap_unchecked().get(j) {
+                                Operation::Eq
+                            } else {
+                                Operation::X
+                            }
+                        } else {
+                            lut_entry.0
+                        };
                         i -= lut_entry.1;
                         j -= lut_entry.2;
                         table = lut_entry.3;
@@ -1746,8 +1779,8 @@ mod tests {
         a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 14, query_idx: 6, reference_idx: 6 });
-        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
-        assert_eq!(cigar.to_string(), "6M");
+        a.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "3=2X1=");
 
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAA", 16);
@@ -1774,16 +1807,16 @@ mod tests {
         a.align(&q, &r, &NW1, test_gaps2, 32..=32, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 8, query_idx: 16, reference_idx: 13 });
-        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
-        assert_eq!(cigar.to_string(), "9M2I4M1I");
+        a.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "9=2I4=1I");
 
         let matrix = NucMatrix::new_simple(2, -1);
         let test_gaps3 = Gaps { open: -5, extend: -2 };
         a.align(&q, &r, &matrix, test_gaps3, 32..=32, 0);
         let res = a.res();
         assert_eq!(res, AlignResult { score: 14, query_idx: 16, reference_idx: 13 });
-        a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
-        assert_eq!(cigar.to_string(), "9M2I4M1I");
+        a.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "9=2I4=1I");
     }
 
     #[test]

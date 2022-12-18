@@ -32,18 +32,10 @@ let res = a.res();
 assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
 
 let mut cigar = Cigar::new(res.query_idx, res.reference_idx);
-a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+a.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
 
-assert_eq!(cigar.to_string(), "2M6I16M3D");
+assert_eq!(cigar.to_string(), "2=6I16=3D");
 ```
-
-## Tuning block sizes
-
-For long, noisy Nanopore reads, a min block size of ~1% sequence length and a max block size
-of ~10% sequence length performs well (tested with reads up to ~50kbps).
-For proteins, a min block size of 32 and a max block size of 256 performs well.
-Using a minimum block size of 32 is recommended for most applications.
-Let me know how block aligner performs on your data!
 
 ## Algorithm
 Block aligner provides a new efficient way to compute pairwise alignments on proteins, DNA sequences,
@@ -69,6 +61,14 @@ For score calculations, 16-bit score values (lanes) and 32-bit per block offsets
 
 Block aligner behaves similarly to an (adaptive) banded aligner when the minimum and maximum block size is set to
 the same value.
+
+## Tuning block sizes
+
+For long, noisy Nanopore reads, a min block size of ~1% sequence length and a max block size
+of ~10% sequence length performs well (tested with reads up to ~50kbps).
+For proteins, a min block size of 32 and a max block size of 256 performs well.
+Using a minimum block size of 32 is recommended for most applications.
+Let me know how block aligner performs on your data!
 
 ## Install
 This library can be used on both stable and nightly Rust channels.

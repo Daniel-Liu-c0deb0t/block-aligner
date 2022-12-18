@@ -23,9 +23,9 @@
 //! assert_eq!(res, AlignResult { score: 7, query_idx: 24, reference_idx: 21 });
 //!
 //! let mut cigar = Cigar::new(res.query_idx, res.reference_idx);
-//! a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
+//! a.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
 //!
-//! assert_eq!(cigar.to_string(), "2M6I16M3D");
+//! assert_eq!(cigar.to_string(), "2=6I16=3D");
 //! ```
 //!
 //! ## Tuning block sizes
