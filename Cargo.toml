@@ -19,6 +19,8 @@ features = ["simd_avx2"]
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
+c_bindings = ["cbindgen"]
+
 # Enable AVX2
 simd_avx2 = []
 # Enable WASM SIMD
@@ -50,7 +52,7 @@ rand = { version = "^0.8", default-features = false, features = ["std_rng", "all
 bio = "^0.33"
 
 [build-dependencies]
-cbindgen = "^0.20.0"
+cbindgen = { version = "^0.20.0", optional = true }
 
 [target.'cfg(not(any(target_arch = "wasm32", target_arch = "aarch64")))'.dev-dependencies]
 parasailors = { git = "https://github.com/Daniel-Liu-c0deb0t/parasailors-new" }
