@@ -88,3 +88,11 @@ pub mod simulate;
 #[cfg(any(feature = "simd_avx2", feature = "simd_neon"))]
 #[doc(hidden)]
 pub mod ffi;
+
+/// Calculate the percentage of a length, rounded to the next power of two.
+///
+/// This is useful for computing the min and max block sizes for sequences of a certain
+/// length by using percentages. The returned value is at least 32.
+pub fn percent_len(len: usize, p: f32) -> usize {
+    ((p * (len as f32)).round() as usize).max(32).next_power_of_two()
+}
