@@ -60,6 +60,21 @@ struct State<'a, M: Matrix> {
 }
 
 /// Keeps track of internal state and some parameters for block aligner for
+/// sequence to profile alignment.
+///
+/// This does not describe the whole state. The allocated scratch spaces
+/// and other local variables are also needed.
+struct StateProfile<'a, P: Profile> {
+    query: &'a PaddedBytes,
+    i: usize,
+    reference: &'a P,
+    j: usize,
+    min_size: usize,
+    max_size: usize,
+    x_drop: i32
+}
+
+/// Keeps track of internal state and some parameters for block aligner for
 /// 3di sequence alignment.
 ///
 /// This does not describe the whole state. The allocated scratch spaces
@@ -74,21 +89,6 @@ struct State3di<'a, M: Matrix> {
     matrix: &'a M,
     matrix_3di: &'a M,
     gaps: Gaps,
-    x_drop: i32
-}
-
-/// Keeps track of internal state and some parameters for block aligner for
-/// sequence to profile alignment.
-///
-/// This does not describe the whole state. The allocated scratch spaces
-/// and other local variables are also needed.
-struct StateProfile<'a, P: Profile> {
-    query: &'a PaddedBytes,
-    i: usize,
-    reference: &'a P,
-    j: usize,
-    min_size: usize,
-    max_size: usize,
     x_drop: i32
 }
 

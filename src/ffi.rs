@@ -34,9 +34,16 @@ pub unsafe extern fn block_new_simple_aamatrix(match_score: i8, mismatch_score: 
     Box::into_raw(matrix)
 }
 
+/// Set an entry in the AAMatrix.
+#[no_mangle]
+pub unsafe extern fn block_set_aamatrix(matrix: *mut AAMatrix, a: u8, b: u8, score: i8) {
+    let matrix = &mut *matrix;
+    matrix.set(a, b, score);
+}
+
 /// Frees an AAMatrix.
 #[no_mangle]
-pub unsafe extern fn block_free_simple_aamatrix(matrix: *mut AAMatrix) {
+pub unsafe extern fn block_free_aamatrix(matrix: *mut AAMatrix) {
     drop(Box::from_raw(matrix));
 }
 
@@ -195,6 +202,7 @@ macro_rules! gen_functions {
     ($new_name:ident, $new_doc:expr,
      $align_name:ident, $align_doc:expr,
      $align_profile_name:ident, $align_profile_doc:expr,
+     $align_3di_name:ident, $align_3di_doc:expr,
      $res_name:ident, $res_doc:expr,
      $trace_name:ident, $trace_doc:expr,
      $free_name:ident, $free_doc:expr,
@@ -232,6 +240,22 @@ macro_rules! gen_functions {
             aligner.align_profile(&*q, &*r, s.min..=s.max, x);
         }
 
+        #[doc = $align_3di_doc]
+        #[no_mangle]
+        pub unsafe extern fn $align_3di_name(b: BlockHandle,
+                                             q: *const PaddedBytes,
+                                             q_3di: *const PaddedBytes,
+                                             r: *const PaddedBytes,
+                                             r_3di: *const PaddedBytes,
+                                             m: *const $matrix,
+                                             m_3di: *const $matrix,
+                                             g: Gaps,
+                                             s: SizeRange,
+                                             x: i32) {
+            let aligner = &mut *(b as *mut Block<$trace, $x_drop>);
+            aligner.align_3di(&*q, &*q_3di, &*r, &*r_3di, &*m, &*m_3di, g, s.min..=s.max, x);
+        }
+
         #[doc = $res_doc]
         #[no_mangle]
         pub unsafe extern fn $res_name(b: BlockHandle) -> AlignResult {
@@ -261,6 +285,8 @@ gen_functions!(
     "Global alignment of two amino acid strings (no traceback).",
     block_align_profile_aa,
     "Global alignment of an amino acid sequence to a profile (no traceback).",
+    block_align_3di_aa,
+    "Global alignment of two amino acid strings with 3di (no traceback).",
     block_res_aa,
     "Retrieves the result of global alignment of two amino acid strings (no traceback).",
     _block_cigar_aa,
@@ -277,6 +303,8 @@ gen_functions!(
     "X-drop alignment of two amino acid strings (no traceback).",
     block_align_profile_aa_xdrop,
     "X-drop alignment of an amino acid sequence to a profile (no traceback).",
+    block_align_3di_aa_xdrop,
+    "X-drop alignment of two amino acid strings with 3di (no traceback).",
     block_res_aa_xdrop,
     "Retrieves the result of X-drop alignment of two amino acid strings (no traceback).",
     _block_cigar_aa_xdrop,
@@ -293,6 +321,8 @@ gen_functions!(
     "Global alignment of two amino acid strings, with traceback.",
     block_align_profile_aa_trace,
     "Global alignment of an amino acid sequence to a profile, with traceback.",
+    block_align_3di_aa_trace,
+    "Global alignment of two amino acid strings with 3di, with traceback.",
     block_res_aa_trace,
     "Retrieves the result of global alignment of two amino acid strings, with traceback.",
     block_cigar_aa_trace,
@@ -309,6 +339,8 @@ gen_functions!(
     "X-drop alignment of two amino acid strings, with traceback.",
     block_align_profile_aa_trace_xdrop,
     "X-drop alignment of an amino acid sequence to a profile, with traceback.",
+    block_align_3di_aa_trace_xdrop,
+    "X-drop alignment of two amino acid strings with 3di, with traceback.",
     block_res_aa_trace_xdrop,
     "Retrieves the result of X-drop alignment of two amino acid strings, with traceback.",
     block_cigar_aa_trace_xdrop,
