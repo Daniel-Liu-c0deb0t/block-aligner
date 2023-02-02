@@ -11,7 +11,7 @@ is demand for them.
 to generate the header file, and make sure block aligner is linked to the
 example program. Make sure you have [cbindgen](https://github.com/eqrion/cbindgen) installed
 if you are making changes to the block aligner code and need to regenerate bindings.
-3. Run `./a.out`. This will run the example program to perform alignment
+3. Run `./example`. This will run the example program to perform alignment
 calculations.
 
 The generated header file, `c/block_aligner.h`, should be included in
