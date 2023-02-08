@@ -1,5 +1,3 @@
-#![feature(bench_black_box)]
-
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use parasailors::{Matrix, *};
 
