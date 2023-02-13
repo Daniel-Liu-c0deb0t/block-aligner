@@ -758,7 +758,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// computed, even when the the strings are long.
     ///
     /// When aligning sequences `q` against `r`, this algorithm computes cells in the DP matrix
-    /// with `|q|` rows and `|r|` columns.
+    /// with `|q| + 1` rows and `|r| + 1` columns.
     ///
     /// X-drop alignment with `ByteMatrix` is not supported.
     pub fn align<M: Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
@@ -817,7 +817,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// computed, even when the the strings are long.
     ///
     /// When aligning sequence `q` against profile `p`, this algorithm computes cells in the DP matrix
-    /// with `|q|` rows and `|p|` columns.
+    /// with `|q| + 1` rows and `|p| + 1` columns.
     pub fn align_profile<P: Profile>(&mut self, query: &PaddedBytes, profile: &P, size: RangeInclusive<usize>, x_drop: i32) {
         // check invariants so bad stuff doesn't happen later
         assert!(profile.get_gap_extend() < 0, "Gap extend cost must be negative!");

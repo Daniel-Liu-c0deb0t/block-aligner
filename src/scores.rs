@@ -312,7 +312,13 @@ pub trait Profile {
     /// Byte to use as padding.
     const NULL: u8;
 
-    /// Create a new profile of a specific length, with default (usually nonsense) values.
+    /// Create a new profile of a specific length, with default (large negative) values.
+    ///
+    /// Note that internally, the created profile is longer than a conventional position-specific scoring
+    /// matrix (and `str_len`) by 1, so the profile will have the same length as the number of
+    /// columns in the DP matrix.
+    /// The first column of scores in the profile should be large negative values (padding).
+    /// This allows gap open costs to be specified for the first column of the DP matrix.
     fn new(str_len: usize, block_size: usize, gap_extend: i8) -> Self;
     /// Create a new profile from a byte string.
     fn from_bytes(b: &[u8], block_size: usize, match_score: i8, mismatch_score: i8, gap_open_C: i8, gap_close_C: i8, gap_open_R: i8, gap_extend: i8) -> Self;
@@ -323,23 +329,26 @@ pub trait Profile {
     /// to the length this struct was created with.
     fn clear(&mut self, str_len: usize);
     /// Set the score for a position and byte.
+    ///
+    /// The first column (`i = 0`) should be padded with large negative values.
+    /// Therefore, set values starting from `i = 1`.
     fn set(&mut self, i: usize, b: u8, score: i8);
     /// Set the gap open cost for a column.
     ///
     /// When aligning a sequence `q` to a profile `r`, this is the gap open cost at column `i` for a
-    /// column transition in the DP matrix with `|q|` rows and `|r|` columns.
+    /// column transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
     /// This represents starting a gap in `q`.
     fn set_gap_open_C(&mut self, i: usize, gap: i8);
     /// Set the gap close cost for a column.
     ///
     /// When aligning a sequence `q` to a profile `r`, this is the gap close cost at column `i` for
-    /// ending column transitions in the DP matrix with `|q|` rows and `|r|` columns.
+    /// ending column transitions in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
     /// This represents ending a gap in `q`.
     fn set_gap_close_C(&mut self, i: usize, gap: i8);
     /// Set the gap open cost for a row.
     ///
     /// When aligning a sequence `q` to a profile `r`, this is the gap open cost at column `i` for
-    /// a row transition in the DP matrix with `|q|` rows and `|r|` columns.
+    /// a row transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
     /// This represents starting a gap in `r`.
     fn set_gap_open_R(&mut self, i: usize, gap: i8);
 

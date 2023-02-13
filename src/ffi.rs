@@ -43,7 +43,13 @@ pub unsafe extern fn block_free_simple_aamatrix(matrix: *mut AAMatrix) {
 
 // AAProfile
 
-/// Create a new empty AAProfile of a specific length.
+/// Create a new profile of a specific length, with default (large negative) values.
+///
+/// Note that internally, the created profile is longer than a conventional position-specific scoring
+/// matrix (and `str_len`) by 1, so the profile will have the same length as the number of
+/// columns in the DP matrix.
+/// The first column of scores in the profile should be large negative values (padding).
+/// This allows gap open costs to be specified for the first column of the DP matrix.
 #[no_mangle]
 pub unsafe extern fn block_new_aaprofile(str_len: usize, block_size: usize, gap_extend: i8) -> *mut AAProfile {
     let profile = Box::new(AAProfile::new(str_len, block_size, gap_extend));
@@ -66,6 +72,9 @@ pub unsafe extern fn block_clear_aaprofile(profile: *mut AAProfile, str_len: usi
 }
 
 /// Set the score for a position and byte.
+///
+/// The first column (`i = 0`) should be padded with large negative values.
+/// Therefore, set values starting from `i = 1`.
 #[no_mangle]
 pub unsafe extern fn block_set_aaprofile(profile: *mut AAProfile, i: usize, b: u8, score: i8) {
     let profile = &mut *profile;
@@ -75,7 +84,7 @@ pub unsafe extern fn block_set_aaprofile(profile: *mut AAProfile, i: usize, b: u
 /// Set the gap open cost for a column.
 ///
 /// When aligning a sequence `q` to a profile `r`, this is the gap open cost at column `i` for a
-/// column transition in the DP matrix with `|q|` rows and `|r|` columns.
+/// column transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
 /// This represents starting a gap in `q`.
 #[no_mangle]
 pub unsafe extern fn block_set_gap_open_C_aaprofile(profile: *mut AAProfile, i: usize, gap: i8) {
@@ -86,7 +95,7 @@ pub unsafe extern fn block_set_gap_open_C_aaprofile(profile: *mut AAProfile, i: 
 /// Set the gap close cost for a column.
 ///
 /// When aligning a sequence `q` to a profile `r`, this is the gap close cost at column `i` for
-/// ending column transitions in the DP matrix with `|q|` rows and `|r|` columns.
+/// ending column transitions in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
 /// This represents ending a gap in `q`.
 #[no_mangle]
 pub unsafe extern fn block_set_gap_close_C_aaprofile(profile: *mut AAProfile, i: usize, gap: i8) {
@@ -97,7 +106,7 @@ pub unsafe extern fn block_set_gap_close_C_aaprofile(profile: *mut AAProfile, i:
 /// Set the gap open cost for a row.
 ///
 /// When aligning a sequence `q` to a profile `r`, this is the gap open cost at column `i` for
-/// a row transition in the DP matrix with `|q|` rows and `|r|` columns.
+/// a row transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
 /// This represents starting a gap in `r`.
 #[no_mangle]
 pub unsafe extern fn block_set_gap_open_R_aaprofile(profile: *mut AAProfile, i: usize, gap: i8) {

@@ -12,7 +12,7 @@ pub enum Operation {
     Sentinel = 0u8,
     /// Match or mismatch.
     ///
-    /// This is a diagonal transition in the DP matrix with `|q|` rows and `|r|` columns.
+    /// This is a diagonal transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
     M = 1u8,
     /// Match.
     Eq = 2u8,
@@ -21,12 +21,12 @@ pub enum Operation {
     /// Insertion.
     ///
     /// When aligning sequences `q` against `r`, this is a gap in `r`.
-    /// This is a row transition in the DP matrix with `|q|` rows and `|r|` columns.
+    /// This is a row transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
     I = 4u8,
     /// Deletion.
     ///
     /// When aligning sequences `q` against `r`, this is a gap in `q`.
-    /// This is a column transition in the DP matrix with `|q|` rows and `|r|` columns.
+    /// This is a column transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
     D = 5u8
 }
 
