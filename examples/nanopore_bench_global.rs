@@ -7,6 +7,7 @@ use rust_wfa2::aligner::*;
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use edlib_rs::edlibrs::*;
 
+use block_aligner::percent_len;
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 
@@ -91,27 +92,30 @@ fn bench_edlib(file: &str) -> f64 {
     total_time
 }
 
-fn bench_ours(file: &str, trace: bool, size: (usize, usize)) -> f64 {
+fn bench_ours(file: &str, trace: bool, max_size: usize, block_grow: bool) -> f64 {
     let file_data = get_data(file);
     let data = file_data
         .iter()
-        .map(|(q, r)| (PaddedBytes::from_bytes::<NucMatrix>(q, size.1), PaddedBytes::from_bytes::<NucMatrix>(r, size.1)))
+        .map(|(q, r)| (PaddedBytes::from_bytes::<NucMatrix>(q, max_size), PaddedBytes::from_bytes::<NucMatrix>(r, max_size)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
     let bench_gaps = Gaps { open: -2, extend: -1 };
 
     let mut total_time = 0f64;
     let mut temp = 0i32;
     for (q, r) in &data {
+        let max_len = q.len().max(r.len());
+        let max_percent = if block_grow { 0.1 } else { 0.01 };
+
         if trace {
-            let mut a = Block::<true, false>::new(q.len(), r.len(), size.1);
+            let mut a = Block::<true, false>::new(q.len(), r.len(), max_size);
             let start = Instant::now();
-            a.align(&q, &r, &NW1, bench_gaps, size.0..=size.1, 0);
+            a.align(&q, &r, &NW1, bench_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, max_percent), 0);
             total_time += start.elapsed().as_secs_f64();
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         } else {
-            let mut a = Block::<false, false>::new(q.len(), r.len(), size.1);
+            let mut a = Block::<false, false>::new(q.len(), r.len(), max_size);
             let start = Instant::now();
-            a.align(&q, &r, &NW1, bench_gaps, size.0..=size.1, 0);
+            a.align(&q, &r, &NW1, bench_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, max_percent), 0);
             total_time += start.elapsed().as_secs_f64();
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         }
@@ -123,16 +127,16 @@ fn bench_ours(file: &str, trace: bool, size: (usize, usize)) -> f64 {
 fn main() {
     let files = ["data/real.illumina.b10M.txt", "data/real.ont.b10M.txt", "data/seq_pairs.10kbps.5000.txt", "data/seq_pairs.50kbps.10000.txt"];
     let names = ["illumina", "nanopore 1kbp", "nanopore <10kbp", "nanopore <50kbp"];
-    let sizes = [[(32, 32), (32, 32)], [(32, 32), (32, 128)], [(128, 128), (128, 1024)], [(512, 512), (512, 4096)]];
+    let max_sizes = [[32, 32], [32, 128], [128, 1024], [512, 8192]];
     let run_parasail_arr = [true, true, true, false];
 
     println!("# time (s)");
     println!("dataset, algorithm, time");
 
-    for (((file, name), size), &run_parasail) in files.iter().zip(&names).zip(&sizes).zip(&run_parasail_arr) {
-        for &s in size {
-            let t = bench_ours(file, false, s);
-            println!("{}, ours ({}-{}), {}", name, s.0, s.1, t);
+    for (((file, name), max_size), &run_parasail) in files.iter().zip(&names).zip(&max_sizes).zip(&run_parasail_arr) {
+        for (&s, &g) in max_size.iter().zip(&[false, true]) {
+            let t = bench_ours(file, false, s, g);
+            println!("{}, ours ({}), {}", name, if g { "1%-10%" } else { "1%-1%" }, t);
         }
 
         #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
