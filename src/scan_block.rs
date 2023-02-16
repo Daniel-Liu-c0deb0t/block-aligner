@@ -868,7 +868,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn prefix_max(buf: *const i16) -> i16 {
-        simd_prefix_hadd_i16!(simd_load(buf as _), STEP)
+        simd_prefix_hmax_i16!(simd_load(buf as _), STEP)
     }
 
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
