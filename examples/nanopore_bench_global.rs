@@ -7,6 +7,9 @@ use rust_wfa2::aligner::*;
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use edlib_rs::edlibrs::*;
 
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
+use ksw2_sys::*;
+
 use block_aligner::percent_len;
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
@@ -36,7 +39,7 @@ fn get_data(file_name: &str) -> Vec<(Vec<u8>, Vec<u8>)> {
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 fn bench_parasailors(file: &str) -> f64 {
     let file_data = get_data(file);
-    let matrix = Matrix::new(MatrixType::IdentityWithPenalty);
+    let matrix = Matrix::create("ACGNT", 2, -4);
     let data = file_data
         .iter()
         .map(|(q, r)| (parasailors::Profile::new(q, &matrix), r.to_owned()))
@@ -46,7 +49,7 @@ fn bench_parasailors(file: &str) -> f64 {
     let mut temp = 0i32;
     for (p, r) in &data {
         let start = Instant::now();
-        let res = global_alignment_score(p, r, 2, 1);
+        let res = global_alignment_score(p, r, 6, 2);
         total_time += start.elapsed().as_secs_f64();
         temp = temp.wrapping_add(res);
     }
@@ -61,7 +64,7 @@ fn bench_wfa2(file: &str, use_heuristic: bool) -> f64 {
     let mut total_time = 0f64;
     let mut temp = 0i32;
     for (q, r) in &data {
-        let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+        let mut wfa = WFAlignerGapAffine::new(4, 4, 2, AlignmentScope::Score, MemoryModel::MemoryHigh);
         if use_heuristic {
             wfa.set_heuristic(Heuristic::WFadaptive(10, 50, 1));
         } else {
@@ -92,13 +95,53 @@ fn bench_edlib(file: &str) -> f64 {
     total_time
 }
 
+#[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
+fn bench_ksw2(file: &str) -> f64 {
+    let lut = {
+        let mut l = [0u8; 128];
+        l[b'A' as usize] = 0;
+        l[b'C' as usize] = 1;
+        l[b'G' as usize] = 2;
+        l[b'T' as usize] = 3;
+        l[b'N' as usize] = 4;
+        l
+    };
+    let file_data = get_data(file);
+    let data = file_data
+        .iter()
+        .map(|(q, r)| (q.iter().map(|&c| lut[c as usize]).collect(), r.iter().map(|&c| lut[c as usize]).collect()))
+        .collect::<Vec<(Vec<u8>, Vec<u8>)>>();
+    let matrix = {
+        let mut m = [0i8; 5 * 5];
+        m[0] = 2;
+        m[1] = -4;
+        m
+    };
+    let mut res: ksw_extz_t = unsafe { std::mem::zeroed() };
+
+    let mut total_time = 0f64;
+    let mut temp = 0i32;
+    for (q, r) in &data {
+        let band_width = percent_len(q.len().max(r.len()), 0.01) as i32;
+        let start = Instant::now();
+        unsafe {
+            ksw_extz2_sse(std::ptr::null_mut(), q.len() as i32, q.as_ptr(), r.len() as i32, r.as_ptr(), 5, matrix.as_ptr(), 4, 2, band_width, -1, 0, 1, &mut res);
+        }
+        total_time += start.elapsed().as_secs_f64();
+        temp = temp.wrapping_add(res.score);
+    }
+    black_box(temp);
+    total_time
+}
+
 fn bench_ours(file: &str, trace: bool, max_size: usize, block_grow: bool) -> f64 {
     let file_data = get_data(file);
     let data = file_data
         .iter()
         .map(|(q, r)| (PaddedBytes::from_bytes::<NucMatrix>(q, max_size), PaddedBytes::from_bytes::<NucMatrix>(r, max_size)))
         .collect::<Vec<(PaddedBytes, PaddedBytes)>>();
-    let bench_gaps = Gaps { open: -2, extend: -1 };
+    let bench_gaps = Gaps { open: -6, extend: -2 };
+    let matrix = NucMatrix::new_simple(2, -4);
 
     let mut total_time = 0f64;
     let mut temp = 0i32;
@@ -109,13 +152,13 @@ fn bench_ours(file: &str, trace: bool, max_size: usize, block_grow: bool) -> f64
         if trace {
             let mut a = Block::<true, false>::new(q.len(), r.len(), max_size);
             let start = Instant::now();
-            a.align(&q, &r, &NW1, bench_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, max_percent), 0);
+            a.align(&q, &r, &matrix, bench_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, max_percent), 0);
             total_time += start.elapsed().as_secs_f64();
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         } else {
             let mut a = Block::<false, false>::new(q.len(), r.len(), max_size);
             let start = Instant::now();
-            a.align(&q, &r, &NW1, bench_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, max_percent), 0);
+            a.align(&q, &r, &matrix, bench_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, max_percent), 0);
             total_time += start.elapsed().as_secs_f64();
             temp = temp.wrapping_add(a.res().score); // prevent optimizations
         }
@@ -143,6 +186,12 @@ fn main() {
         {
             let t = bench_edlib(file);
             println!("{}, edlib, {}", name, t);
+        }
+
+        #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
+        {
+            let t = bench_ksw2(file);
+            println!("{}, ksw_extz2_sse, {}", name, t);
         }
 
         #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]

@@ -62,3 +62,4 @@ imageproc = "^0.22.0"
 rust-wfa2 = { git = "https://github.com/Daniel-Liu-c0deb0t/rust-wfa2" }
 # Removed logging and extra dependencies
 edlib_rs = { git = "https://github.com/Daniel-Liu-c0deb0t/edlib-rs" }
+ksw2-sys = { git = "https://github.com/pairwise-alignment/ksw2-sys" }

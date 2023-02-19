@@ -30,32 +30,34 @@ fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mu
 
         let correct_score;
 
-        if r.len().max(q.len()) < 30000 {
+        if r.len().max(q.len()) < 15000 {
             // parasail
-            let matrix = Matrix::new(MatrixType::IdentityWithPenalty);
+            let matrix = Matrix::create("ACGNT", 2, -4);
             let profile = parasailors::Profile::new(q.as_bytes(), &matrix);
-            let parasail_score = global_alignment_score(&profile, r.as_bytes(), 2, 1);
+            let parasail_score = global_alignment_score(&profile, r.as_bytes(), 6, 2);
             correct_score = parasail_score;
         } else {
             // parasail is not accurate enough, so use block aligner with large fixed block size
-            let len = 8192;
+            let len = 16384;
             let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), len);
             let q_padded = PaddedBytes::from_bytes::<NucMatrix>(q.as_bytes(), len);
-            let run_gaps = Gaps { open: -2, extend: -1 };
+            let run_gaps = Gaps { open: -6, extend: -2 };
+            let matrix = NucMatrix::new_simple(2, -4);
             let mut block_aligner = Block::<false, false>::new(q.len(), r.len(), len);
-            block_aligner.align(&q_padded, &r_padded, &NW1, run_gaps, len..=len, 0);
+            block_aligner.align(&q_padded, &r_padded, &matrix, run_gaps, len..=len, 0);
             let scan_score = block_aligner.res().score;
             correct_score = scan_score;
         }
 
         let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), max_size);
         let q_padded = PaddedBytes::from_bytes::<NucMatrix>(q.as_bytes(), max_size);
-        let run_gaps = Gaps { open: -2, extend: -1 };
+        let run_gaps = Gaps { open: -6, extend: -2 };
+        let matrix = NucMatrix::new_simple(2, -4);
 
         // ours
         let mut block_aligner = Block::<false, false>::new(q.len(), r.len(), max_size);
         let max_len = q.len().max(r.len());
-        block_aligner.align(&q_padded, &r_padded, &NW1, run_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, 0.1), 0);
+        block_aligner.align(&q_padded, &r_padded, &matrix, run_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, 0.1), 0);
         let scan_score = block_aligner.res().score;
 
         write!(
@@ -87,20 +89,20 @@ fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mu
             }
         }
 
-        block_aligner.align(&q_padded, &r_padded, &NW1, run_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, 0.01), 0);
+        block_aligner.align(&q_padded, &r_padded, &matrix, run_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, 0.01), 0);
         let min_size_score = block_aligner.res().score;
         if min_size_score != correct_score {
             min_size_wrong += 1;
         }
 
         let wfa_adaptive_score = {
-            let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+            let mut wfa = WFAlignerGapAffine::new(4, 4, 2, AlignmentScope::Score, MemoryModel::MemoryHigh);
             wfa.set_heuristic(Heuristic::WFadaptive(10, 50, 1));
             wfa.align_end_to_end(q.as_bytes(), r.as_bytes());
             wfa.score()
         };
         let wfa_score = {
-            let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+            let mut wfa = WFAlignerGapAffine::new(4, 4, 2, AlignmentScope::Score, MemoryModel::MemoryHigh);
             wfa.set_heuristic(Heuristic::None);
             wfa.align_end_to_end(q.as_bytes(), r.as_bytes());
             wfa.score()
