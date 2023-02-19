@@ -1544,6 +1544,7 @@ impl Trace {
         assert!(i <= self.query_len && j <= self.reference_len, "Traceback cigar end position must be in bounds!");
         if EQ {
             assert!(q.is_some() && r.is_some());
+            assert!(i <= q.unwrap().len() && j <= r.unwrap().len(), "Traceback cigar end position must be in sequence bounds!");
         }
 
         cigar.clear(i, j);
