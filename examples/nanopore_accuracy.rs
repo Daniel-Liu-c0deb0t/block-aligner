@@ -2,7 +2,7 @@
 fn main() {}
 
 #[cfg(feature = "simd_avx2")]
-fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, usize, usize, f64, usize) {
+fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, usize, usize, f64, usize, f64) {
     use parasailors::{Matrix, *};
 
     use rust_wfa2::aligner::*;
@@ -21,6 +21,7 @@ fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mu
     let mut wfa_wrong = 0usize;
     let mut wrong_avg = 0f64;
     let mut count = 0usize;
+    let mut seq_id_avg = 0f64;
     let reader = BufReader::new(File::open(file_name).unwrap());
     let all_lines = reader.lines().collect::<Vec<_>>();
 
@@ -102,9 +103,13 @@ fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mu
             wfa.score()
         };
         let wfa_score = {
-            let mut wfa = WFAlignerGapAffine::new(4, 4, 2, AlignmentScope::Score, MemoryModel::MemoryHigh);
+            let mut wfa = WFAlignerGapAffine::new(4, 4, 2, AlignmentScope::Alignment, MemoryModel::MemoryHigh);
             wfa.set_heuristic(Heuristic::None);
             wfa.align_end_to_end(q.as_bytes(), r.as_bytes());
+            let cigar = wfa.cigar();
+            let matches = cigar.bytes().filter(|&c| c == b'M').count();
+            let seq_id = (matches as f64) / (cigar.len() as f64);
+            seq_id_avg += seq_id;
             wfa.score()
         };
         if wfa_adaptive_score != wfa_score {
@@ -114,7 +119,7 @@ fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mu
         count += 1;
     }
 
-    (wrong, min_size_wrong, wfa_wrong, wrong_avg / (wrong as f64), count)
+    (wrong, min_size_wrong, wfa_wrong, wrong_avg / (wrong as f64), count, seq_id_avg / (count as f64))
 }
 
 #[cfg(feature = "simd_avx2")]
@@ -136,8 +141,9 @@ fn main() {
     println!("\ndataset, total, wrong, wrong % error, min size wrong, wfa wrong");
 
     for ((path, name), &max_size) in paths.iter().zip(&names).zip(&max_size) {
-        let (wrong, min_size_wrong, wfa_wrong, wrong_avg, count) = test(path, max_size, name, verbose, &mut writer);
+        let (wrong, min_size_wrong, wfa_wrong, wrong_avg, count, seq_id_avg) = test(path, max_size, name, verbose, &mut writer);
         println!("\n{}, {}, {}, {}, {}, {}", name, count, wrong, wrong_avg, min_size_wrong, wfa_wrong);
+        println!("# {} seq id avg: {}", name, seq_id_avg);
     }
 
     println!("# Done!");
