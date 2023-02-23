@@ -1279,14 +1279,14 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                 }
 
-                D_max = simd_max_i16(D_max, D11);
-
                 if X_DROP {
                     // keep track of the best score and its location
-                    let mask = simd_cmpeq_i16(D_max, D11);
+                    let mask = simd_cmpgt_i16(D11, D_max);
                     D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
                     curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
                 }
+
+                D_max = simd_max_i16(D_max, D11);
 
                 simd_store(D_col.add(i) as _, D11);
                 simd_store(C_col.add(i) as _, C11);
