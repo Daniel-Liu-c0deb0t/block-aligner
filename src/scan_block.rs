@@ -1188,16 +1188,17 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                                          D_row: *mut i16,
                                          R_row: *mut i16,
                                          mut D_corner: Simd,
-                                         right: bool) -> (Simd, Simd) {
+                                         right: bool) -> (Simd, Simd, usize) {
         let gap_open = simd_set1_i16(state.gaps.open as i16);
         let gap_extend = simd_set1_i16(state.gaps.extend as i16);
         let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
+        let mut curr_D_max = MIN;
         let mut D_max = simd_set1_i16(MIN);
         let mut D_argmax = simd_set1_i16(0);
-        let mut curr_i = simd_set1_i16(0);
+        let mut D_argmax_j = 0;
 
         if width == 0 || height == 0 {
-            return (D_max, D_argmax);
+            return (D_max, D_argmax, D_argmax_j);
         }
 
         // hottest loop in the whole program
@@ -1206,6 +1207,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             let mut D11 = simd_set1_i16(MIN);
             let mut R11 = simd_set1_i16(MIN);
             let mut prev_trace_R = simd_set1_i16(0);
+            let mut curr_i = simd_set1_i16(0);
 
             let c = reference.bytes.get(start_j + j);
             let c_3di = reference.bytes_3di.get(start_j + j);
@@ -1299,6 +1301,14 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
             ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
+            if X_DROP {
+                let curr_max = simd_hmax_i16(D_max);
+                if curr_max > curr_D_max {
+                    curr_D_max = curr_max;
+                    D_argmax_j = j;
+                }
+            }
+
             if !X_DROP && start_i + height > query.len()
                 && start_j + j >= reference.len() {
                 if TRACE {
@@ -1310,7 +1320,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             }
         }
 
-        (D_max, D_argmax)
+        (D_max, D_argmax, D_argmax_j)
     }
 
     /// Get the resulting score and ending location of the alignment.
