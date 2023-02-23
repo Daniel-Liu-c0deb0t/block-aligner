@@ -129,9 +129,9 @@ macro_rules! align_core_gen {
                 // grow_D_max is an auxiliary value used when growing because it requires two separate
                 // place_block steps
                 let mut grow_D_max = simd_set1_i16(MIN);
-                let mut grow_D_argmax = simd_set1_i16(0);
-                let mut grow_D_argmax_j = 0;
-                let (D_max, D_argmax, D_argmax_j, mut right_max, mut down_max) = match dir {
+                let mut grow_D_argmax_i = simd_set1_i16(0);
+                let mut grow_D_argmax_j = simd_set1_i16(0);
+                let (D_max, D_argmax_i, D_argmax_j, mut right_max, mut down_max) = match dir {
                     Direction::Right => {
                         off = off_max;
                         #[cfg(feature = "debug")]
@@ -147,7 +147,7 @@ macro_rules! align_core_gen {
 
                         // compute new elements in the block as a result of shifting by the step size
                         // this region should be block_size x step
-                        let (D_max, D_argmax, D_argmax_j) = $place_block_right_fn(
+                        let (D_max, D_argmax_i, D_argmax_j) = $place_block_right_fn(
                             &state,
                             state.query,
                             state.reference,
@@ -179,7 +179,7 @@ macro_rules! align_core_gen {
                         // sum of a couple elements on the bottom border
                         let down_max = Self::prefix_max(self.allocated.D_row.as_ptr());
 
-                        (D_max, D_argmax, D_argmax_j, right_max, down_max)
+                        (D_max, D_argmax_i, D_argmax_j, right_max, down_max)
                     },
                     Direction::Down => {
                         off = off_max;
@@ -196,7 +196,7 @@ macro_rules! align_core_gen {
 
                         // compute new elements in the block as a result of shifting by the step size
                         // this region should be step x block_size
-                        let (D_max, D_argmax, D_argmax_j) = $place_block_down_fn(
+                        let (D_max, D_argmax_i, D_argmax_j) = $place_block_down_fn(
                             &state,
                             state.reference,
                             state.query,
@@ -228,7 +228,7 @@ macro_rules! align_core_gen {
                         // sum of a couple elements on the right border
                         let right_max = Self::prefix_max(self.allocated.D_col.as_ptr());
 
-                        (D_max, D_argmax, D_argmax_j, right_max, down_max)
+                        (D_max, D_argmax_i, D_argmax_j, right_max, down_max)
                     },
                     Direction::Grow => {
                         D_corner = simd_set1_i16(MIN);
@@ -245,7 +245,7 @@ macro_rules! align_core_gen {
 
                         // down
                         // this region should be prev_size x prev_size
-                        let (D_max1, D_argmax1, D_argmax_j1) = $place_block_down_fn(
+                        let (D_max1, D_argmax_i1, D_argmax_j1) = $place_block_down_fn(
                             &state,
                             state.reference,
                             state.query,
@@ -271,7 +271,7 @@ macro_rules! align_core_gen {
 
                         // right
                         // this region should be block_size x prev_size
-                        let (D_max2, D_argmax2, D_argmax_j2) = $place_block_right_fn(
+                        let (D_max2, D_argmax_i2, D_argmax_j2) = $place_block_right_fn(
                             &state,
                             state.query,
                             state.reference,
@@ -291,7 +291,7 @@ macro_rules! align_core_gen {
                         let right_max = Self::prefix_max(self.allocated.D_col.as_ptr());
                         let down_max = Self::prefix_max(self.allocated.D_row.as_ptr());
                         grow_D_max = D_max1;
-                        grow_D_argmax = D_argmax1;
+                        grow_D_argmax_i = D_argmax_i1;
                         grow_D_argmax_j = D_argmax_j1;
 
                         // must update the checkpoint saved values just in case
@@ -309,7 +309,7 @@ macro_rules! align_core_gen {
                             self.allocated.trace.save_ckpt();
                         }
 
-                        (D_max2, D_argmax2, D_argmax_j2, right_max, down_max)
+                        (D_max2, D_argmax_i2, D_argmax_j2, right_max, down_max)
                     }
                 };
 
@@ -331,9 +331,10 @@ macro_rules! align_core_gen {
                         // TODO: move outside loop
                         // calculate location with the best score
                         let lane_idx = simd_hargmax_i16(D_max, D_max_max);
-                        let idx = simd_slow_extract_i16(D_argmax, lane_idx) as usize;
-                        let r = idx * L + lane_idx;
-                        let c = (block_size - STEP) + D_argmax_j;
+                        let idx_i = simd_slow_extract_i16(D_argmax_i, lane_idx) as usize;
+                        let idx_j = simd_slow_extract_i16(D_argmax_j, lane_idx) as usize;
+                        let r = idx_i + lane_idx;
+                        let c = (block_size - STEP) + idx_j;
 
                         match dir {
                             Direction::Right => {
@@ -348,14 +349,15 @@ macro_rules! align_core_gen {
                                 // max could be in either block
                                 if max >= grow_max {
                                     // grow right
-                                    best_argmax_i = state.i + idx * L + lane_idx;
-                                    best_argmax_j = state.j + prev_size + D_argmax_j;
+                                    best_argmax_i = state.i + idx_i + lane_idx;
+                                    best_argmax_j = state.j + prev_size + idx_j;
                                 } else {
                                     // grow down
                                     let lane_idx = simd_hargmax_i16(grow_D_max, grow_max);
-                                    let idx = simd_slow_extract_i16(grow_D_argmax, lane_idx) as usize;
-                                    best_argmax_i = state.i + prev_size + grow_D_argmax_j;
-                                    best_argmax_j = state.j + idx * L + lane_idx;
+                                    let idx_i = simd_slow_extract_i16(grow_D_argmax_i, lane_idx) as usize;
+                                    let idx_j = simd_slow_extract_i16(grow_D_argmax_j, lane_idx) as usize;
+                                    best_argmax_i = state.i + prev_size + idx_j;
+                                    best_argmax_j = state.j + idx_i + lane_idx;
                                 }
                             }
                         }
@@ -575,13 +577,12 @@ macro_rules! place_block_profile_gen {
                                        D_row: *mut i16,
                                        R_row: *mut i16,
                                        mut D_corner: Simd,
-                                       _right: bool) -> (Simd, Simd, usize) {
+                                       _right: bool) -> (Simd, Simd, Simd) {
             let gap_extend = simd_set1_i16($r.get_gap_extend() as i16);
             let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
-            let mut curr_D_max = MIN;
             let mut D_max = simd_set1_i16(MIN);
-            let mut D_argmax = simd_set1_i16(0);
-            let mut D_argmax_j = 0;
+            let mut D_argmax_i = simd_set1_i16(0);
+            let mut D_argmax_j = simd_set1_i16(0);
 
             let mut idx = 0;
             let mut gap_open_C = simd_set1_i16(MIN);
@@ -590,7 +591,7 @@ macro_rules! place_block_profile_gen {
             let mut gap_close_R = simd_set1_i16(MIN);
 
             if width == 0 || height == 0 {
-                return (D_max, D_argmax, D_argmax_j);
+                return (D_max, D_argmax_i, D_argmax_j);
             }
 
             // hottest loop in the whole program
@@ -599,7 +600,6 @@ macro_rules! place_block_profile_gen {
                 let mut D11 = simd_set1_i16(MIN);
                 let mut R11 = simd_set1_i16(MIN);
                 let mut prev_trace_R = simd_set1_i16(0);
-                let mut curr_i = simd_set1_i16(0);
 
                 if $right {
                     idx = start_j + j;
@@ -682,14 +682,14 @@ macro_rules! place_block_profile_gen {
                         trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                     }
 
+                    D_max = simd_max_i16(D_max, D11);
+
                     if X_DROP {
                         // keep track of the best score and its location
-                        let mask = simd_cmpgt_i16(D11, D_max);
-                        D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
-                        curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+                        let mask = simd_cmpeq_i16(D_max, D11);
+                        D_argmax_i = simd_blend_i8(D_argmax_i, simd_set1_i16(i as i16), mask);
+                        D_argmax_j = simd_blend_i8(D_argmax_j, simd_set1_i16(j as i16), mask);
                     }
-
-                    D_max = simd_max_i16(D_max, D11);
 
                     simd_store(D_col.add(i) as _, D11);
                     simd_store(C_col.add(i) as _, C11);
@@ -700,14 +700,6 @@ macro_rules! place_block_profile_gen {
 
                 ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
                 ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
-
-                if X_DROP {
-                    let curr_max = simd_hmax_i16(D_max);
-                    if curr_max > curr_D_max {
-                        curr_D_max = curr_max;
-                        D_argmax_j = j;
-                    }
-                }
 
                 if !X_DROP && start_i + height > $query.len()
                     && start_j + j >= $reference.len() {
@@ -720,7 +712,7 @@ macro_rules! place_block_profile_gen {
                 }
             }
 
-            (D_max, D_argmax, D_argmax_j)
+            (D_max, D_argmax_i, D_argmax_j)
         }
     };
 }
@@ -958,17 +950,16 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                                      D_row: *mut i16,
                                      R_row: *mut i16,
                                      mut D_corner: Simd,
-                                     right: bool) -> (Simd, Simd, usize) {
+                                     right: bool) -> (Simd, Simd, Simd) {
         let gap_open = simd_set1_i16(state.gaps.open as i16);
         let gap_extend = simd_set1_i16(state.gaps.extend as i16);
         let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
-        let mut curr_D_max = MIN;
         let mut D_max = simd_set1_i16(MIN);
-        let mut D_argmax = simd_set1_i16(0);
-        let mut D_argmax_j = 0;
+        let mut D_argmax_i = simd_set1_i16(0);
+        let mut D_argmax_j = simd_set1_i16(0);
 
         if width == 0 || height == 0 {
-            return (D_max, D_argmax, D_argmax_j);
+            return (D_max, D_argmax_i, D_argmax_j);
         }
 
         // hottest loop in the whole program
@@ -977,7 +968,6 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             let mut D11 = simd_set1_i16(MIN);
             let mut R11 = simd_set1_i16(MIN);
             let mut prev_trace_R = simd_set1_i16(0);
-            let mut curr_i = simd_set1_i16(0);
 
             let c = reference.get(start_j + j);
 
@@ -1045,14 +1035,14 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                 }
 
+                D_max = simd_max_i16(D_max, D11);
+
                 if X_DROP {
                     // keep track of the best score and its location
-                    let mask = simd_cmpgt_i16(D11, D_max);
-                    D_argmax = simd_blend_i8(D_argmax, curr_i, mask);
-                    curr_i = simd_adds_i16(curr_i, simd_set1_i16(1));
+                    let mask = simd_cmpeq_i16(D_max, D11);
+                    D_argmax_i = simd_blend_i8(D_argmax_i, simd_set1_i16(i as i16), mask);
+                    D_argmax_j = simd_blend_i8(D_argmax_j, simd_set1_i16(j as i16), mask);
                 }
-
-                D_max = simd_max_i16(D_max, D11);
 
                 simd_store(D_col.add(i) as _, D11);
                 simd_store(C_col.add(i) as _, C11);
@@ -1067,14 +1057,6 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
             ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
-            if X_DROP {
-                let curr_max = simd_hmax_i16(D_max);
-                if curr_max > curr_D_max {
-                    curr_D_max = curr_max;
-                    D_argmax_j = j;
-                }
-            }
-
             if !X_DROP && start_i + height > query.len()
                 && start_j + j >= reference.len() {
                 if TRACE {
@@ -1086,7 +1068,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             }
         }
 
-        (D_max, D_argmax, D_argmax_j)
+        (D_max, D_argmax_i, D_argmax_j)
     }
 
     place_block_profile_gen!(place_block_profile_right, query, &PaddedBytes, reference, &P, query, reference, true);
