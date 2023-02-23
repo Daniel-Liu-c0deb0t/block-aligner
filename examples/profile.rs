@@ -1,5 +1,3 @@
-#![feature(bench_black_box)]
-
 use rand::prelude::*;
 
 use block_aligner::scan_block::*;

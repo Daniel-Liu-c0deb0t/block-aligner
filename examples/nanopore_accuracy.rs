@@ -2,13 +2,14 @@
 fn main() {}
 
 #[cfg(feature = "simd_avx2")]
-fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, usize, f64, usize) {
+fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mut impl std::io::Write) -> (usize, usize, usize, f64, usize, f64) {
     use parasailors::{Matrix, *};
 
     use rust_wfa2::aligner::*;
 
     use bio::alignment::distance::simd::levenshtein;
 
+    use block_aligner::percent_len;
     use block_aligner::scan_block::*;
     use block_aligner::scores::*;
 
@@ -16,9 +17,11 @@ fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: 
     use std::io::{BufRead, BufReader};
 
     let mut wrong = 0usize;
+    let mut min_size_wrong = 0usize;
     let mut wfa_wrong = 0usize;
     let mut wrong_avg = 0f64;
     let mut count = 0usize;
+    let mut seq_id_avg = 0f64;
     let reader = BufReader::new(File::open(file_name).unwrap());
     let all_lines = reader.lines().collect::<Vec<_>>();
 
@@ -28,39 +31,40 @@ fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: 
 
         let correct_score;
 
-        if r.len().max(q.len()) < 30000 {
+        if r.len().max(q.len()) < 15000 {
             // parasail
-            let matrix = Matrix::new(MatrixType::IdentityWithPenalty);
+            let matrix = Matrix::create("ACGNT", 2, -4);
             let profile = parasailors::Profile::new(q.as_bytes(), &matrix);
-            let parasail_score = global_alignment_score(&profile, r.as_bytes(), 2, 1);
+            let parasail_score = global_alignment_score(&profile, r.as_bytes(), 6, 2);
             correct_score = parasail_score;
         } else {
             // parasail is not accurate enough, so use block aligner with large fixed block size
-            let len = 8192;
+            let len = 16384;
             let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), len);
             let q_padded = PaddedBytes::from_bytes::<NucMatrix>(q.as_bytes(), len);
-            let run_gaps = Gaps { open: -2, extend: -1 };
+            let run_gaps = Gaps { open: -6, extend: -2 };
+            let matrix = NucMatrix::new_simple(2, -4);
             let mut block_aligner = Block::<false, false>::new(q.len(), r.len(), len);
-            block_aligner.align(&q_padded, &r_padded, &NW1, run_gaps, len..=len, 0);
+            block_aligner.align(&q_padded, &r_padded, &matrix, run_gaps, len..=len, 0);
             let scan_score = block_aligner.res().score;
             correct_score = scan_score;
         }
 
         let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), max_size);
         let q_padded = PaddedBytes::from_bytes::<NucMatrix>(q.as_bytes(), max_size);
-        let run_gaps = Gaps { open: -2, extend: -1 };
+        let run_gaps = Gaps { open: -6, extend: -2 };
+        let matrix = NucMatrix::new_simple(2, -4);
 
         // ours
         let mut block_aligner = Block::<false, false>::new(q.len(), r.len(), max_size);
-        block_aligner.align(&q_padded, &r_padded, &NW1, run_gaps, min_size..=max_size, 0);
+        let max_len = q.len().max(r.len());
+        block_aligner.align(&q_padded, &r_padded, &matrix, run_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, 0.1), 0);
         let scan_score = block_aligner.res().score;
 
         write!(
             writer,
-            "{}, {}-{}, {}, {}, {}, {}\n",
+            "{}, {}, {}, {}, {}\n",
             name,
-            min_size,
-            max_size,
             q.len(),
             r.len(),
             scan_score,
@@ -86,16 +90,26 @@ fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: 
             }
         }
 
+        block_aligner.align(&q_padded, &r_padded, &matrix, run_gaps, percent_len(max_len, 0.01)..=percent_len(max_len, 0.01), 0);
+        let min_size_score = block_aligner.res().score;
+        if min_size_score != correct_score {
+            min_size_wrong += 1;
+        }
+
         let wfa_adaptive_score = {
-            let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+            let mut wfa = WFAlignerGapAffine::new(4, 4, 2, AlignmentScope::Score, MemoryModel::MemoryHigh);
             wfa.set_heuristic(Heuristic::WFadaptive(10, 50, 1));
             wfa.align_end_to_end(q.as_bytes(), r.as_bytes());
             wfa.score()
         };
         let wfa_score = {
-            let mut wfa = WFAlignerGapAffine::new(1, 1, 1, AlignmentScope::Score, MemoryModel::MemoryHigh);
+            let mut wfa = WFAlignerGapAffine::new(4, 4, 2, AlignmentScope::Alignment, MemoryModel::MemoryHigh);
             wfa.set_heuristic(Heuristic::None);
             wfa.align_end_to_end(q.as_bytes(), r.as_bytes());
+            let cigar = wfa.cigar();
+            let matches = cigar.bytes().filter(|&c| c == b'M').count();
+            let seq_id = (matches as f64) / (cigar.len() as f64);
+            seq_id_avg += seq_id;
             wfa.score()
         };
         if wfa_adaptive_score != wfa_score {
@@ -105,7 +119,7 @@ fn test(file_name: &str, min_size: usize, max_size: usize, name: &str, verbose: 
         count += 1;
     }
 
-    (wrong, wfa_wrong, wrong_avg / (wrong as f64), count)
+    (wrong, min_size_wrong, wfa_wrong, wrong_avg / (wrong as f64), count, seq_id_avg / (count as f64))
 }
 
 #[cfg(feature = "simd_avx2")]
@@ -118,18 +132,18 @@ fn main() {
     let verbose = arg1.is_some() && arg1.unwrap() == "-v";
     let paths = ["data/real.illumina.b10M.txt", "data/real.ont.b10M.txt", "data/seq_pairs.10kbps.5000.txt", "data/seq_pairs.50kbps.10000.txt"];
     let names = ["illumina", "nanopore 1kbp", "nanopore <10kbp", "nanopore <50kbp"];
-    let min_size = [32, 32, 128, 512];
-    let max_size = [32, 128, 1024, 4096];
+    let max_size = [32, 128, 1024, 8192];
 
     let out_file_name = "data/nanopore_accuracy.csv";
     let mut writer = BufWriter::new(File::create(out_file_name).unwrap());
-    write!(writer, "dataset, size, query len, reference len, pred score, true score\n").unwrap();
+    write!(writer, "dataset, query len, reference len, pred score, true score\n").unwrap();
 
-    println!("\ndataset, size, total, wrong, wrong % error, wfa wrong");
+    println!("\ndataset, total, wrong, wrong % error, min size wrong, wfa wrong");
 
-    for ((path, name), (&min_size, &max_size)) in paths.iter().zip(&names).zip(min_size.iter().zip(&max_size)) {
-        let (wrong, wfa_wrong, wrong_avg, count) = test(path, min_size, max_size, name, verbose, &mut writer);
-        println!("\n{}, {}-{}, {}, {}, {}, {}", name, min_size, max_size, count, wrong, wrong_avg, wfa_wrong);
+    for ((path, name), &max_size) in paths.iter().zip(&names).zip(&max_size) {
+        let (wrong, min_size_wrong, wfa_wrong, wrong_avg, count, seq_id_avg) = test(path, max_size, name, verbose, &mut writer);
+        println!("\n{}, {}, {}, {}, {}, {}", name, count, wrong, wrong_avg, min_size_wrong, wfa_wrong);
+        println!("# {} seq id avg: {}", name, seq_id_avg);
     }
 
     println!("# Done!");
