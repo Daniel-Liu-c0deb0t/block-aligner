@@ -48,6 +48,8 @@ void example(void) {
     PaddedBytes* b_3di = block_new_padded_aa(b_len, MAX_SIZE);
     PosBias* b_bias = block_new_pos_bias(b_len, MAX_SIZE);
 
+    AAMatrix* matrix_3di = block_new_simple_aamatrix(1, -1);
+
     // setting bytes, biases, and scoring matrix does not allocate
     block_set_bytes_padded_aa(a, (const uint8_t*)a_str, a_len, MAX_SIZE);
     block_set_bytes_padded_aa(a_3di, (const uint8_t*)a_3di_str, a_len, MAX_SIZE);
@@ -56,7 +58,6 @@ void example(void) {
     block_set_bytes_padded_aa(b_3di, (const uint8_t*)b_3di_str, b_len, MAX_SIZE);
     block_set_pos_bias(b_bias, b_bias_arr, b_len);
 
-    AAMatrix* matrix_3di = block_new_simple_aamatrix(1, -1);
     for (int i = 0; i < 20; i++) {
         for (int j = 0; j < 20; j++) {
             uint8_t c = i + 'A';
