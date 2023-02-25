@@ -196,6 +196,30 @@ pub unsafe extern fn block_free_padded_aa(padded: *mut PaddedBytes) {
 }
 
 
+// PosBias
+
+/// Create a new zero initialized positional score bias vector.
+#[no_mangle]
+pub unsafe extern fn block_new_pos_bias(len: usize, max_size: usize) -> *mut PosBias {
+    let pos_bias = Box::new(PosBias::new(len, max_size));
+    Box::into_raw(pos_bias)
+}
+
+/// Write to the positional score bias vector.
+#[no_mangle]
+pub unsafe extern fn block_set_pos_bias(bias: *mut PosBias, b: *const i16, len: usize) {
+    let biases = std::slice::from_raw_parts(b, len);
+    let pos_bias = &mut *bias;
+    pos_bias.set_biases(biases);
+}
+
+/// Frees the positional score bias vector.
+#[no_mangle]
+pub unsafe extern fn block_free_pos_bias(bias: *mut PosBias) {
+    drop(Box::from_raw(bias));
+}
+
+
 // Block
 
 macro_rules! gen_functions {
@@ -246,15 +270,17 @@ macro_rules! gen_functions {
         pub unsafe extern fn $align_3di_name(b: BlockHandle,
                                              q: *const PaddedBytes,
                                              q_3di: *const PaddedBytes,
+                                             q_bias: *const PosBias,
                                              r: *const PaddedBytes,
                                              r_3di: *const PaddedBytes,
+                                             r_bias: *const PosBias,
                                              m: *const $matrix,
                                              m_3di: *const $matrix,
                                              g: Gaps,
                                              s: SizeRange,
                                              x: i32) {
             let aligner = &mut *(b as *mut Block<$trace, $x_drop>);
-            aligner.align_3di(&*q, &*q_3di, &*r, &*r_3di, &*m, &*m_3di, g, s.min..=s.max, x);
+            aligner.align_3di(&*q, &*q_3di, &*q_bias, &*r, &*r_3di, &*r_bias, &*m, &*m_3di, g, s.min..=s.max, x);
         }
 
         #[doc = $res_doc]

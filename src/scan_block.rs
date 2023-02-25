@@ -897,10 +897,12 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     /// with `|q|` rows and `|r|` columns.
     ///
     /// X-drop alignment with `ByteMatrix` is not supported.
-    pub fn align_3di(&mut self, query: &PaddedBytes, query_3di: &PaddedBytes, reference: &PaddedBytes, reference_3di: &PaddedBytes, matrix: &AAMatrix, matrix_3di: &AAMatrix, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
+    pub fn align_3di(&mut self, query: &PaddedBytes, query_3di: &PaddedBytes, query_bias: &PosBias, reference: &PaddedBytes, reference_3di: &PaddedBytes, reference_bias: &PosBias, matrix: &AAMatrix, matrix_3di: &AAMatrix, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) {
         // check invariants so bad stuff doesn't happen later
         assert_eq!(query.len(), query_3di.len());
+        assert_eq!(query.len(), query_bias.len());
         assert_eq!(reference.len(), reference_3di.len());
+        assert_eq!(reference.len(), reference_bias.len());
         assert!(gaps.open < 0 && gaps.extend < 0, "Gap costs must be negative!");
         // there are edge cases with calculating traceback that doesn't work if
         // gap open does not cost more than gap extend
@@ -918,12 +920,14 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         let s = State3di {
             query: PaddedBytes3di {
                 bytes: query,
-                bytes_3di: query_3di
+                bytes_3di: query_3di,
+                pos_bias: query_bias
             },
             i: 0,
             reference: PaddedBytes3di {
                 bytes: reference,
-                bytes_3di: reference_3di
+                bytes_3di: reference_3di,
+                pos_bias: reference_bias
             },
             j: 0,
             min_size,
@@ -1209,6 +1213,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
             let c = reference.bytes.get(start_j + j);
             let c_3di = reference.bytes_3di.get(start_j + j);
+            let reference_bias = simd_set1_i16(reference.pos_bias.get(start_j + j));
 
             let mut i = 0;
             while i < height {
@@ -1222,7 +1227,9 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
                 let scores = state.matrix.get_scores(c, halfsimd_loadu(query.bytes.as_ptr(start_i + i) as _), right);
                 let scores_3di = state.matrix_3di.get_scores(c_3di, halfsimd_loadu(query.bytes_3di.as_ptr(start_i + i) as _), right);
-                D11 = simd_adds_i16(D00, simd_adds_i16(scores, scores_3di));
+                let query_bias = query.pos_bias.get_biases(start_i + i);
+                let pos_bias = simd_adds_i16(reference_bias, query_bias);
+                D11 = simd_adds_i16(D00, simd_adds_i16(simd_adds_i16(scores, scores_3di), pos_bias));
                 if start_i + i == 0 && start_j + j == 0 {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
                 }
@@ -1815,7 +1822,8 @@ impl Drop for Aligned {
 #[derive(Copy, Clone, Debug)]
 struct PaddedBytes3di<'a> {
     pub bytes: &'a PaddedBytes,
-    pub bytes_3di: &'a PaddedBytes
+    pub bytes_3di: &'a PaddedBytes,
+    pub pos_bias: &'a PosBias
 }
 
 impl<'a> PaddedBytes3di<'a> {

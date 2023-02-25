@@ -312,7 +312,7 @@ pub trait Profile {
     /// Byte to use as padding.
     const NULL: u8;
 
-    /// Create a new profile of a specific length, with default (large negative) values.
+    /// Create a new profile of some maximum length, with default (large negative) values.
     ///
     /// Note that internally, the created profile is longer than a conventional position-specific scoring
     /// matrix (and `str_len`) by 1, so the profile will have the same length as the number of
@@ -570,5 +570,45 @@ impl Profile for AAProfile {
         let c = c.to_ascii_uppercase();
         assert!(c >= b'A' && c <= Self::NULL);
         c - b'A'
+    }
+}
+
+/// Positional score bias for scores.
+#[derive(Clone, PartialEq, Debug)]
+pub struct PosBias {
+    bias: Vec<i16>,
+    len: usize,
+}
+
+impl PosBias {
+    /// Create a new positional score bias vector of some maximum length and initialized to zeros.
+    pub fn new(len: usize, block_size: usize) -> Self {
+        Self {
+            bias: vec![0i16; len + block_size + 1],
+            len
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn set_biases(&mut self, b: &[i16]) {
+        self.bias.fill(0i16);
+        self.bias[1..b.len() + 1].copy_from_slice(b);
+        self.len = b.len();
+    }
+
+    #[inline]
+    pub unsafe fn get(&self, i: usize) -> i16 {
+        *self.bias.as_ptr().add(i)
+    }
+
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
+    #[inline]
+    pub unsafe fn get_biases(&self, i: usize) -> Simd {
+        simd_loadu(self.bias.as_ptr().add(i) as *const Simd)
     }
 }
