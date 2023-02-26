@@ -39,7 +39,7 @@ fn test(file_name: &str, max_size: usize, name: &str, verbose: bool, writer: &mu
             correct_score = parasail_score;
         } else {
             // parasail is not accurate enough, so use block aligner with large fixed block size
-            let len = 16384;
+            let len = 8192;
             let r_padded = PaddedBytes::from_bytes::<NucMatrix>(r.as_bytes(), len);
             let q_padded = PaddedBytes::from_bytes::<NucMatrix>(q.as_bytes(), len);
             let run_gaps = Gaps { open: -6, extend: -2 };

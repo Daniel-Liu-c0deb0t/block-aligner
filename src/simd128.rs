@@ -9,6 +9,7 @@ pub type TraceType = i16;
 pub const L: usize = 8;
 pub const L_BYTES: usize = L * 2;
 pub const HALFSIMD_MUL: usize = 2;
+// using min = 0 is faster, but restricts range of scores (and restricts the max block size)
 pub const ZERO: i16 = 1 << 14;
 pub const MIN: i16 = 0;
 
