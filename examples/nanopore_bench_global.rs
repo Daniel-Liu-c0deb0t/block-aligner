@@ -96,7 +96,7 @@ fn bench_edlib(file: &str) -> f64 {
 }
 
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
-fn bench_ksw2(file: &str) -> f64 {
+fn bench_ksw2(file: &str, band_width_percent: f32) -> f64 {
     let lut = {
         let mut l = [0u8; 128];
         l[b'A' as usize] = 0;
@@ -122,7 +122,7 @@ fn bench_ksw2(file: &str) -> f64 {
     let mut total_time = 0f64;
     let mut temp = 0i32;
     for (q, r) in &data {
-        let band_width = percent_len(q.len().max(r.len()), 0.01) as i32;
+        let band_width = percent_len(q.len().max(r.len()), band_width_percent) as i32;
         let start = Instant::now();
         unsafe {
             ksw_extz2_sse(std::ptr::null_mut(), q.len() as i32, q.as_ptr(), r.len() as i32, r.as_ptr(), 5, matrix.as_ptr(), 4, 2, band_width, -1, 0, 1, &mut res);
@@ -171,6 +171,7 @@ fn main() {
     let files = ["data/real.illumina.b10M.txt", "data/real.ont.b10M.txt", "data/seq_pairs.10kbps.5000.txt", "data/seq_pairs.50kbps.10000.txt"];
     let names = ["illumina", "nanopore 1kbp", "nanopore <10kbp", "nanopore <50kbp"];
     let max_sizes = [[32, 32], [32, 128], [128, 1024], [512, 8192]];
+    let band_widths = [0.01, 0.1];
     let run_parasail_arr = [true, true, true, false];
 
     println!("# time (s)");
@@ -190,8 +191,10 @@ fn main() {
 
         #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
         {
-            let t = bench_ksw2(file);
-            println!("{}, ksw_extz2_sse, {}", name, t);
+            for &b in &band_widths {
+                let t = bench_ksw2(file, b);
+                println!("{}, ksw_extz2_sse ({}%), {}", name, (b * 100.0).round() as usize, t);
+            }
         }
 
         #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
