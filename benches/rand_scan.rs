@@ -3,8 +3,6 @@
 extern crate test;
 use test::{Bencher, black_box};
 
-use rand::prelude::*;
-
 use bio::alignment::pairwise::*;
 use bio::scores::blosum62;
 
@@ -17,7 +15,7 @@ use parasailors::{Matrix, *};
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 use block_aligner::cigar::*;
-use block_aligner::simulate::*;
+use simulate_seqs::*;
 
 fn bench_rustbio_aa_core<const K: usize>(b: &mut Bencher, len: usize) {
     let mut rng = StdRng::seed_from_u64(1234);

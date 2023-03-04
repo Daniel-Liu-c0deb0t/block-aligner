@@ -1,8 +1,6 @@
 #[cfg(not(any(feature = "simd_wasm", feature = "simd_neon")))]
 use parasailors::{Matrix, *};
 
-use rand::prelude::*;
-
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
 
@@ -12,7 +10,7 @@ use std::time::{Instant, Duration};
 use std::hint::black_box;
 use std::iter;
 
-use block_aligner::simulate::*;
+use simulate_seqs::*;
 
 static FILE_NAME: &str = "data/sequences.txt";
 const ITER: usize = 10000;

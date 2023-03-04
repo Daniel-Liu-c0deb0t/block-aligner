@@ -41,11 +41,6 @@
 //! More information on specifying different features for different platforms
 //! with the same dependency [here](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#platform-specific-dependencies).
 
-//use wee_alloc::WeeAlloc;
-
-//#[global_allocator]
-//static ALLOC: WeeAlloc = WeeAlloc::INIT;
-
 // special SIMD instruction set modules adapted for this library
 // their types and lengths are abstracted out
 
@@ -82,8 +77,6 @@ pub mod scan_block;
 pub mod scores;
 #[cfg(any(feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
 pub mod cigar;
-#[cfg(any(feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
-pub mod simulate;
 
 #[cfg(any(feature = "simd_avx2", feature = "simd_neon"))]
 #[doc(hidden)]

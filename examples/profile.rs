@@ -1,8 +1,6 @@
-use rand::prelude::*;
-
 use block_aligner::scan_block::*;
 use block_aligner::scores::*;
-use block_aligner::simulate::*;
+use simulate_seqs::*;
 
 use std::hint::black_box;
 

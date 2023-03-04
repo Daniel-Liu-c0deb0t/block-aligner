@@ -44,12 +44,9 @@ panic = "abort"
 debug-assertions = false
 lto = "thin"
 
-[dependencies]
-#wee_alloc = "^0.4"
-rand = { version = "^0.8", default-features = false, features = ["std_rng", "alloc"] }
-
 [dev-dependencies]
 bio = "^0.33"
+simulate-seqs = { git = "https://github.com/Daniel-Liu-c0deb0t/simulate-seqs" }
 
 [build-dependencies]
 cbindgen = { version = "^0.20.0", optional = true }
