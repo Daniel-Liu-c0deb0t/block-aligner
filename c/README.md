@@ -9,7 +9,8 @@ is demand for them.
 1. `cd` into this directory.
 2. Run `make`. This will build block aligner in release mode, use cbindgen
 to generate the header file, and make sure block aligner is linked to the
-example program.
+example program. Make sure you have [cbindgen](https://github.com/eqrion/cbindgen) installed
+if you are making changes to the block aligner code and need to regenerate bindings.
 3. Run `./a.out`. This will run the example program to perform alignment
 calculations.
 
