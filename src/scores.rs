@@ -618,6 +618,7 @@ impl PosBias {
         *self.bias.as_ptr().add(i)
     }
 
+    #[cfg_attr(feature = "simd_sse2", target_feature(enable = "sse2"))]
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]

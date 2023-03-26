@@ -1185,6 +1185,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     ///
     /// The same function can be reused for right and down shifts because
     /// sequence to sequence alignment is symmetric.
+    #[cfg_attr(feature = "simd_sse2", target_feature(enable = "sse2"))]
     #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
     #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
     #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
