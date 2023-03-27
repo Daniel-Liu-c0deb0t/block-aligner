@@ -9,7 +9,7 @@
 #define ITER 2
 
 void align_prefix(BlockHandle block, PaddedBytes* a, PaddedBytes* a_3di, PosBias* a_bias, PaddedBytes* b, PaddedBytes* b_3di, PosBias* b_bias, const AAMatrix* matrix, const AAMatrix* matrix_3di, Gaps gaps, AlignResult* res, Cigar* cigar, size_t* min_size) {
-    size_t num_iter = 1;
+    size_t num_iter = 0;
     res->score = -1000000000;
     res->query_idx = -1;
     res->reference_idx = -1;
@@ -99,7 +99,7 @@ LocalAln align_local(BlockHandle block, size_t a_len, char* a_str, PaddedBytes* 
     block_set_pos_bias(b_bias, b_bias_arr + b_idx, b_len - b_idx);
 
     // start at a reasonable min_size based on the forwards alignment
-    min_size >>= ITER - 1;
+    min_size >>= ITER;
 
     align_prefix(block, a, a_3di, a_bias, b, b_3di, b_bias, matrix, matrix_3di, gaps, &res, cigar, &min_size);
 
