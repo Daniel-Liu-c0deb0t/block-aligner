@@ -37,7 +37,7 @@ void align_prefix_trace(BlockHandle block, PaddedBytes* a, PaddedBytes* a_3di, P
     block_cigar_aa_trace_xdrop(block, res->query_idx, res->reference_idx, cigar);
 }
 
-// compute do not traceback, which is slightly faster
+// do not compute traceback, which is slightly faster
 void align_prefix_no_trace(BlockHandle block, PaddedBytes* a, PaddedBytes* a_3di, PosBias* a_bias, PaddedBytes* b, PaddedBytes* b_3di, PosBias* b_bias, const AAMatrix* matrix, const AAMatrix* matrix_3di, Gaps gaps, AlignResult* res, size_t* min_size) {
     size_t num_iter = 0;
     res->score = -1000000000;
@@ -201,8 +201,8 @@ void example(void) {
     printf("\n");
 
     block_free_cigar(cigar);
-    block_free_aa_trace(block_trace);
-    block_free_aa_trace(block_no_trace);
+    block_free_aa_trace_xdrop(block_trace);
+    block_free_aa_xdrop(block_no_trace);
     block_free_padded_aa(a);
     block_free_padded_aa(a_3di);
     block_free_pos_bias(a_bias);
