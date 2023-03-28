@@ -8,7 +8,8 @@
 // threshold number of iterations where the score does not change for terminating alignment
 #define ITER 2
 
-void align_prefix(BlockHandle block, PaddedBytes* a, PaddedBytes* a_3di, PosBias* a_bias, PaddedBytes* b, PaddedBytes* b_3di, PosBias* b_bias, const AAMatrix* matrix, const AAMatrix* matrix_3di, Gaps gaps, AlignResult* res, Cigar* cigar, size_t* min_size) {
+// compute traceback, which is slightly slower
+void align_prefix_trace(BlockHandle block, PaddedBytes* a, PaddedBytes* a_3di, PosBias* a_bias, PaddedBytes* b, PaddedBytes* b_3di, PosBias* b_bias, const AAMatrix* matrix, const AAMatrix* matrix_3di, Gaps gaps, AlignResult* res, Cigar* cigar, size_t* min_size) {
     size_t num_iter = 0;
     res->score = -1000000000;
     res->query_idx = -1;
@@ -36,6 +37,33 @@ void align_prefix(BlockHandle block, PaddedBytes* a, PaddedBytes* a_3di, PosBias
     block_cigar_aa_trace_xdrop(block, res->query_idx, res->reference_idx, cigar);
 }
 
+// compute do not traceback, which is slightly faster
+void align_prefix_no_trace(BlockHandle block, PaddedBytes* a, PaddedBytes* a_3di, PosBias* a_bias, PaddedBytes* b, PaddedBytes* b_3di, PosBias* b_bias, const AAMatrix* matrix, const AAMatrix* matrix_3di, Gaps gaps, AlignResult* res, size_t* min_size) {
+    size_t num_iter = 0;
+    res->score = -1000000000;
+    res->query_idx = -1;
+    res->reference_idx = -1;
+
+    // exponential search on min_size until either max_size is reached or score does not change for ITER iterations
+    while (*min_size <= MAX_SIZE && num_iter < ITER) {
+        // allow max block size to grow
+        SizeRange range = {.min = *min_size, .max = MAX_SIZE};
+        // estimated x-drop threshold
+        int32_t x_drop = -(*min_size * gaps.extend + gaps.open);
+        block_align_3di_aa_xdrop(block, a, a_3di, a_bias, b, b_3di, b_bias, matrix, matrix_3di, gaps, range, x_drop);
+        int32_t prev_score = res->score;
+        *res = block_res_aa_xdrop(block);
+
+        if (res->score == prev_score) {
+            num_iter++;
+        } else {
+            num_iter = 1;
+        }
+
+        *min_size *= 2;
+    }
+}
+
 void rev_arr(int16_t* arr, size_t len) {
     for (int i = 0; i < len / 2; i++) {
         int16_t temp = arr[i];
@@ -60,14 +88,13 @@ typedef struct LocalAln {
     int32_t score;
 } LocalAln;
 
-// note: cigar string will be reversed, but LocalAln will contain correct start and end positions
-LocalAln align_local(BlockHandle block, size_t a_len, char* a_str, PaddedBytes* a, char* a_3di_str, PaddedBytes* a_3di, int16_t* a_bias_arr, PosBias* a_bias, size_t b_len, char* b_str, PaddedBytes* b, char* b_3di_str, PaddedBytes* b_3di, int16_t* b_bias_arr, PosBias* b_bias, const AAMatrix* matrix, const AAMatrix* matrix_3di, Gaps gaps, size_t a_idx, size_t b_idx, Cigar* cigar) {
+// note: traceback cigar string will be reversed, but LocalAln will contain correct start and end positions
+LocalAln align_local(BlockHandle block_trace, BlockHandle block_no_trace, size_t a_len, char* a_str, PaddedBytes* a, char* a_3di_str, PaddedBytes* a_3di, int16_t* a_bias_arr, PosBias* a_bias, size_t b_len, char* b_str, PaddedBytes* b, char* b_3di_str, PaddedBytes* b_3di, int16_t* b_bias_arr, PosBias* b_bias, const AAMatrix* matrix, const AAMatrix* matrix_3di, Gaps gaps, size_t a_idx, size_t b_idx, Cigar* cigar) {
     LocalAln res_aln;
     AlignResult res;
     size_t min_size = 32;
 
     // forwards alignment starting at (a_idx, b_idx)
-    // TODO: avoid computing traceback for forwards alignment
     block_set_bytes_padded_aa(a, (uint8_t*)(a_str + a_idx), a_len - a_idx, MAX_SIZE);
     block_set_bytes_padded_aa(a_3di, (uint8_t*)(a_3di_str + a_idx), a_len - a_idx, MAX_SIZE);
     block_set_pos_bias(a_bias, a_bias_arr + a_idx, a_len - a_idx);
@@ -75,7 +102,7 @@ LocalAln align_local(BlockHandle block, size_t a_len, char* a_str, PaddedBytes* 
     block_set_bytes_padded_aa(b_3di, (uint8_t*)(b_3di_str + b_idx), b_len - b_idx, MAX_SIZE);
     block_set_pos_bias(b_bias, b_bias_arr + b_idx, b_len - b_idx);
 
-    align_prefix(block, a, a_3di, a_bias, b, b_3di, b_bias, matrix, matrix_3di, gaps, &res, cigar, &min_size);
+    align_prefix_no_trace(block_no_trace, a, a_3di, a_bias, b, b_3di, b_bias, matrix, matrix_3di, gaps, &res, &min_size);
 
     res_aln.a_end = a_idx + res.query_idx;
     res_aln.b_end = b_idx + res.reference_idx;
@@ -101,7 +128,7 @@ LocalAln align_local(BlockHandle block, size_t a_len, char* a_str, PaddedBytes* 
     // start at a reasonable min_size based on the forwards alignment
     min_size >>= ITER;
 
-    align_prefix(block, a, a_3di, a_bias, b, b_3di, b_bias, matrix, matrix_3di, gaps, &res, cigar, &min_size);
+    align_prefix_trace(block_trace, a, a_3di, a_bias, b, b_3di, b_bias, matrix, matrix_3di, gaps, &res, cigar, &min_size);
 
     res_aln.a_start = a_len - (a_idx + res.query_idx);
     res_aln.b_start = b_len - (b_idx + res.reference_idx);
@@ -144,12 +171,13 @@ void example(void) {
         }
     }
 
-    // block and cigar can also be pre-allocated with really large lengths
-    BlockHandle block = block_new_aa_trace_xdrop(a_len, b_len, MAX_SIZE);
+    // block_trace, block_no_trace, and cigar can also be pre-allocated with really large lengths
+    BlockHandle block_trace = block_new_aa_trace_xdrop(a_len, b_len, MAX_SIZE);
+    BlockHandle block_no_trace = block_new_aa_xdrop(a_len, b_len, MAX_SIZE);
     Cigar* cigar = block_new_cigar(a_len, b_len);
 
     // alignment performs no allocations
-    LocalAln local_aln = align_local(block, a_len, a_str, a, a_3di_str, a_3di, a_bias_arr, a_bias, b_len, b_str, b, b_3di_str, b_3di, b_bias_arr, b_bias, &BLOSUM62, matrix_3di, gaps, a_idx, b_idx, cigar);
+    LocalAln local_aln = align_local(block_trace, block_no_trace, a_len, a_str, a, a_3di_str, a_3di, a_bias_arr, a_bias, b_len, b_str, b, b_3di_str, b_3di, b_bias_arr, b_bias, &BLOSUM62, matrix_3di, gaps, a_idx, b_idx, cigar);
 
     printf("a: %s\na_3di: %s\nb: %s\nb_3di: %s\nscore: %d\nstart idx: (%lu, %lu)\nend idx: (%lu, %lu)\n",
             a_str,
@@ -173,7 +201,8 @@ void example(void) {
     printf("\n");
 
     block_free_cigar(cigar);
-    block_free_aa_trace(block);
+    block_free_aa_trace(block_trace);
+    block_free_aa_trace(block_no_trace);
     block_free_padded_aa(a);
     block_free_padded_aa(a_3di);
     block_free_pos_bias(a_bias);
