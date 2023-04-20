@@ -902,14 +902,6 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     #[allow(non_snake_case)]
     #[inline]
     unsafe fn shift_and_offset(block_size: usize, buf1: *mut i16, buf2: *mut i16, temp_buf1: *mut i16, temp_buf2: *mut i16, off_add: Simd) -> Simd {
-        #[inline]
-        unsafe fn sr(a: Simd, b: Simd) -> Simd {
-            if STEP == L {
-                a
-            } else {
-                simd_sr_i16!(a, b, STEP)
-            }
-        }
         let mut curr1 = simd_adds_i16(simd_load(buf1 as _), off_add);
         let D_corner = simd_set1_i16(simd_extract_i16!(curr1, STEP - 1));
         let mut curr2 = simd_adds_i16(simd_load(buf2 as _), off_add);
@@ -918,8 +910,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         while i < block_size - L {
             let next1 = simd_adds_i16(simd_load(buf1.add(i + L) as _), off_add);
             let next2 = simd_adds_i16(simd_load(buf2.add(i + L) as _), off_add);
-            simd_store(buf1.add(i) as _, sr(next1, curr1));
-            simd_store(buf2.add(i) as _, sr(next2, curr2));
+            simd_store(buf1.add(i) as _, simd_step(next1, curr1));
+            simd_store(buf2.add(i) as _, simd_step(next2, curr2));
             curr1 = next1;
             curr2 = next2;
             i += L;
@@ -927,8 +919,8 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
         let next1 = simd_load(temp_buf1 as _);
         let next2 = simd_load(temp_buf2 as _);
-        simd_store(buf1.add(block_size - L) as _, sr(next1, curr1));
-        simd_store(buf2.add(block_size - L) as _, sr(next2, curr2));
+        simd_store(buf1.add(block_size - L) as _, simd_step(next1, curr1));
+        simd_store(buf2.add(block_size - L) as _, simd_step(next2, curr2));
         D_corner
     }
 
