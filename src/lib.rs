@@ -91,6 +91,9 @@ pub mod cigar;
 #[doc(hidden)]
 pub mod ffi;
 
+#[cfg(not(any(feature = "no_simd", feature = "simd_sse2", feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon")))]
+compile_error!("No SIMD feature flag specified! Specify \"no_simd\" to disable all SIMD features.");
+
 /// Calculate the percentage of a length, rounded to the next power of two.
 ///
 /// This is useful for computing the min and max block sizes for sequences of a certain

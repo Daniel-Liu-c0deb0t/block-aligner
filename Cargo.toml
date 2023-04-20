@@ -25,6 +25,9 @@ simd_wasm = []
 # Enable Neon
 simd_neon = []
 
+# No SIMD
+no_simd = []
+
 # Print lots of debug information
 debug = ["debug_size"]
 # Print only the final block sizes
