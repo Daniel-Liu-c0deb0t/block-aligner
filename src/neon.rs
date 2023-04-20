@@ -122,7 +122,11 @@ macro_rules! simd_sr_i16 {
             debug_assert!($num <= L);
             #[cfg(target_arch = "aarch64")]
             use std::arch::aarch64::*;
-            vextq_s16($b, $a, $num as i32)
+            if $num == L {
+                $a
+            } else {
+                vextq_s16($b, $a, $num as i32)
+            }
         }
     };
 }
