@@ -132,7 +132,7 @@ macro_rules! simd_sr_i16 {
 }
 
 // hardcoded to STEP = 8
-#[target_feature(enable = "aarch64")]
+#[target_feature(enable = "neon")]
 #[inline]
 pub unsafe fn simd_step(a: Simd, b: Simd) -> Simd {
     a
