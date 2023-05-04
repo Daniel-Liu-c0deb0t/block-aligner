@@ -127,6 +127,15 @@ For WASM SIMD:
 cargo build --target=wasm32-wasi --features simd_wasm --release
 ```
 
+To run WASM programs, you will need [`wasmtime`](https://github.com/bytecodealliance/wasmtime)
+installed and on your `$PATH`.
+
+## C API
+There are C bindings for block aligner. More information on how to use them is located in
+the [C readme](c/README.md).
+See the `3di` branch for an example of using block aligner to do local alignment in C,
+along with block aligner modifications to support aligning with amino acid 3D interaction (3Di) information.
+
 Most of the instructions below are for benchmarking and testing block aligner.
 
 ## Data
@@ -149,17 +158,6 @@ Run `scripts/doc_avx2.sh` or `scripts/doc_wasm.sh` to build the docs locally.
 ## Benchmark
 Run `scripts/bench_avx2.sh` or `scripts/bench_wasm.sh` for basic benchmarks.
 See the `scripts` directory for more benchmark scripts on real data.
-
-## C API
-There are C bindings for block aligner. More information on how to use them is located in
-the [C readme](c/README.md).
-See the `3di` branch for an example of using block aligner to do local alignment in C,
-along with block aligner modifications to support aligning with amino acid 3D interaction (3Di) information.
-
-## WASM SIMD support
-WASM SIMD has been stabilizing in Rust recently, so WASM support should be fairly good.
-To run WASM programs, you will need [`wasmtime`](https://github.com/bytecodealliance/wasmtime)
-installed and on your `$PATH`.
 
 ## Data analysis and visualizations
 Use the Jupyter notebook in the `vis/` directory to gather data and plot them. An easier way
