@@ -321,6 +321,8 @@ macro_rules! align_core_gen {
                 let D_max_max = simd_hmax_i16(D_max);
                 let grow_max = simd_hmax_i16(grow_D_max);
                 // max score of the entire block
+                // note that other than off_max and best_max, the other maxs are relative to the
+                // offsets off and ZERO
                 let max = cmp::max(D_max_max, grow_max);
                 off_max = off + (max as i32) - (ZERO as i32);
                 #[cfg(feature = "debug")]
@@ -351,7 +353,7 @@ macro_rules! align_core_gen {
                             },
                             Direction::Grow => {
                                 // max could be in either block
-                                if max >= grow_max {
+                                if D_max_max >= grow_max {
                                     // grow right
                                     best_argmax_i = state.i + idx_i + lane_idx;
                                     best_argmax_j = state.j + prev_size + idx_j;
@@ -553,6 +555,11 @@ macro_rules! align_core_gen {
 }
 
 /// Place block right or down for sequence-profile alignment.
+///
+/// Although conceptually blocks are squares, this function is actually used to compute any
+/// rectangular region. For example, when shifting a block right by some step
+/// size, only the rectangular region with width = step size needs to be computed, since
+/// the new shifted block will partially overlap with the previous block.
 ///
 /// Assumes all inputs are already relative to the current offset.
 ///
@@ -925,6 +932,11 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
     }
 
     /// Place block right or down for sequence-sequence alignment.
+    ///
+    /// Although conceptually blocks are squares, this function is actually used to compute any
+    /// rectangular region. For example, when shifting a block right by some step
+    /// size, only the rectangular region with width = step size needs to be computed, since
+    /// the new shifted block will partially overlap with the previous block.
     ///
     /// Assumes all inputs are already relative to the current offset.
     ///
