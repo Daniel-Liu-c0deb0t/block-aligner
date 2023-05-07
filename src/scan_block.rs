@@ -1181,6 +1181,11 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
     /// Place block right or down for sequence-sequence 3di alignment.
     ///
+    /// Although conceptually blocks are squares, this function is actually used to compute any
+    /// rectangular region. For example, when shifting a block right by some step
+    /// size, only the rectangular region with width = step size needs to be computed, since
+    /// the new shifted block will partially overlap with the previous block.
+    ///
     /// Assumes all inputs are already relative to the current offset.
     ///
     /// Inside this function, everything will be treated as shifting right,
