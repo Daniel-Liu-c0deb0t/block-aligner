@@ -78,7 +78,7 @@ struct StateProfile<'a, P: Profile> {
 }
 
 /// Data structure storing the settings for block aligner.
-pub struct Block<const TRACE: bool, const X_DROP: bool> {
+pub struct Block<const TRACE: bool, const X_DROP: bool = false, const LOCAL_START: bool = false, const FREE_QUERY_START_GAPS: bool = false> {
     res: AlignResult,
     allocated: Allocated
 }
@@ -640,8 +640,12 @@ macro_rules! place_block_profile_gen {
                         $r.get_scores_aa(idx, $q.get(start_j + j), false)
                     };
                     D11 = simd_adds_i16(D00, scores);
-                    if start_i + i == 0 && start_j + j == 0 {
+                    if (!LOCAL_START && start_i + i == 0 && start_j + j == 0) || (FREE_QUERY_START_GAPS && $right && start_i + i == 0) {
                         D11 = simd_insert_i16!(D11, ZERO, 0);
+                    }
+
+                    if LOCAL_START {
+                        D11 = simd_max_i16(D11, simd_set1_i16(ZERO));
                     }
 
                     let C11_open = simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend));
@@ -691,6 +695,12 @@ macro_rules! place_block_profile_gen {
                         let trace_R = simd_sl_i16!(temp_trace_R, prev_trace_R, 1);
                         let trace_data2 = simd_movemask_i8(simd_blend_i8(simd_cmpeq_i16(C11, C11_open), trace_R, mask));
                         prev_trace_R = temp_trace_R;
+
+                        if LOCAL_START {
+                            let zero_mask = simd_cmpeq_i16(D11, simd_set1_i16(ZERO));
+                            trace.add_zero_mask(simd_movemask_i8(zero_mask) as TraceType);
+                        }
+
                         trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                     }
 
@@ -735,7 +745,7 @@ const STEP: usize = 8;
 const X_DROP_ITER: usize = 2; // make sure that the X-drop iteration is truly met instead of just one "bad" step
 const SHRINK: bool = true; // whether to allow the block size to shrink by powers of 2
 const SHRINK_SUFFIX_LEN: usize = STEP / 4;
-impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
+impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_QUERY_START_GAPS: bool> Block<{ TRACE }, { X_DROP }, { LOCAL_START }, { FREE_QUERY_START_GAPS }> {
     /// Allocate a block aligner instance with an upper bound query length,
     /// reference length, and max block size.
     ///
@@ -747,7 +757,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
         Self {
             res: AlignResult { score: 0, query_idx: 0, reference_idx: 0 },
-            allocated: Allocated::new(query_len, reference_len, max_size, TRACE)
+            allocated: Allocated::new(query_len, reference_len, max_size, TRACE, LOCAL_START, FREE_QUERY_START_GAPS)
         }
     }
 
@@ -793,6 +803,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         if X_DROP {
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
         }
+        assert!(!LOCAL_START || !FREE_QUERY_START_GAPS, "Cannot set both LOCAL_START and FREE_QUERY_START_GAPS!");
 
         unsafe { self.allocated.clear(query.len(), reference.len(), max_size, TRACE); }
 
@@ -808,6 +819,42 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             x_drop
         };
         unsafe { self.align_core(s); }
+    }
+
+    /// Align two sequences with exponential search on the min block size.
+    ///
+    /// This calls `align` multiple times, doubling the min block size in each iteration
+    /// until either the max block size is reached or the score stays the same for two iterations.
+    pub fn align_exp<M: Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) -> Option<usize> {
+        let mut min_size = if *size.start() < L { L } else { *size.start() };
+        let max_size = if *size.end() < L { L } else { *size.end() };
+        assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
+        assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
+
+        const ITER: usize = 2;
+
+        let mut iter = 1;
+        let mut curr_score = None;
+
+        while min_size <= max_size && iter < ITER {
+            self.align(query, reference, matrix, gaps, min_size..=max_size, x_drop);
+            let score = self.res().score;
+
+            if curr_score.is_some() && score == curr_score.unwrap() {
+                iter += 1;
+            } else {
+                iter = 1;
+            }
+
+            curr_score = Some(score);
+            min_size *= 2;
+        }
+
+        if iter >= ITER {
+            Some(min_size / 2)
+        } else {
+            None
+        }
     }
 
     /// Align a sequence to a profile with block aligner.
@@ -847,6 +894,7 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
         if X_DROP {
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
         }
+        assert!(!LOCAL_START || !FREE_QUERY_START_GAPS, "Cannot set both LOCAL_START and FREE_QUERY_START_GAPS!");
 
         unsafe { self.allocated.clear(query.len(), profile.len(), max_size, TRACE); }
 
@@ -860,6 +908,42 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
             x_drop
         };
         unsafe { self.align_profile_core(s); }
+    }
+
+    /// Align a sequence to a profile with exponential search on the min block size.
+    ///
+    /// This calls `align_profile` multiple times, doubling the min block size in each iteration
+    /// until either the max block size is reached or the score stays the same for two iterations.
+    pub fn align_profile_exp<P: Profile>(&mut self, query: &PaddedBytes, profile: &P, size: RangeInclusive<usize>, x_drop: i32) -> Option<usize> {
+        let mut min_size = if *size.start() < L { L } else { *size.start() };
+        let max_size = if *size.end() < L { L } else { *size.end() };
+        assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
+        assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
+
+        const ITER: usize = 2;
+
+        let mut iter = 1;
+        let mut curr_score = None;
+
+        while min_size <= max_size && iter < ITER {
+            self.align_profile(query, profile, min_size..=max_size, x_drop);
+            let score = self.res().score;
+
+            if curr_score.is_some() && score == curr_score.unwrap() {
+                iter += 1;
+            } else {
+                iter = 1;
+            }
+
+            curr_score = Some(score);
+            min_size *= 2;
+        }
+
+        if iter >= ITER {
+            Some(min_size / 2)
+        } else {
+            None
+        }
     }
 
     align_core_gen!(align_core, Matrix, State, Self::place_block, Self::place_block);
@@ -997,8 +1081,12 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
 
                 let scores = state.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
                 D11 = simd_adds_i16(D00, scores);
-                if start_i + i == 0 && start_j + j == 0 {
+                if (!LOCAL_START && start_i + i == 0 && start_j + j == 0) || (FREE_QUERY_START_GAPS && right && start_i + i == 0) {
                     D11 = simd_insert_i16!(D11, ZERO, 0);
+                }
+
+                if LOCAL_START {
+                    D11 = simd_max_i16(D11, simd_set1_i16(ZERO));
                 }
 
                 let C11_open = simd_adds_i16(D10, gap_open);
@@ -1046,6 +1134,12 @@ impl<const TRACE: bool, const X_DROP: bool> Block<{ TRACE }, { X_DROP }> {
                     let trace_R = simd_sl_i16!(temp_trace_R, prev_trace_R, 1);
                     let trace_data2 = simd_movemask_i8(simd_blend_i8(simd_cmpeq_i16(C11, C11_open), trace_R, mask));
                     prev_trace_R = temp_trace_R;
+
+                    if LOCAL_START {
+                        let zero_mask = simd_cmpeq_i16(D11, simd_set1_i16(ZERO));
+                        trace.add_zero_mask(simd_movemask_i8(zero_mask) as TraceType);
+                    }
+
                     trace.add_trace(trace_data as TraceType, trace_data2 as TraceType);
                 }
 
@@ -1135,12 +1229,12 @@ struct Allocated {
 
 impl Allocated {
     #[allow(non_snake_case)]
-    fn new(query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool) -> Self {
+    fn new(query_len: usize, reference_len: usize, max_size: usize, trace_flag: bool, local_start: bool, free_query_start_gaps: bool) -> Self {
         unsafe {
             let trace = if trace_flag {
-                Trace::new(query_len, reference_len, max_size)
+                Trace::new(query_len, reference_len, max_size, local_start, free_query_start_gaps)
             } else {
-                Trace::new(0, 0, 0)
+                Trace::new(0, 0, 0, false, false)
             };
             let D_col = Aligned::new(max_size);
             let C_col = Aligned::new(max_size);
@@ -1205,23 +1299,31 @@ pub struct Trace {
     right: Vec<u64>,
     block_start: Vec<u32>,
     block_size: Vec<u16>,
+    zero_mask: Vec<TraceType>,
     trace_idx: usize,
     block_idx: usize,
     ckpt_trace_idx: usize,
     ckpt_block_idx: usize,
     query_len: usize,
-    reference_len: usize
+    reference_len: usize,
+    local_start: bool,
+    free_query_start_gaps: bool
 }
 
 impl Trace {
     #[inline]
-    fn new(query_len: usize, reference_len: usize, max_size: usize) -> Self {
+    fn new(query_len: usize, reference_len: usize, max_size: usize, local_start: bool, free_query_start_gaps: bool) -> Self {
         let len = query_len + reference_len;
         let trace = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
         let trace2 = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
         let right = vec![0u64; div_ceil(len, 64)];
         let block_start = vec![0u32; len * 2];
         let block_size = vec![0u16; len * 2];
+        let zero_mask = if local_start {
+            vec![0 as TraceType; (max_size / L) * (len + max_size * 2)]
+        } else {
+            vec![]
+        };
 
         Self {
             trace,
@@ -1229,12 +1331,15 @@ impl Trace {
             right,
             block_start,
             block_size,
+            zero_mask,
             trace_idx: 0,
             block_idx: 0,
             ckpt_trace_idx: 0,
             ckpt_block_idx: 0,
             query_len,
-            reference_len
+            reference_len,
+            local_start,
+            free_query_start_gaps,
         }
     }
 
@@ -1260,6 +1365,15 @@ impl Trace {
         store_trace(self.trace.as_mut_ptr().add(self.trace_idx), t);
         store_trace(self.trace2.as_mut_ptr().add(self.trace_idx), t2);
         self.trace_idx += 1;
+    }
+
+    #[cfg_attr(feature = "simd_sse2", target_feature(enable = "sse2"))]
+    #[cfg_attr(feature = "simd_avx2", target_feature(enable = "avx2"))]
+    #[cfg_attr(feature = "simd_wasm", target_feature(enable = "simd128"))]
+    #[cfg_attr(feature = "simd_neon", target_feature(enable = "neon"))]
+    #[inline]
+    unsafe fn add_zero_mask(&mut self, mask: TraceType) {
+        store_trace(self.zero_mask.as_mut_ptr().add(self.trace_idx), mask);
     }
 
     #[inline]
@@ -1409,7 +1523,7 @@ impl Trace {
 
             let mut table = Table::D;
 
-            while i > 0 || j > 0 {
+            'outer: while i > 0 || j > 0 {
                 // find the current block that contains (i, j)
                 loop {
                     block_idx -= 1;
@@ -1428,10 +1542,25 @@ impl Trace {
                 // compute traceback within the current block
                 let lut = &*OP_LUT.as_ptr().add(right);
                 if right > 0 {
+                    // right block
                     while i >= block_i && j >= block_j && (i > 0 || j > 0) {
+                        if self.free_query_start_gaps && i == 0 {
+                            // can do this because the row (i == 0) must be within right blocks
+                            break 'outer;
+                        }
+
                         let curr_i = i - block_i;
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
+
+                        if self.local_start {
+                            // terminate alignment on zero
+                            let zero = ((*self.zero_mask.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b1) > 0;
+                            if zero {
+                                break 'outer;
+                            }
+                        }
+
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
@@ -1452,10 +1581,20 @@ impl Trace {
                         cigar.add(op);
                     }
                 } else {
+                    // down block
                     while i >= block_i && j >= block_j && (i > 0 || j > 0) {
                         let curr_i = i - block_i;
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
+
+                        if self.local_start {
+                            // terminate alignment on zero
+                            let zero = ((*self.zero_mask.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b1) > 0;
+                            if zero {
+                                break 'outer;
+                            }
+                        }
+
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
@@ -1615,6 +1754,16 @@ impl PaddedBytes {
     pub fn set_bytes<M: Matrix>(&mut self, b: &[u8], block_size: usize) {
         self.s[0] = M::convert_char(M::NULL);
         self.s[1..1 + b.len()].copy_from_slice(b);
+        self.s[1..1 + b.len()].iter_mut().for_each(|c| *c = M::convert_char(*c));
+        self.s[1 + b.len()..1 + b.len() + block_size].fill(M::convert_char(M::NULL));
+        self.len = b.len();
+    }
+
+    /// Modifies the bytes in place in reverse, filling in the rest of the memory with padding bytes.
+    pub fn set_bytes_rev<M: Matrix>(&mut self, b: &[u8], block_size: usize) {
+        self.s[0] = M::convert_char(M::NULL);
+        self.s[1..1 + b.len()].copy_from_slice(b);
+        self.s[1..1 + b.len()].reverse();
         self.s[1..1 + b.len()].iter_mut().for_each(|c| *c = M::convert_char(*c));
         self.s[1 + b.len()..1 + b.len() + block_size].fill(M::convert_char(M::NULL));
         self.len = b.len();
