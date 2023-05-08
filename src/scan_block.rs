@@ -165,6 +165,7 @@ macro_rules! align_core_gen {
                             self.allocated.temp_buf1.as_mut_ptr(),
                             self.allocated.temp_buf2.as_mut_ptr(),
                             if prev_dir == Direction::Down { simd_adds_i16(D_corner, off_add) } else { simd_set1_i16(MIN) },
+                            clamp(-off + (ZERO as i32)),
                             true
                         );
 
@@ -214,6 +215,7 @@ macro_rules! align_core_gen {
                             self.allocated.temp_buf1.as_mut_ptr(),
                             self.allocated.temp_buf2.as_mut_ptr(),
                             if prev_dir == Direction::Right { simd_adds_i16(D_corner, off_add) } else { simd_set1_i16(MIN) },
+                            clamp(-off + (ZERO as i32)),
                             false
                         );
 
@@ -263,6 +265,7 @@ macro_rules! align_core_gen {
                             self.allocated.D_col.as_mut_ptr().add(prev_size),
                             self.allocated.C_col.as_mut_ptr().add(prev_size),
                             simd_set1_i16(MIN),
+                            clamp(-off + (ZERO as i32)),
                             false
                         );
 
@@ -289,6 +292,7 @@ macro_rules! align_core_gen {
                             self.allocated.D_row.as_mut_ptr().add(prev_size),
                             self.allocated.R_row.as_mut_ptr().add(prev_size),
                             simd_set1_i16(MIN),
+                            clamp(-off + (ZERO as i32)),
                             true
                         );
 
@@ -589,6 +593,7 @@ macro_rules! place_block_profile_gen {
                                        D_row: *mut i16,
                                        R_row: *mut i16,
                                        mut D_corner: Simd,
+                                       relative_zero: i16,
                                        _right: bool) -> (Simd, Simd, Simd) {
             let gap_extend = simd_set1_i16($r.get_gap_extend() as i16);
             let (gap_extend_all, prefix_scan_consts) = get_prefix_scan_consts(gap_extend);
@@ -641,11 +646,11 @@ macro_rules! place_block_profile_gen {
                     };
                     D11 = simd_adds_i16(D00, scores);
                     if (!LOCAL_START && start_i + i == 0 && start_j + j == 0) || (FREE_QUERY_START_GAPS && $right && start_i + i == 0) {
-                        D11 = simd_insert_i16!(D11, ZERO, 0);
+                        D11 = simd_insert_i16!(D11, relative_zero, 0);
                     }
 
                     if LOCAL_START {
-                        D11 = simd_max_i16(D11, simd_set1_i16(ZERO));
+                        D11 = simd_max_i16(D11, simd_set1_i16(relative_zero));
                     }
 
                     let C11_open = simd_adds_i16(D10, simd_adds_i16(gap_open_C, gap_extend));
@@ -697,7 +702,7 @@ macro_rules! place_block_profile_gen {
                         prev_trace_R = temp_trace_R;
 
                         if LOCAL_START {
-                            let zero_mask = simd_cmpeq_i16(D11, simd_set1_i16(ZERO));
+                            let zero_mask = simd_cmpeq_i16(D11, simd_set1_i16(relative_zero));
                             trace.add_zero_mask(simd_movemask_i8(zero_mask) as TraceType);
                         }
 
@@ -1048,6 +1053,7 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
                                      D_row: *mut i16,
                                      R_row: *mut i16,
                                      mut D_corner: Simd,
+                                     relative_zero: i16,
                                      right: bool) -> (Simd, Simd, Simd) {
         let gap_open = simd_set1_i16(state.gaps.open as i16);
         let gap_extend = simd_set1_i16(state.gaps.extend as i16);
@@ -1082,11 +1088,11 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
                 let scores = state.matrix.get_scores(c, halfsimd_loadu(query.as_ptr(start_i + i) as _), right);
                 D11 = simd_adds_i16(D00, scores);
                 if (!LOCAL_START && start_i + i == 0 && start_j + j == 0) || (FREE_QUERY_START_GAPS && right && start_i + i == 0) {
-                    D11 = simd_insert_i16!(D11, ZERO, 0);
+                    D11 = simd_insert_i16!(D11, relative_zero, 0);
                 }
 
                 if LOCAL_START {
-                    D11 = simd_max_i16(D11, simd_set1_i16(ZERO));
+                    D11 = simd_max_i16(D11, simd_set1_i16(relative_zero));
                 }
 
                 let C11_open = simd_adds_i16(D10, gap_open);
@@ -1136,7 +1142,7 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
                     prev_trace_R = temp_trace_R;
 
                     if LOCAL_START {
-                        let zero_mask = simd_cmpeq_i16(D11, simd_set1_i16(ZERO));
+                        let zero_mask = simd_cmpeq_i16(D11, simd_set1_i16(relative_zero));
                         trace.add_zero_mask(simd_movemask_i8(zero_mask) as TraceType);
                     }
 
@@ -1553,7 +1559,7 @@ impl Trace {
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_i / L + curr_j * (block_height / L);
 
-                        if self.local_start {
+                        if self.local_start && table == Table::D {
                             // terminate alignment on zero
                             let zero = ((*self.zero_mask.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b1) > 0;
                             if zero {
@@ -1587,7 +1593,7 @@ impl Trace {
                         let curr_j = j - block_j;
                         let idx = trace_idx + curr_j / L + curr_i * (block_width / L);
 
-                        if self.local_start {
+                        if self.local_start && table == Table::D {
                             // terminate alignment on zero
                             let zero = ((*self.zero_mask.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b1) > 0;
                             if zero {
