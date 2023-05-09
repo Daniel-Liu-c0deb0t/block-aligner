@@ -774,7 +774,15 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
     ///
     /// If `X_DROP` is true, then the alignment process will be terminated early when
     /// the max score in the current block drops by `x_drop` below the max score encountered
-    /// so far. If `X_DROP` is false, then global alignment is done.
+    /// so far. The location of the max score is stored in the alignment result.
+    /// This allows the alignment to end anywhere in the DP matrix.
+    /// If `X_DROP` is false, then global alignment is done.
+    ///
+    /// If `LOCAL_START` is true, then the alignment is allowed to start anywhere in the DP matrix.
+    /// Local alignment can be accomplished by setting `LOCAL_START` and `X_DROP` to true and `x_drop`
+    /// to a very large value.
+    ///
+    /// If `FREE_QUERY_START_GAPS` is true, then gaps before the start of the query are free.
     ///
     /// Since larger scores are better, gap and mismatches penalties must be negative.
     ///
@@ -870,7 +878,15 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
     ///
     /// If `X_DROP` is true, then the alignment process will be terminated early when
     /// the max score in the current block drops by `x_drop` below the max score encountered
-    /// so far. If `X_DROP` is false, then global alignment is done.
+    /// so far. The location of the max score is stored in the alignment result.
+    /// This allows the alignment to end anywhere in the DP matrix.
+    /// If `X_DROP` is false, then global alignment is done.
+    ///
+    /// If `LOCAL_START` is true, then the alignment is allowed to start anywhere in the DP matrix.
+    /// Local alignment can be accomplished by setting `LOCAL_START` and `X_DROP` to true and `x_drop`
+    /// to a very large value.
+    ///
+    /// If `FREE_QUERY_START_GAPS` is true, then gaps before the start of the query are free.
     ///
     /// Since larger scores are better, gap and mismatches penalties must be negative.
     ///
@@ -2070,5 +2086,49 @@ mod tests {
         assert_eq!(res, AlignResult { score: 6, query_idx: 24, reference_idx: 21 });
         a.trace().cigar(res.query_idx, res.reference_idx, &mut cigar);
         assert_eq!(cigar.to_string(), "2M6I14M3D2M");
+    }
+
+    #[test]
+    fn test_local_and_free_query_start_gaps() {
+        let test_gaps = Gaps { open: -2, extend: -1 };
+
+        let mut local = Block::<true, false, true, false>::new(100, 100, 32);
+        let mut cigar = Cigar::new(100, 100);
+
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTAAAAAA", 32);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"CCCCCCCCCCAAAAAA", 32);
+        local.align(&q, &r, &NW1, test_gaps, 32..=32, 0);
+        let res = local.res();
+        assert_eq!(res, AlignResult { score: 6, query_idx: 16, reference_idx: 10 });
+        local.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "6=");
+
+        let mut local = Block::<true, true, true, false>::new(100, 100, 32);
+
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"TTTTAAAAAATTTTTTT", 32);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"CCCCCCCCCCAAAAAACCCCCCCCCCCC", 32);
+        local.align(&q, &r, &NW1, test_gaps, 32..=32, 100);
+        let res = local.res();
+        assert_eq!(res, AlignResult { score: 6, query_idx: 16, reference_idx: 10 });
+        local.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "6=");
+
+        let mut q_start = Block::<true, false, false, true>::new(100, 100, 32);
+
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"CCCCCCCCCCAAAAAA", 32);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAA", 32);
+        q_start.align(&q, &r, &NW1, test_gaps, 32..=32, 0);
+        let res = q_start.res();
+        assert_eq!(res, AlignResult { score: 6, query_idx: 6, reference_idx: 16 });
+        q_start.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "6=");
+
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"CCCCCCCCCCAAATAA", 32);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAA", 32);
+        q_start.align(&q, &r, &NW1, test_gaps, 32..=32, 0);
+        let res = q_start.res();
+        assert_eq!(res, AlignResult { score: 4, query_idx: 6, reference_idx: 16 });
+        q_start.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "3=1X2=");
     }
 }
