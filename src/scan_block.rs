@@ -837,37 +837,25 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
     /// Align two sequences with exponential search on the min block size.
     ///
     /// This calls `align` multiple times, doubling the min block size in each iteration
-    /// until either the max block size is reached or the score stays the same for two iterations.
-    pub fn align_exp<M: Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32) -> Option<usize> {
+    /// until either the max block size is reached or the score reaches or exceeds the target score.
+    pub fn align_exp<M: Matrix>(&mut self, query: &PaddedBytes, reference: &PaddedBytes, matrix: &M, gaps: Gaps, size: RangeInclusive<usize>, x_drop: i32, target_score: i32) -> Option<usize> {
         let mut min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
         assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
         assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
 
-        const ITER: usize = 2;
-
-        let mut iter = 1;
-        let mut curr_score = None;
-
-        while min_size <= max_size && iter < ITER {
+        while min_size <= max_size {
             self.align(query, reference, matrix, gaps, min_size..=max_size, x_drop);
-            let score = self.res().score;
+            let curr_score = self.res().score;
 
-            if curr_score.is_some() && score == curr_score.unwrap() {
-                iter += 1;
-            } else {
-                iter = 1;
+            if curr_score >= target_score {
+                return Some(min_size);
             }
 
-            curr_score = Some(score);
             min_size *= 2;
         }
 
-        if iter >= ITER {
-            Some(min_size / 2)
-        } else {
-            None
-        }
+        None
     }
 
     /// Align a sequence to a profile with block aligner.
@@ -934,37 +922,25 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
     /// Align a sequence to a profile with exponential search on the min block size.
     ///
     /// This calls `align_profile` multiple times, doubling the min block size in each iteration
-    /// until either the max block size is reached or the score stays the same for two iterations.
-    pub fn align_profile_exp<P: Profile>(&mut self, query: &PaddedBytes, profile: &P, size: RangeInclusive<usize>, x_drop: i32) -> Option<usize> {
+    /// until either the max block size is reached or the score reaches or exceeds the target score.
+    pub fn align_profile_exp<P: Profile>(&mut self, query: &PaddedBytes, profile: &P, size: RangeInclusive<usize>, x_drop: i32, target_score: i32) -> Option<usize> {
         let mut min_size = if *size.start() < L { L } else { *size.start() };
         let max_size = if *size.end() < L { L } else { *size.end() };
         assert!(min_size < (u16::MAX as usize) && max_size < (u16::MAX as usize), "Block sizes must be smaller than 2^16 - 1!");
         assert!(min_size.is_power_of_two() && max_size.is_power_of_two(), "Block sizes must be powers of two!");
 
-        const ITER: usize = 2;
-
-        let mut iter = 1;
-        let mut curr_score = None;
-
-        while min_size <= max_size && iter < ITER {
+        while min_size <= max_size {
             self.align_profile(query, profile, min_size..=max_size, x_drop);
-            let score = self.res().score;
+            let curr_score = self.res().score;
 
-            if curr_score.is_some() && score == curr_score.unwrap() {
-                iter += 1;
-            } else {
-                iter = 1;
+            if curr_score >= target_score {
+                return Some(min_size);
             }
 
-            curr_score = Some(score);
             min_size *= 2;
         }
 
-        if iter >= ITER {
-            Some(min_size / 2)
-        } else {
-            None
-        }
+        None
     }
 
     align_core_gen!(align_core, Matrix, State, Self::place_block, Self::place_block);
