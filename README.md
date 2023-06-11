@@ -157,7 +157,8 @@ Run `scripts/doc_avx2.sh` or `scripts/doc_wasm.sh` to build the docs locally.
 
 ## Benchmark
 Run `scripts/bench_avx2.sh` or `scripts/bench_wasm.sh` for basic benchmarks.
-See the `scripts` directory for more benchmark scripts on real data.
+See the `scripts` directory for runnable benchmark scripts on real data.
+Most of the actual implementations of the benchmarks are in the `examples` directory.
 
 ## Data analysis and visualizations
 Use the Jupyter notebook in the `vis/` directory to gather data and plot them. An easier way
