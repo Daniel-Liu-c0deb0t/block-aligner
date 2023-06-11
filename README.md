@@ -136,7 +136,7 @@ the [C readme](c/README.md).
 See the `3di` branch for an example of using block aligner to do local alignment in C,
 along with block aligner modifications to support aligning with amino acid 3D interaction (3Di) information.
 
-Most of the instructions below are for benchmarking and testing block aligner.
+**Most of the instructions below are for benchmarking and testing block aligner.**
 
 ## Data
 Some Illumina/Nanopore (DNA), Uniclust30 (protein), and SCOP (protein profile) data are used in some tests and benchmarks.
@@ -161,7 +161,8 @@ See the `scripts` directory for more benchmark scripts on real data.
 
 ## Data analysis and visualizations
 Use the Jupyter notebook in the `vis/` directory to gather data and plot them. An easier way
-to run the whole notebook is to run the `vis/run_vis.sh` script.
+to run the whole notebook is to run the `vis/run_vis.sh` script. This reproduces the
+experiments in the manuscript.
 
 ## Profiling with MacOS Instruments
 Use
