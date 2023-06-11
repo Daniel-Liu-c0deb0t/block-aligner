@@ -23,6 +23,8 @@ use std::arch::asm;
 
 // Notes:
 //
+// R means row, C means column (typically stands for the DP tables)
+//
 // BLOSUM62 matrix max = 11, min = -4; gap open = -11 (includes extension), gap extend = -1
 //
 // Dynamic programming formula:
@@ -38,13 +40,16 @@ use std::arch::asm;
 //
 // note that 'x' represents any bit
 //
-// The term "block" gets used in two contexts:
-// 1. A square region of the DP matrix, which is helpful for conceptually visualizing
-// the algorithm.
+// The term "block" gets used for two different things (unfortunately):
+//
+// 1. A square region of the DP matrix that shifts, grows, and shrinks.
+// This is helpful for conceptually visualizing the algorithm.
+//
 // 2. A rectangular region representing only cells in the DP matrix that are calculated
 // due to shifting or growing. Since the step size is smaller than the block size, the
-// square blocks overlap. Only the non-overlapping new cells (a rectangular block) are
-// computed in each step.
+// square blocks overlap. Only the non-overlapping new cells (a rectangular region) are
+// computed in each step. This usage applies for the "block" in the "place_block" function
+// (this is also sometimes known as the "compute rect" function).
 
 /// Keeps track of internal state and some parameters for block aligner.
 ///
@@ -430,6 +435,12 @@ macro_rules! align_core_gen {
                     dir = Direction::Right;
                     continue;
                 }
+
+                // three decisions are made below (based on heuristics):
+                // * whether to grow
+                // * whether to shrink
+                // * whether to shift right or down
+                // TODO: better heuristics?
 
                 // check if it is possible to grow
                 let next_size = block_size * 2;
@@ -1454,10 +1465,11 @@ impl Trace {
             }
 
             // use lookup table instead of hard to predict branches
+            // constructed at compile time!
             static OP_LUT: [[(Operation, usize, usize, Table); 64]; 2] = {
                 let mut lut = [[(Operation::D, 0, 1, Table::D); 64]; 2];
 
-                // table: the current DP table, D, C, or R (tables are standardized to right = true)
+                // table: the current DP table, D, C, or R (tables are standardized to right = true, C and R would be swapped for right = false)
                 // trace: 2 bits, first bit is whether the max equals C table entry, second bit is
                 // whether the max equals R table entry (vice versa for right = false)
                 // trace2: 2 bits, first bit is whether the max in the C table is the gap beginning, second
@@ -1492,6 +1504,7 @@ impl Trace {
                                         _ => (Operation::D, 0, 1, Table::D)
                                     }
                                 } else {
+                                    // everything is basically swapped (C/R and I/D) for down (right = false)
                                     match (trace, trace2, table) {
                                         (_, 0b00 | 0b10, Table::R) => (Operation::I, 1, 0, Table::R), // R table gap extend
                                         (_, 0b01 | 0b11, Table::R) => (Operation::I, 1, 0, Table::D), // R table gap open
@@ -1559,6 +1572,7 @@ impl Trace {
                             }
                         }
 
+                        // build the index into the lookup table
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_i % L) * 2)) & 0b11) as usize;
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);
@@ -1593,6 +1607,7 @@ impl Trace {
                             }
                         }
 
+                        // build the index into the lookup table
                         let t = ((*self.trace.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let t2 = ((*self.trace2.as_ptr().add(idx) >> ((curr_j % L) * 2)) & 0b11) as usize;
                         let lut_idx = (t << 4) | (t2 << 2) | (table as usize);

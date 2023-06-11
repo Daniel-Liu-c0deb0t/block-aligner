@@ -136,6 +136,19 @@ the [C readme](c/README.md).
 See the `3di` branch for an example of using block aligner to do local alignment in C,
 along with block aligner modifications to support aligning with amino acid 3D interaction (3Di) information.
 
+## Improving Block Aligner
+During alignment, three decisions need to be made at each step (using heuristics):
+* Whether to grow the block size
+* Whether to shrink the block size
+* Whether to shift right or down
+
+Block aligner uses simple greedy heuristics that are cheap to evaluate for making these decisions.
+There is probably a lot of room to improve here! Maybe seeds? Neural network models?
+
+To try your ideas, take a look at the code after the comment `// TODO: better heuristics?` in `src/scan_block.rs`
+(depending on your changes, you may need to modify other parts of the code too). Let me know if you
+are working on new ideas!
+
 **Most of the instructions below are for benchmarking and testing block aligner.**
 
 ## Data
