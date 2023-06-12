@@ -77,6 +77,7 @@ of ~10% sequence length performs well (tested with reads up to ~50kbps).
 For proteins, a min block size of 32 and a max block size of 256 performs well.
 Using a minimum block size that is at least 32 is recommended for most applications.
 Using a maximum block size greater than `2^14 = 16384` is not recommended.
+The library contains a `percent_len` function that computes a percentage of the sequence length with these recommendations.
 If the alignment scores are saturating (score too large), then use a smaller block size.
 Let me know how block aligner performs on your data!
 
