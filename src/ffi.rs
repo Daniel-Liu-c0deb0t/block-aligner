@@ -189,6 +189,14 @@ pub unsafe extern fn block_set_bytes_padded_aa(padded: *mut PaddedBytes, s: *con
     padded_bytes.set_bytes::<AAMatrix>(bytes, max_size);
 }
 
+/// Write to a padded amino acid string, in reverse.
+#[no_mangle]
+pub unsafe extern fn block_set_bytes_rev_padded_aa(padded: *mut PaddedBytes, s: *const u8, len: usize, max_size: usize) {
+    let bytes = std::slice::from_raw_parts(s, len);
+    let padded_bytes = &mut *padded;
+    padded_bytes.set_bytes_rev::<AAMatrix>(bytes, max_size);
+}
+
 /// Frees a padded amino acid string.
 #[no_mangle]
 pub unsafe extern fn block_free_padded_aa(padded: *mut PaddedBytes) {
