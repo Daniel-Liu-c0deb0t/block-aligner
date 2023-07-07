@@ -73,9 +73,9 @@ pub unsafe extern fn block_len_aaprofile(profile: *const AAProfile) -> usize {
 /// Clear the profile so it can be used for profile lengths less than or equal
 /// to the length this struct was created with.
 #[no_mangle]
-pub unsafe extern fn block_clear_aaprofile(profile: *mut AAProfile, str_len: usize) {
+pub unsafe extern fn block_clear_aaprofile(profile: *mut AAProfile, str_len: usize, block_size: usize) {
     let profile = &mut *profile;
-    profile.clear(str_len);
+    profile.clear(str_len, block_size);
 }
 
 /// Set the score for a position and byte.

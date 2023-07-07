@@ -351,7 +351,7 @@ pub trait Profile {
     fn len(&self) -> usize;
     /// Clear the profile so it can be used for profile lengths less than or equal
     /// to the length this struct was created with.
-    fn clear(&mut self, str_len: usize);
+    fn clear(&mut self, str_len: usize, block_size: usize);
     /// Set the score for a position and byte.
     ///
     /// The first column (`i = 0`) should be padded with large negative values.
@@ -464,13 +464,14 @@ impl Profile for AAProfile {
         self.str_len
     }
 
-    fn clear(&mut self, str_len: usize) {
-        assert!(str_len <= self.len);
-        self.aa_pos.fill(i8::MIN as i16);
-        self.pos_aa.fill(i8::MIN);
-        self.pos_gap_open_C.fill(i8::MIN as i16);
-        self.pos_gap_close_C.fill(i8::MIN as i16);
-        self.pos_gap_open_R.fill(i8::MIN as i16);
+    fn clear(&mut self, str_len: usize, block_size: usize) {
+        let len = str_len + block_size + 1;
+        assert!(len <= self.len);
+        self.aa_pos[..32 * len].fill(i8::MIN as i16);
+        self.pos_aa[..len * 32].fill(i8::MIN);
+        self.pos_gap_open_C[..len * 32].fill(i8::MIN as i16);
+        self.pos_gap_close_C[..len * 32].fill(i8::MIN as i16);
+        self.pos_gap_open_R[..len * 32].fill(i8::MIN as i16);
         self.str_len = str_len;
     }
 
