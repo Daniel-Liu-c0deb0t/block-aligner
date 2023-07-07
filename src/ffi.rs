@@ -34,9 +34,16 @@ pub unsafe extern fn block_new_simple_aamatrix(match_score: i8, mismatch_score: 
     Box::into_raw(matrix)
 }
 
+/// Set an entry in the AAMatrix.
+#[no_mangle]
+pub unsafe extern fn block_set_aamatrix(matrix: *mut AAMatrix, a: u8, b: u8, score: i8) {
+    let matrix = &mut *matrix;
+    matrix.set(a, b, score);
+}
+
 /// Frees an AAMatrix.
 #[no_mangle]
-pub unsafe extern fn block_free_simple_aamatrix(matrix: *mut AAMatrix) {
+pub unsafe extern fn block_free_aamatrix(matrix: *mut AAMatrix) {
     drop(Box::from_raw(matrix));
 }
 
