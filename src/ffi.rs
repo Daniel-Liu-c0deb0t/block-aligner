@@ -197,6 +197,7 @@ macro_rules! gen_functions {
      $align_profile_name:ident, $align_profile_doc:expr,
      $res_name:ident, $res_doc:expr,
      $trace_name:ident, $trace_doc:expr,
+     $trace_eq_name:ident, $trace_eq_doc:expr,
      $free_name:ident, $free_doc:expr,
      $matrix:ty, $profile:ty, $trace:literal, $x_drop:literal) => {
         #[doc = $new_doc]
@@ -246,6 +247,13 @@ macro_rules! gen_functions {
             aligner.trace().cigar(query_idx, reference_idx, &mut *cigar);
         }
 
+        #[doc = $trace_eq_doc]
+        #[no_mangle]
+        pub unsafe extern fn $trace_eq_name(b: BlockHandle, q: *const PaddedBytes, r: *const PaddedBytes, query_idx: usize, reference_idx: usize, cigar: *mut Cigar) {
+            let aligner = &*(b as *const Block<$trace, $x_drop>);
+            aligner.trace().cigar_eq(&*q, &*r, query_idx, reference_idx, &mut *cigar);
+        }
+
         #[doc = $free_doc]
         #[no_mangle]
         pub unsafe extern fn $free_name(b: BlockHandle) {
@@ -265,6 +273,8 @@ gen_functions!(
     "Retrieves the result of global alignment of two amino acid strings (no traceback).",
     _block_cigar_aa,
     "Don't use.",
+    _block_cigar_eq_aa,
+    "Don't use.",
     block_free_aa,
     "Frees the block used for global alignment of two amino acid strings (no traceback).",
     AAMatrix, AAProfile, false, false
@@ -280,6 +290,8 @@ gen_functions!(
     block_res_aa_xdrop,
     "Retrieves the result of X-drop alignment of two amino acid strings (no traceback).",
     _block_cigar_aa_xdrop,
+    "Don't use.",
+    _block_cigar_eq_aa_xdrop,
     "Don't use.",
     block_free_aa_xdrop,
     "Frees the block used for X-drop alignment of two amino acid strings (no traceback).",
@@ -297,6 +309,8 @@ gen_functions!(
     "Retrieves the result of global alignment of two amino acid strings, with traceback.",
     block_cigar_aa_trace,
     "Retrieves the resulting CIGAR string from global alignment of two amino acid strings, with traceback.",
+    block_cigar_eq_aa_trace,
+    "Retrieves the resulting CIGAR string from global alignment of two amino acid strings, with traceback containing =/X.",
     block_free_aa_trace,
     "Frees the block used for global alignment of two amino acid strings, with traceback.",
     AAMatrix, AAProfile, true, false
@@ -313,6 +327,8 @@ gen_functions!(
     "Retrieves the result of X-drop alignment of two amino acid strings, with traceback.",
     block_cigar_aa_trace_xdrop,
     "Retrieves the resulting CIGAR string from X-drop alignment of two amino acid strings, with traceback.",
+    block_cigar_eq_aa_trace_xdrop,
+    "Retrieves the resulting CIGAR string from X-drop alignment of two amino acid strings, with traceback containing =/X.",
     block_free_aa_trace_xdrop,
     "Frees the block used for X-drop alignment of two amino acid strings, with traceback.",
     AAMatrix, AAProfile, true, true
