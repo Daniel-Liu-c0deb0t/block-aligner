@@ -70,7 +70,7 @@ pub unsafe extern fn block_len_aaprofile(profile: *const AAProfile) -> usize {
     profile.len()
 }
 
-/// Clear the profile so it can be used for profile lengths less than or equal
+/// Clear the profile so it can be reused for profile lengths less than or equal
 /// to the length this struct was created with.
 #[no_mangle]
 pub unsafe extern fn block_clear_aaprofile(profile: *mut AAProfile, str_len: usize, block_size: usize) {
@@ -80,12 +80,44 @@ pub unsafe extern fn block_clear_aaprofile(profile: *mut AAProfile, str_len: usi
 
 /// Set the score for a position and byte.
 ///
+/// The profile should be first `clear`ed before it is reused with different lengths.
+///
 /// The first column (`i = 0`) should be padded with large negative values.
 /// Therefore, set values starting from `i = 1`.
 #[no_mangle]
 pub unsafe extern fn block_set_aaprofile(profile: *mut AAProfile, i: usize, b: u8, score: i8) {
     let profile = &mut *profile;
     profile.set(i, b, score);
+}
+
+/// Set the scores for all positions in the position specific scoring matrix.
+///
+/// The profile should be first `clear`ed before it is reused with different lengths.
+///
+/// Use `order` to specify the order of bytes that is used in the `scores` matrix.
+/// Scores (in `scores`) should be stored in row-major order, where each row is a different position
+/// and each column is a different byte.
+#[no_mangle]
+pub unsafe extern fn block_set_all_aaprofile(profile: *mut AAProfile, order: *const u8, order_len: usize, scores: *const i8, scores_len: usize) {
+    let profile = &mut *profile;
+    let order = std::slice::from_raw_parts(order, order_len);
+    let scores = std::slice::from_raw_parts(scores, scores_len);
+    profile.set_all(order, scores);
+}
+
+/// Set the scores for all positions in reverse in the position specific scoring matrix.
+///
+/// The profile should be first `clear`ed before it is reused with different lengths.
+///
+/// Use `order` to specify the order of bytes that is used in the `scores` matrix.
+/// Scores (in `scores`) should be stored in row-major order, where each row is a different position
+/// and each column is a different byte.
+#[no_mangle]
+pub unsafe extern fn block_set_all_rev_aaprofile(profile: *mut AAProfile, order: *const u8, order_len: usize, scores: *const i8, scores_len: usize) {
+    let profile = &mut *profile;
+    let order = std::slice::from_raw_parts(order, order_len);
+    let scores = std::slice::from_raw_parts(scores, scores_len);
+    profile.set_all_rev(order, scores);
 }
 
 /// Set the gap open cost for a column.
@@ -119,6 +151,27 @@ pub unsafe extern fn block_set_gap_close_C_aaprofile(profile: *mut AAProfile, i:
 pub unsafe extern fn block_set_gap_open_R_aaprofile(profile: *mut AAProfile, i: usize, gap: i8) {
     let profile = &mut *profile;
     profile.set_gap_open_R(i, gap);
+}
+
+/// Set the gap open cost for all column transitions.
+#[no_mangle]
+pub unsafe extern fn block_set_all_gap_open_C_aaprofile(profile: *mut AAProfile, gap: i8) {
+    let profile = &mut *profile;
+    profile.set_all_gap_open_C(gap);
+}
+
+/// Set the gap close cost for all column transitions.
+#[no_mangle]
+pub unsafe extern fn block_set_all_gap_close_C_aaprofile(profile: *mut AAProfile, gap: i8) {
+    let profile = &mut *profile;
+    profile.set_all_gap_close_C(gap);
+}
+
+/// Set the gap open cost for all row transitions.
+#[no_mangle]
+pub unsafe extern fn block_set_all_gap_open_R_aaprofile(profile: *mut AAProfile, gap: i8) {
+    let profile = &mut *profile;
+    profile.set_all_gap_open_R(gap);
 }
 
 /// Get the score for a position and byte.
