@@ -169,9 +169,14 @@ extern const struct ByteMatrix BYTES1;
 struct AAMatrix *block_new_simple_aamatrix(int8_t match_score, int8_t mismatch_score);
 
 /**
+ * Set an entry in the AAMatrix.
+ */
+void block_set_aamatrix(struct AAMatrix *matrix, uint8_t a, uint8_t b, int8_t score);
+
+/**
  * Frees an AAMatrix.
  */
-void block_free_simple_aamatrix(struct AAMatrix *matrix);
+void block_free_aamatrix(struct AAMatrix *matrix);
 
 /**
  * Create a new profile of a specific length, with default (large negative) values.
@@ -190,18 +195,50 @@ struct AAProfile *block_new_aaprofile(uintptr_t str_len, uintptr_t block_size, i
 uintptr_t block_len_aaprofile(const struct AAProfile *profile);
 
 /**
- * Clear the profile so it can be used for profile lengths less than or equal
+ * Clear the profile so it can be reused for profile lengths less than or equal
  * to the length this struct was created with.
  */
-void block_clear_aaprofile(struct AAProfile *profile, uintptr_t str_len);
+void block_clear_aaprofile(struct AAProfile *profile, uintptr_t str_len, uintptr_t block_size);
 
 /**
  * Set the score for a position and byte.
+ *
+ * The profile should be first `clear`ed before it is reused with different lengths.
  *
  * The first column (`i = 0`) should be padded with large negative values.
  * Therefore, set values starting from `i = 1`.
  */
 void block_set_aaprofile(struct AAProfile *profile, uintptr_t i, uint8_t b, int8_t score);
+
+/**
+ * Set the scores for all positions in the position specific scoring matrix.
+ *
+ * The profile should be first `clear`ed before it is reused with different lengths.
+ *
+ * Use `order` to specify the order of bytes that is used in the `scores` matrix.
+ * Scores (in `scores`) should be stored in row-major order, where each row is a different position
+ * and each column is a different byte.
+ */
+void block_set_all_aaprofile(struct AAProfile *profile,
+                             const uint8_t *order,
+                             uintptr_t order_len,
+                             const int8_t *scores,
+                             uintptr_t scores_len);
+
+/**
+ * Set the scores for all positions in reverse in the position specific scoring matrix.
+ *
+ * The profile should be first `clear`ed before it is reused with different lengths.
+ *
+ * Use `order` to specify the order of bytes that is used in the `scores` matrix.
+ * Scores (in `scores`) should be stored in row-major order, where each row is a different position
+ * and each column is a different byte.
+ */
+void block_set_all_rev_aaprofile(struct AAProfile *profile,
+                                 const uint8_t *order,
+                                 uintptr_t order_len,
+                                 const int8_t *scores,
+                                 uintptr_t scores_len);
 
 /**
  * Set the gap open cost for a column.
@@ -229,6 +266,21 @@ void block_set_gap_close_C_aaprofile(struct AAProfile *profile, uintptr_t i, int
  * This represents starting a gap in `r`.
  */
 void block_set_gap_open_R_aaprofile(struct AAProfile *profile, uintptr_t i, int8_t gap);
+
+/**
+ * Set the gap open cost for all column transitions.
+ */
+void block_set_all_gap_open_C_aaprofile(struct AAProfile *profile, int8_t gap);
+
+/**
+ * Set the gap close cost for all column transitions.
+ */
+void block_set_all_gap_close_C_aaprofile(struct AAProfile *profile, int8_t gap);
+
+/**
+ * Set the gap open cost for all row transitions.
+ */
+void block_set_all_gap_open_R_aaprofile(struct AAProfile *profile, int8_t gap);
 
 /**
  * Get the score for a position and byte.
@@ -279,6 +331,14 @@ void block_set_bytes_padded_aa(struct PaddedBytes *padded,
                                uintptr_t max_size);
 
 /**
+ * Write to a padded amino acid string, in reverse.
+ */
+void block_set_bytes_rev_padded_aa(struct PaddedBytes *padded,
+                                   const uint8_t *s,
+                                   uintptr_t len,
+                                   uintptr_t max_size);
+
+/**
  * Frees a padded amino acid string.
  */
 void block_free_padded_aa(struct PaddedBytes *padded);
@@ -320,6 +380,16 @@ void _block_cigar_aa(BlockHandle b,
                      uintptr_t query_idx,
                      uintptr_t reference_idx,
                      struct Cigar *cigar);
+
+/**
+ *Don't use.
+ */
+void _block_cigar_eq_aa(BlockHandle b,
+                        const struct PaddedBytes *q,
+                        const struct PaddedBytes *r,
+                        uintptr_t query_idx,
+                        uintptr_t reference_idx,
+                        struct Cigar *cigar);
 
 /**
  *Frees the block used for global alignment of two amino acid strings (no traceback).
@@ -365,6 +435,16 @@ void _block_cigar_aa_xdrop(BlockHandle b,
                            struct Cigar *cigar);
 
 /**
+ *Don't use.
+ */
+void _block_cigar_eq_aa_xdrop(BlockHandle b,
+                              const struct PaddedBytes *q,
+                              const struct PaddedBytes *r,
+                              uintptr_t query_idx,
+                              uintptr_t reference_idx,
+                              struct Cigar *cigar);
+
+/**
  *Frees the block used for X-drop alignment of two amino acid strings (no traceback).
  */
 void block_free_aa_xdrop(BlockHandle b);
@@ -406,6 +486,16 @@ void block_cigar_aa_trace(BlockHandle b,
                           uintptr_t query_idx,
                           uintptr_t reference_idx,
                           struct Cigar *cigar);
+
+/**
+ *Retrieves the resulting CIGAR string from global alignment of two amino acid strings, with traceback containing =/X.
+ */
+void block_cigar_eq_aa_trace(BlockHandle b,
+                             const struct PaddedBytes *q,
+                             const struct PaddedBytes *r,
+                             uintptr_t query_idx,
+                             uintptr_t reference_idx,
+                             struct Cigar *cigar);
 
 /**
  *Frees the block used for global alignment of two amino acid strings, with traceback.
@@ -451,6 +541,16 @@ void block_cigar_aa_trace_xdrop(BlockHandle b,
                                 uintptr_t query_idx,
                                 uintptr_t reference_idx,
                                 struct Cigar *cigar);
+
+/**
+ *Retrieves the resulting CIGAR string from X-drop alignment of two amino acid strings, with traceback containing =/X.
+ */
+void block_cigar_eq_aa_trace_xdrop(BlockHandle b,
+                                   const struct PaddedBytes *q,
+                                   const struct PaddedBytes *r,
+                                   uintptr_t query_idx,
+                                   uintptr_t reference_idx,
+                                   struct Cigar *cigar);
 
 /**
  *Frees the block used for X-drop alignment of two amino acid strings, with traceback.
