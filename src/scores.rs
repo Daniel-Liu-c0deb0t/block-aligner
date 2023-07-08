@@ -349,14 +349,34 @@ pub trait Profile {
 
     /// Get the length of the profile.
     fn len(&self) -> usize;
-    /// Clear the profile so it can be used for profile lengths less than or equal
+    /// Clear the profile so it can be reused for profile lengths less than or equal
     /// to the length this struct was created with.
     fn clear(&mut self, str_len: usize, block_size: usize);
+
     /// Set the score for a position and byte.
+    ///
+    /// The profile should be first `clear`ed before it is reused with different lengths.
     ///
     /// The first column (`i = 0`) should be padded with large negative values.
     /// Therefore, set values starting from `i = 1`.
     fn set(&mut self, i: usize, b: u8, score: i8);
+    /// Set the scores for all positions in the position specific scoring matrix.
+    ///
+    /// The profile should be first `clear`ed before it is reused with different lengths.
+    ///
+    /// Use `order` to specify the order of bytes that is used in the `scores` matrix.
+    /// Scores (in `scores`) should be stored in row-major order, where each row is a different position
+    /// and each column is a different byte.
+    fn set_all(&mut self, order: &[u8], scores: &[i8]);
+    /// Set the scores for all positions in reverse in the position specific scoring matrix.
+    ///
+    /// The profile should be first `clear`ed before it is reused with different lengths.
+    ///
+    /// Use `order` to specify the order of bytes that is used in the `scores` matrix.
+    /// Scores (in `scores`) should be stored in row-major order, where each row is a different position
+    /// and each column is a different byte.
+    fn set_all_rev(&mut self, order: &[u8], scores: &[i8]);
+
     /// Set the gap open cost for a column.
     ///
     /// When aligning a sequence `q` to a profile `r`, this is the gap open cost at column `i` for a
@@ -375,6 +395,13 @@ pub trait Profile {
     /// a row transition in the DP matrix with `|q| + 1` rows and `|r| + 1` columns.
     /// This represents starting a gap in `r`.
     fn set_gap_open_R(&mut self, i: usize, gap: i8);
+
+    /// Set the gap open cost for all column transitions.
+    fn set_all_gap_open_C(&mut self, gap: i8);
+    /// Set the gap close cost for all column transitions.
+    fn set_all_gap_close_C(&mut self, gap: i8);
+    /// Set the gap open cost for all row transitions.
+    fn set_all_gap_open_R(&mut self, gap: i8);
 
     /// Get the score for a position and byte.
     fn get(&self, i: usize, b: u8) -> i8;
@@ -420,7 +447,12 @@ pub struct AAProfile {
     pos_gap_open_C: Vec<i16>,
     pos_gap_close_C: Vec<i16>,
     pos_gap_open_R: Vec<i16>,
-    len: usize,
+    // length used for underlying allocated vectors
+    max_len: usize,
+    // length used for the current padded profile
+    curr_len: usize,
+    // length of the profile without padding (same length as the consensus sequence of the position
+    // specific scoring matrix)
     str_len: usize
 }
 
@@ -428,15 +460,16 @@ impl Profile for AAProfile {
     const NULL: u8 = b'A' + 26u8;
 
     fn new(str_len: usize, block_size: usize, gap_extend: i8) -> Self {
-        let len = str_len + block_size + 1;
+        let max_len = str_len + block_size + 1;
         Self {
-            aa_pos: vec![i8::MIN as i16; 32 * len],
-            pos_aa: vec![i8::MIN; len * 32],
+            aa_pos: vec![i8::MIN as i16; 32 * max_len],
+            pos_aa: vec![i8::MIN; max_len * 32],
             gap_extend,
-            pos_gap_open_C: vec![i8::MIN as i16; len * 32],
-            pos_gap_close_C: vec![i8::MIN as i16; len * 32],
-            pos_gap_open_R: vec![i8::MIN as i16; len * 32],
-            len,
+            pos_gap_open_C: vec![i8::MIN as i16; max_len],
+            pos_gap_close_C: vec![i8::MIN as i16; max_len],
+            pos_gap_open_R: vec![i8::MIN as i16; max_len],
+            max_len,
+            curr_len: max_len,
             str_len
         }
     }
@@ -465,14 +498,15 @@ impl Profile for AAProfile {
     }
 
     fn clear(&mut self, str_len: usize, block_size: usize) {
-        let len = str_len + block_size + 1;
-        assert!(len <= self.len);
-        self.aa_pos[..32 * len].fill(i8::MIN as i16);
-        self.pos_aa[..len * 32].fill(i8::MIN);
-        self.pos_gap_open_C[..len * 32].fill(i8::MIN as i16);
-        self.pos_gap_close_C[..len * 32].fill(i8::MIN as i16);
-        self.pos_gap_open_R[..len * 32].fill(i8::MIN as i16);
+        let curr_len = str_len + block_size + 1;
+        assert!(curr_len <= self.max_len);
+        self.aa_pos[..32 * curr_len].fill(i8::MIN as i16);
+        self.pos_aa[..curr_len * 32].fill(i8::MIN);
+        self.pos_gap_open_C[..curr_len].fill(i8::MIN as i16);
+        self.pos_gap_close_C[..curr_len].fill(i8::MIN as i16);
+        self.pos_gap_open_R[..curr_len].fill(i8::MIN as i16);
         self.str_len = str_len;
+        self.curr_len = curr_len;
     }
 
     fn set(&mut self, i: usize, b: u8, score: i8) {
@@ -480,8 +514,48 @@ impl Profile for AAProfile {
         assert!(b'A' <= b && b <= b'Z' + 1);
         let idx = i * 32 + ((b - b'A') as usize);
         self.pos_aa[idx] = score;
-        let idx = ((b - b'A') as usize) * self.len + i;
+        let idx = ((b - b'A') as usize) * self.curr_len + i;
         self.aa_pos[idx] = score as i16;
+    }
+
+    fn set_all(&mut self, order: &[u8], scores: &[i8]) {
+        for &b in order {
+            assert!(b'A' <= b && b <= b'Z' + 1);
+        }
+        assert_eq!(scores.len() / order.len(), self.str_len);
+
+        let mut i = 0;
+        while i < scores.len() {
+            unsafe {
+                let score = *scores.as_ptr().add(i);
+                let b = *order.as_ptr().add(i % order.len());
+                let b = (b.to_ascii_uppercase() - b'A') as usize;
+                let pos = i / order.len() + 1;
+                *self.pos_aa.as_mut_ptr().add(pos * 32 + b) = score;
+                *self.aa_pos.as_mut_ptr().add(b * self.curr_len + pos) = score as i16;
+            }
+            i += 1;
+        }
+    }
+
+    fn set_all_rev(&mut self, order: &[u8], scores: &[i8]) {
+        for &b in order {
+            assert!(b'A' <= b && b <= b'Z' + 1);
+        }
+        assert_eq!(scores.len() / order.len(), self.str_len);
+
+        let mut i = 0;
+        while i < scores.len() {
+            unsafe {
+                let score = *scores.as_ptr().add(i);
+                let b = *order.as_ptr().add(i % order.len());
+                let b = (b.to_ascii_uppercase() - b'A') as usize;
+                let pos = self.str_len - i / order.len();
+                *self.pos_aa.as_mut_ptr().add(pos * 32 + b) = score;
+                *self.aa_pos.as_mut_ptr().add(b * self.curr_len + pos) = score as i16;
+            }
+            i += 1;
+        }
     }
 
     fn set_gap_open_C(&mut self, i: usize, gap: i8) {
@@ -498,6 +572,20 @@ impl Profile for AAProfile {
         self.pos_gap_open_R[i] = gap as i16;
     }
 
+    fn set_all_gap_open_C(&mut self, gap: i8) {
+        assert!(gap < 0, "Gap open cost must be negative!");
+        self.pos_gap_open_C[..self.str_len + 1].fill(gap as i16);
+    }
+
+    fn set_all_gap_close_C(&mut self, gap: i8) {
+        self.pos_gap_close_C[..self.str_len + 1].fill(gap as i16);
+    }
+
+    fn set_all_gap_open_R(&mut self, gap: i8) {
+        assert!(gap < 0, "Gap open cost must be negative!");
+        self.pos_gap_open_R[..self.str_len + 1].fill(gap as i16);
+    }
+
     fn get(&self, i: usize, b: u8) -> i8 {
         let b = b.to_ascii_uppercase();
         assert!(b'A' <= b && b <= b'Z' + 1);
@@ -511,14 +599,14 @@ impl Profile for AAProfile {
 
     #[inline]
     fn as_ptr_pos(&self, i: usize) -> *const i8 {
-        debug_assert!(i < self.len);
+        debug_assert!(i < self.curr_len);
         unsafe { self.pos_aa.as_ptr().add(i * 32) }
     }
 
     #[inline]
     fn as_ptr_aa(&self, a: usize) -> *const i16 {
         debug_assert!(a < 27);
-        unsafe { self.aa_pos.as_ptr().add(a * self.len) }
+        unsafe { self.aa_pos.as_ptr().add(a * self.curr_len) }
     }
 
     #[cfg_attr(feature = "simd_sse2", target_feature(enable = "sse2"))]
