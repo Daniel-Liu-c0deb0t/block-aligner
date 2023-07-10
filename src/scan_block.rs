@@ -83,7 +83,7 @@ struct StateProfile<'a, P: Profile> {
 }
 
 /// Data structure storing the settings for block aligner.
-pub struct Block<const TRACE: bool, const X_DROP: bool = false, const LOCAL_START: bool = false, const FREE_QUERY_START_GAPS: bool = false> {
+pub struct Block<const TRACE: bool, const X_DROP: bool = false, const LOCAL_START: bool = false, const FREE_QUERY_START_GAPS: bool = false, const FREE_QUERY_END_GAPS: bool = false> {
     res: AlignResult,
     allocated: Allocated
 }
@@ -327,7 +327,13 @@ macro_rules! align_core_gen {
                 };
 
                 prev_dir = dir;
-                let D_max_max = simd_hmax_i16(D_max);
+                let D_max_max = if FREE_QUERY_END_GAPS {
+                    // can assume only the right region is computed when growing,
+                    // since the min block size is greater than the query length
+                    simd_slow_extract_i16(D_max, state.query.len() % L)
+                } else {
+                    simd_hmax_i16(D_max)
+                };
                 let grow_max = simd_hmax_i16(grow_D_max);
                 // max score of the entire block
                 // note that other than off_max and best_max, the other maxs are relative to the
@@ -342,6 +348,22 @@ macro_rules! align_core_gen {
                 let mut grow_no_max = dir == Direction::Grow;
 
                 if off_max > best_max {
+                    if FREE_QUERY_END_GAPS {
+                        // can assume either growing (right region only) or shifting right, so
+                        // can assume state.i == 0
+                        let idx_j = simd_slow_extract_i16(D_argmax_j, state.query.len() % L) as usize;
+                        best_argmax_i = state.query.len();
+                        match dir {
+                            Direction::Right => {
+                                best_argmax_j = state.j + (block_size - STEP) + idx_j;
+                            },
+                            Direction::Grow => {
+                                best_argmax_j = state.j + prev_size + idx_j;
+                            },
+                            _ => unreachable!(),
+                        }
+                    }
+
                     if X_DROP {
                         // TODO: move outside loop
                         // calculate location with the best score
@@ -539,7 +561,7 @@ macro_rules! align_core_gen {
                 println!("end block size: {}", block_size);
             }
 
-            self.res = if X_DROP {
+            self.res = if X_DROP || FREE_QUERY_END_GAPS {
                 AlignResult {
                     score: best_max,
                     query_idx: best_argmax_i,
@@ -722,8 +744,10 @@ macro_rules! place_block_profile_gen {
 
                     D_max = simd_max_i16(D_max, D11);
 
-                    if X_DROP {
+                    if X_DROP || (FREE_QUERY_END_GAPS && start_i + i + L > $query.len()) {
                         // keep track of the best score and its location
+                        // note: can assume right = true and only the last SIMD vectors are needed for FREE_QUERY_END_GAPS,
+                        // due to the limitation that the min block size must be greater than query length
                         let mask = simd_cmpeq_i16(D_max, D11);
                         D_argmax_i = simd_blend_i8(D_argmax_i, simd_set1_i16(i as i16), mask);
                         D_argmax_j = simd_blend_i8(D_argmax_j, simd_set1_i16(j as i16), mask);
@@ -739,7 +763,7 @@ macro_rules! place_block_profile_gen {
                 ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
                 ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
-                if !X_DROP && start_i + height > $query.len()
+                if !X_DROP && !FREE_QUERY_END_GAPS && start_i + height > $query.len()
                     && start_j + j >= $reference.len() {
                     if TRACE {
                         // make sure that the trace index is updated since the rest of the loop
@@ -761,7 +785,7 @@ const STEP: usize = 8;
 const X_DROP_ITER: usize = 2; // make sure that the X-drop iteration is truly met instead of just one "bad" step
 const SHRINK: bool = true; // whether to allow the block size to shrink by powers of 2
 const SHRINK_SUFFIX_LEN: usize = STEP / 4;
-impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_QUERY_START_GAPS: bool> Block<{ TRACE }, { X_DROP }, { LOCAL_START }, { FREE_QUERY_START_GAPS }> {
+impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_QUERY_START_GAPS: bool, const FREE_QUERY_END_GAPS: bool> Block<{ TRACE }, { X_DROP }, { LOCAL_START }, { FREE_QUERY_START_GAPS }, { FREE_QUERY_END_GAPS }> {
     /// Allocate a block aligner instance with an upper bound query length,
     /// reference length, and max block size.
     ///
@@ -794,6 +818,9 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
     /// to a very large value.
     ///
     /// If `FREE_QUERY_START_GAPS` is true, then gaps before the start of the query are free.
+    ///
+    /// If `FREE_QUERY_END_GAPS` is true, then gaps after the end of the query are free.
+    /// Note that this has a limitation: the min block size must be greater than the length of the query.
     ///
     /// Since larger scores are better, gap and mismatches penalties must be negative.
     ///
@@ -828,6 +855,8 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
         }
         assert!(!LOCAL_START || !FREE_QUERY_START_GAPS, "Cannot set both LOCAL_START and FREE_QUERY_START_GAPS!");
+        assert!(!X_DROP || !FREE_QUERY_END_GAPS, "Cannot set both X_DROP and FREE_QUERY_END_GAPS!");
+        assert!(!FREE_QUERY_END_GAPS || min_size > query.len(), "Min block size must be larger than the query length for FREE_QUERY_END_GAPS!");
 
         unsafe { self.allocated.clear(query.len(), reference.len(), max_size, TRACE); }
 
@@ -887,6 +916,9 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
     ///
     /// If `FREE_QUERY_START_GAPS` is true, then gaps before the start of the query are free.
     ///
+    /// If `FREE_QUERY_END_GAPS` is true, then gaps after the end of the query are free.
+    /// Note that this has a limitation: the min block size must be greater than the length of the query.
+    ///
     /// Since larger scores are better, gap and mismatches penalties must be negative.
     ///
     /// The minimum and maximum sizes of the block must be powers of 2 that are greater than the
@@ -915,6 +947,8 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
             assert!(x_drop >= 0, "X-drop threshold amount must be nonnegative!");
         }
         assert!(!LOCAL_START || !FREE_QUERY_START_GAPS, "Cannot set both LOCAL_START and FREE_QUERY_START_GAPS!");
+        assert!(!X_DROP || !FREE_QUERY_END_GAPS, "Cannot set both X_DROP and FREE_QUERY_END_GAPS!");
+        assert!(!FREE_QUERY_END_GAPS || min_size > query.len(), "Min block size must be larger than the query length for FREE_QUERY_END_GAPS!");
 
         unsafe { self.allocated.clear(query.len(), profile.len(), max_size, TRACE); }
 
@@ -1154,8 +1188,10 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
 
                 D_max = simd_max_i16(D_max, D11);
 
-                if X_DROP {
+                if X_DROP || (FREE_QUERY_END_GAPS && start_i + i + L > query.len()) {
                     // keep track of the best score and its location
+                    // note: can assume right = true and only the last SIMD vectors are needed for FREE_QUERY_END_GAPS,
+                    // due to the limitation that the min block size must be greater than query length
                     let mask = simd_cmpeq_i16(D_max, D11);
                     D_argmax_i = simd_blend_i8(D_argmax_i, simd_set1_i16(i as i16), mask);
                     D_argmax_j = simd_blend_i8(D_argmax_j, simd_set1_i16(j as i16), mask);
@@ -1174,7 +1210,7 @@ impl<const TRACE: bool, const X_DROP: bool, const LOCAL_START: bool, const FREE_
             ptr::write(D_row.add(j), simd_extract_i16!(D11, L - 1));
             ptr::write(R_row.add(j), simd_extract_i16!(R11, L - 1));
 
-            if !X_DROP && start_i + height > query.len()
+            if !X_DROP && !FREE_QUERY_END_GAPS && start_i + height > query.len()
                 && start_j + j >= reference.len() {
                 if TRACE {
                     // make sure that the trace index is updated since the rest of the loop
@@ -2080,7 +2116,7 @@ mod tests {
     }
 
     #[test]
-    fn test_local_and_free_query_start_gaps() {
+    fn test_local_and_free_query_gaps() {
         let test_gaps = Gaps { open: -2, extend: -1 };
 
         let mut local = Block::<true, false, true, false>::new(100, 100, 32);
@@ -2120,6 +2156,24 @@ mod tests {
         let res = q_start.res();
         assert_eq!(res, AlignResult { score: 4, query_idx: 6, reference_idx: 16 });
         q_start.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "3=1X2=");
+
+        let mut q_end = Block::<true, false, false, false, true>::new(100, 100, 32);
+
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAACCCCCCCCCC", 32);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAA", 32);
+        q_end.align(&q, &r, &NW1, test_gaps, 32..=32, 0);
+        let res = q_end.res();
+        assert_eq!(res, AlignResult { score: 6, query_idx: 6, reference_idx: 6 });
+        q_end.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
+        assert_eq!(cigar.to_string(), "6=");
+
+        let r = PaddedBytes::from_bytes::<NucMatrix>(b"AAATAACCCCCCCCCC", 32);
+        let q = PaddedBytes::from_bytes::<NucMatrix>(b"AAAAAA", 32);
+        q_end.align(&q, &r, &NW1, test_gaps, 32..=32, 0);
+        let res = q_end.res();
+        assert_eq!(res, AlignResult { score: 4, query_idx: 6, reference_idx: 6 });
+        q_end.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
         assert_eq!(cigar.to_string(), "3=1X2=");
     }
 }
