@@ -519,42 +519,158 @@ impl Profile for AAProfile {
     }
 
     fn set_all(&mut self, order: &[u8], scores: &[i8]) {
-        for &b in order {
+        #[repr(align(32))]
+        struct A([u8; 32]);
+        let mut o = A([Self::NULL - b'A'; 32]);
+        assert!(order.len() <= 32);
+
+        for (i, &b) in order.iter().enumerate() {
+            let b = b.to_ascii_uppercase();
             assert!(b'A' <= b && b <= b'Z' + 1);
+            o.0[i] = b - b'A';
         }
         assert_eq!(scores.len() / order.len(), self.str_len);
 
-        let mut i = 0;
-        while i < scores.len() {
-            unsafe {
-                let score = *scores.as_ptr().add(i);
-                let b = *order.as_ptr().add(i % order.len());
-                let b = (b.to_ascii_uppercase() - b'A') as usize;
-                let pos = i / order.len() + 1;
-                *self.pos_aa.as_mut_ptr().add(pos * 32 + b) = score;
-                *self.aa_pos.as_mut_ptr().add(b * self.curr_len + pos) = score as i16;
+        let mut i = 1;
+        let mut score_idx = 0;
+
+        while i <= self.str_len {
+            let mut j = 0;
+
+            while j < order.len() {
+                // unroll 4 times for speed
+                if order.len() - j >= 4 {
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+                } else {
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+                }
             }
+
             i += 1;
         }
     }
 
     fn set_all_rev(&mut self, order: &[u8], scores: &[i8]) {
-        for &b in order {
+        #[repr(align(32))]
+        struct A([u8; 32]);
+        let mut o = A([Self::NULL - b'A'; 32]);
+        assert!(order.len() <= 32);
+
+        for (i, &b) in order.iter().enumerate() {
+            let b = b.to_ascii_uppercase();
             assert!(b'A' <= b && b <= b'Z' + 1);
+            o.0[i] = b - b'A';
         }
         assert_eq!(scores.len() / order.len(), self.str_len);
 
-        let mut i = 0;
-        while i < scores.len() {
-            unsafe {
-                let score = *scores.as_ptr().add(i);
-                let b = *order.as_ptr().add(i % order.len());
-                let b = (b.to_ascii_uppercase() - b'A') as usize;
-                let pos = self.str_len - i / order.len();
-                *self.pos_aa.as_mut_ptr().add(pos * 32 + b) = score;
-                *self.aa_pos.as_mut_ptr().add(b * self.curr_len + pos) = score as i16;
+        let mut i = self.str_len;
+        let mut score_idx = 0;
+
+        while i >= 1 {
+            let mut j = 0;
+
+            while j < order.len() {
+                // unroll 4 times for speed
+                if order.len() - j >= 4 {
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+                } else {
+                    unsafe {
+                        let score = *scores.as_ptr().add(score_idx);
+                        let b = *o.0.as_ptr().add(j) as usize;
+                        *self.pos_aa.as_mut_ptr().add(i * 32 + b) = score;
+                        *self.aa_pos.as_mut_ptr().add(b * self.curr_len + i) = score as i16;
+                    }
+
+                    score_idx += 1;
+                    j += 1;
+                }
             }
-            i += 1;
+
+            i -= 1;
         }
     }
 
