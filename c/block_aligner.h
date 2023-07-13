@@ -223,7 +223,9 @@ void block_set_all_aaprofile(struct AAProfile *profile,
                              const uint8_t *order,
                              uintptr_t order_len,
                              const int8_t *scores,
-                             uintptr_t scores_len);
+                             uintptr_t scores_len,
+                             uintptr_t left_shift,
+                             uintptr_t right_shift);
 
 /**
  * Set the scores for all positions in reverse in the position specific scoring matrix.
@@ -238,7 +240,9 @@ void block_set_all_rev_aaprofile(struct AAProfile *profile,
                                  const uint8_t *order,
                                  uintptr_t order_len,
                                  const int8_t *scores,
-                                 uintptr_t scores_len);
+                                 uintptr_t scores_len,
+                                 uintptr_t left_shift,
+                                 uintptr_t right_shift);
 
 /**
  * Set the gap open cost for a column.
