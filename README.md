@@ -7,7 +7,8 @@
 SIMD-accelerated library for computing global and X-drop affine gap penalty sequence-to-sequence or
 sequence-to-profile alignments using an adaptive block-based algorithm.
 
-Preprint paper available [here](https://www.biorxiv.org/content/10.1101/2021.11.08.467651).
+See the Bioinformatics paper [here](https://doi.org/10.1093/bioinformatics/btad487) for more info on the
+algorithm and how it compares with other algorithms.
 
 <p align = "center">
 <img src = "vis/block_img1.png" width = "300px">
@@ -89,7 +90,7 @@ and benchmarks need to run on Linux or MacOS.
 To use this as a crate in your Rust project, add the following to your `Cargo.toml`:
 ```
 [dependencies]
-block-aligner = { version = "0.4", features = ["simd_avx2"] }
+block-aligner = { version = "0.5", features = ["simd_avx2"] }
 ```
 Use the `simd_sse2`, `simd_neon`, or `simd_wasm` feature flag for x86 SSE2, ARM Neon, or WASM SIMD support, respectively.
 It is your responsibility to ensure the correct feature to be enabled and supported by the
@@ -99,9 +100,9 @@ with the same dependency [here](https://doc.rust-lang.org/cargo/reference/specif
 Here's a simple example:
 ```
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-block-aligner = { version = "0.4", features = ["simd_avx2"] }
+block-aligner = { version = "0.5", features = ["simd_avx2"] }
 [target.'cfg(target_arch = "aarch64")'.dependencies]
-block-aligner = { version = "0.4", features = ["simd_neon"] }
+block-aligner = { version = "0.5", features = ["simd_neon"] }
 ```
 
 For developing, testing, or using the C API, you should clone this repo
