@@ -1358,7 +1358,7 @@ pub struct Trace {
 impl Trace {
     #[inline]
     fn new(query_len: usize, reference_len: usize, max_size: usize, local_start: bool, free_query_start_gaps: bool) -> Self {
-        let len = query_len + reference_len;
+        let len = query_len + reference_len + 2;
         let trace = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
         let trace2 = vec![0 as TraceType; (max_size / L) * (len + max_size * 2)];
         let right = vec![0u64; div_ceil(len, 64)];
@@ -1908,6 +1908,21 @@ mod tests {
 
         let mut a = Block::<false, false>::new(100, 100, 16);
 
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, 0);
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, -14);
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
+        assert_eq!(a.res().score, -14);
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AARA", 16);
         a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 0);
@@ -1979,6 +1994,21 @@ mod tests {
 
         let mut a = Block::<false, true>::new(100, 100, 16);
 
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        assert_eq!(a.res(), AlignResult { score: 0, query_idx: 0, reference_idx: 0 });
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        assert_eq!(a.res(), AlignResult { score: 0, query_idx: 0, reference_idx: 0 });
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        assert_eq!(a.res(), AlignResult { score: 0, query_idx: 0, reference_idx: 0 });
+
         let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAARRA", 16);
         let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAAAA", 16);
         a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
@@ -1995,6 +2025,25 @@ mod tests {
         let q = PaddedBytes::from_bytes::<AAMatrix>(&long_str, 2048);
         a.align(&q, &r, &BLOSUM62, test_gaps, 2048..=2048, 100);
         assert_eq!(a.res(), AlignResult { score: 8192, query_idx: 2048, reference_idx: 2048 });
+
+        let mut a = Block::<true, true>::new(0, 0, 16);
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        assert_eq!(a.res(), AlignResult { score: 0, query_idx: 0, reference_idx: 0 });
+
+        let mut a = Block::<true, true>::new(4, 4, 16);
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        assert_eq!(a.res(), AlignResult { score: 0, query_idx: 0, reference_idx: 0 });
+
+        let r = PaddedBytes::from_bytes::<AAMatrix>(b"", 16);
+        let q = PaddedBytes::from_bytes::<AAMatrix>(b"AAAA", 16);
+        a.align(&q, &r, &BLOSUM62, test_gaps, 16..=16, 1);
+        assert_eq!(a.res(), AlignResult { score: 0, query_idx: 0, reference_idx: 0 });
     }
 
     #[test]
