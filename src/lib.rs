@@ -95,7 +95,7 @@ pub mod scores;
 #[cfg(any(feature = "simd_sse2", feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
 pub mod cigar;
 
-#[cfg(any(feature = "simd_sse2", feature = "simd_avx2", feature = "simd_neon"))]
+#[cfg(any(feature = "simd_sse2", feature = "simd_avx2", feature = "simd_wasm", feature = "simd_neon"))]
 #[doc(hidden)]
 pub mod ffi;
 
