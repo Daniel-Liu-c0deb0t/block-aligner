@@ -35,6 +35,8 @@ pub trait Matrix {
 }
 
 /// Amino acid scoring matrix.
+///
+/// Supports characters `A` to `Z`. Lowercase characters are uppercased.
 #[repr(C, align(32))]
 #[derive(Clone, PartialEq, Debug)]
 pub struct AAMatrix {
@@ -133,6 +135,8 @@ impl Matrix for AAMatrix {
 }
 
 /// Nucleotide scoring matrix.
+///
+/// Supports characters `A`, `C`, `G`, `N`, and `T`. Lowercase characters are uppercased.
 #[repr(C, align(32))]
 #[derive(Clone, PartialEq, Debug)]
 pub struct NucMatrix {
@@ -440,8 +444,9 @@ pub trait Profile {
     fn convert_char(c: u8) -> u8;
 }
 
-
 /// Amino acid position specific scoring matrix.
+///
+/// Supports characters `A` to `Z`. Lowercase characters are uppercased.
 #[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Debug)]
 pub struct AAProfile {
