@@ -10,6 +10,20 @@ sequence-to-profile alignments using an adaptive block-based algorithm.
 See the Bioinformatics paper [here](https://doi.org/10.1093/bioinformatics/btad487) for more info on the
 algorithm and how it compares with other algorithms.
 
+If you found Block Aligner useful, please cite:
+```
+@article{liu2023block,
+  title={{Block Aligner}: an adaptive {SIMD}-accelerated aligner for sequences and position-specific scoring matrices},
+  author={Liu, Daniel and Steinegger, Martin},
+  journal={Bioinformatics},
+  volume={39},
+  number={8},
+  pages={btad487},
+  year={2023},
+  publisher={Oxford University Press}
+}
+```
+
 <p align = "center">
 <img src = "vis/block_img1.png" width = "300px">
 </p>
@@ -44,6 +58,8 @@ a.trace().cigar_eq(&q, &r, res.query_idx, res.reference_idx, &mut cigar);
 assert_eq!(cigar.to_string(), "2=6I16=3D");
 ```
 See the [docs](https://docs.rs/block-aligner) for detailed API information.
+
+Here is a diagram showing alignment types that are supported in Block Aligner:
 
 <p align = "center">
 <img src = "block_aligner_modes.png" width = "400px">
