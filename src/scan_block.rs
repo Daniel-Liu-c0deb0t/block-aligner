@@ -1,4 +1,4 @@
-//! Main block aligner algorithm and supporting data structures.
+//! Main Block Aligner algorithm and supporting data structures.
 
 #[cfg(feature = "simd_sse2")]
 use crate::sse2::*;
@@ -82,7 +82,10 @@ struct StateProfile<'a, P: Profile> {
     x_drop: i32
 }
 
-/// Data structure storing the settings for block aligner.
+/// Data structure storing the settings for Block Aligner.
+///
+/// A diagram showing different ways Block Aligner can be used:
+/// ![Block Aligner modes](https://raw.githubusercontent.com/Daniel-Liu-c0deb0t/block-aligner/main/block_aligner_modes.png)
 pub struct Block<const TRACE: bool, const X_DROP: bool = false, const LOCAL_START: bool = false, const FREE_QUERY_START_GAPS: bool = false, const FREE_QUERY_END_GAPS: bool = false> {
     res: AlignResult,
     allocated: Allocated

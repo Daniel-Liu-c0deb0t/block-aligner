@@ -45,6 +45,10 @@ assert_eq!(cigar.to_string(), "2=6I16=3D");
 ```
 See the [docs](https://docs.rs/block-aligner) for detailed API information.
 
+<p align = "center">
+<img src = "block_aligner_modes.png" width = "400px">
+</p>
+
 ## Algorithm
 Block aligner provides a new efficient way to compute pairwise alignments on proteins, DNA sequences,
 and byte strings with dynamic programming.

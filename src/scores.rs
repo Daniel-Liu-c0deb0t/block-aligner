@@ -137,6 +137,8 @@ impl Matrix for AAMatrix {
 /// Nucleotide scoring matrix.
 ///
 /// Supports characters `A`, `C`, `G`, `N`, and `T`. Lowercase characters are uppercased.
+///
+/// If a larger alphabet is needed (for example, with IUPAC characters), use `AAMatrix` instead.
 #[repr(C, align(32))]
 #[derive(Clone, PartialEq, Debug)]
 pub struct NucMatrix {
